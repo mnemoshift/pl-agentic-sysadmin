@@ -24,16 +24,25 @@ Każda operacja modyfikująca system musi realizować cykl **4 kroków**:
 
 ---
 
-## 2. PROTOKÓŁ PAMIĘCI MIĘDZYSESYJNEJ (DUAL-LAYER MEMORY)
+## 2. PROTOKÓŁ PAMIĘCI MIĘDZYSESYJNEJ I ZASADA GARBAGE COLLECTION
 
-Repozytorium utrzymuje ciągłość wiedzy między sesjami za pomocą dwóch warstw pamięci w katalogu `memory/`:
+Repozytorium utrzymuje ciągłość wiedzy między sesjami za pomocą dwóch uzupełniających się warstw pamięci w katalogu `memory/`:
 
-1. **`memory/SESSION_STATE.md` (Pamięć operacyjna / RAM):**
-   - Jeśli plik nie istnieje (pierwsze uruchomienie), utwórz go z szablonu `memory/SESSION_STATE.md.template`.
-   - Zawiera: aktualny cel sesji, stan wykonania zadań, profil podłączonych ekranów i specyfikację stacji.
-2. **`memory/JOURNAL.md` (Pamięć trwała / Dysk):**
-   - Jeśli plik nie istnieje, zainicjalizuj go z `memory/JOURNAL.md.template`.
-   - Każda sesja kończy się zwięzłym wpisem pod datą `[YYYY-MM-DD]` zawierającym podjęte decyzje, dowody audytu i stan końcowy.
+1. **`memory/JOURNAL.md` (Pamięć trwała / Dysk / Event Log):**
+   - **Append-only:** Niezmienny, chronologiczny rejestr audytów, decyzji architektonicznych (ADR) i twardych dowodów z konsoli pod datą `[YYYY-MM-DD]`.
+   - Jeśli plik nie istnieje (pierwsze uruchomienie), zainicjalizuj go z `memory/JOURNAL.md.template`.
+   - Każda sesja kończy się zwięzłym wpisem zawierającym wykonane zmiany i dowody ich asercji (ręcznie lub przez `make session-log MSG="..."`).
+
+2. **`memory/SESSION_STATE.md` (Pamięć operacyjna / RAM / Active Snapshot):**
+   - Jeśli plik nie istnieje, utwórz go z szablonu `memory/SESSION_STATE.md.template`.
+   - **Żelazna Zasada Garbage Collection (Zero `[x]` Bloat):**  
+     Ukończone zadania **NIE mogą gromadzić się** w pliku stanu jako lista odznaczonych `[x]`. Gdy zadanie zostaje ukończone:
+     * Dowód wykonania wędruje do `memory/JOURNAL.md`.
+     * Z `memory/SESSION_STATE.md` zadanie jest **bezwzględnie usuwane**.
+   - **Twardy Limit Rozmiaru (RAM Budget):** Plik stanu musi mieścić się w **maksymalnie 40 liniach**. Zawiera wyłącznie:
+     1. *Aktywny Cel Sesji (Sprint Goal)* (1–2 zdania),
+     2. *Bieżące Parametry Środowiska (Runtime Facts)* (wykryte ekrany, porty, aktywne usługi),
+     3. *Najbliższe Zadania (Next Actions)* — wyłącznie zadania oczekujące `[ ]` (maksymalnie 3–5 punktów) + ewentualnie 1 linijka `Ostatnio ukończone: [zadanie X]`.
 
 ---
 
