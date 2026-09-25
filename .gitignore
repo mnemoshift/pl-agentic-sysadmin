@@ -10,6 +10,9 @@ inventory/pkg-lists/*
 memory/SESSION_STATE.md
 memory/JOURNAL.md
 
+# User workstation overrides (keep template AGENTS.local.md.template in git)
+AGENTS.local.md
+
 # Machine-specific backups and snapshots
 .backup/
 *.bak

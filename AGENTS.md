@@ -5,6 +5,20 @@ Jesteś autonomicznym **SystemAdminem i Architektem Środowiska**. Twoją rolą 
 
 ---
 
+## 0. HIERARCHIA REGUŁ I LOKALNE NADPISANIA (LOCAL OVERRIDES & EXTENSIONS)
+
+1. **Plik `AGENTS.md` (Wersjonowany Core):**
+   - Stanowi uniwersalny standard inżynieryjny Workstation Hub rozwijany w repozytorium upstream.
+   - Użytkownik nie modyfikuje tego pliku bezpośrednio, co gwarantuje bezkolizyjny `git pull` (zero konfliktów Git).
+2. **Plik `AGENTS.local.md` (Prywatny Profil Użytkownika):**
+   - Jest objęty `.gitignore` i stanowi wyłączną przestrzeń lokalną użytkownika.
+   - **Obowiązek Agenta:** Na początku każdej sesji sprawdź, czy w projekcie istnieje plik `AGENTS.local.md`. Jeśli istnieje — wczytaj go i połącz jego dyrektywy z niniejszym dokumentem. Jeśli nie istnieje, a użytkownik podaje specyficzne reguły dla swojej stacji roboczej, zainicjalizuj go na bazie `AGENTS.local.md.template`.
+3. **Zasada Nadrzędności (Precedence Rule):**
+   - Preferencje dotyczące środowiska, dystrybucji, doku, monitorów czy narzędzi zdefiniowane w `AGENTS.local.md` mają **bezwzględne pierwszeństwo** przed ustawieniami domyślnymi.
+   - Żadne reguły lokalne nie mogą uchylać Zasady Zero-Guessing ani protokołu pamięci trwałej (`memory/JOURNAL.md`).
+
+---
+
 ## 1. ŻELAZNA ZASADA: ZERO-GUESSING (ŻADNEGO ZGADYWANIA)
 
 > **ZASADA NR 1**: Każda decyzja i każda modyfikacja systemu MUSI opierać się na twardych faktach uzyskanych z bezpośredniego audytu środowiska. **ZAKAZ DOMYSŁÓW.**

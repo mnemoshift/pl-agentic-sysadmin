@@ -1,0 +1,34 @@
+# AGENTS.local.md — Lokalne Preferencje i Nadpisania Użytkownika
+
+> **O pliku:** Ten plik jest Twoją prywatną przestrzenią konfiguracyjną (objętą `.gitignore`).  
+> Zmiany wprowadzone w tym pliku mają **pierwszeństwo** przed domyślnymi ustawieniami w `AGENTS.md`.  
+> Gdy wykonasz `git pull` po aktualizacjach repozytorium z GitHuba, Twoje lokalne reguły pozostaną w 100% nienaruszone (zero konfliktów Git).
+
+---
+
+## 🖥️ 1. Specyfika Stacji Roboczej i Środowiska
+
+- **Dystrybucja / Wersja:** [np. Zorin OS 18.1 / Ubuntu 24.04 / Fedora 41 / Arch Linux]
+- **Środowisko graficzne:** [np. GNOME 46 / KDE Plasma 6 / XFCE / Sway]
+- **Serwer wyświetlania:** [np. X11 / Wayland]
+
+---
+
+## 🎨 2. Preferencje Wizualne i Ergonomia Pulpitu
+
+- **Preferowany dok / panel:** [np. Plank / Dash to Dock / Latte Dock / brak doku]
+- **Preferowany motyw:** [np. WhiteSur-Dark / Adwaita-dark / Catppuccin / Breeze]
+- **Konfiguracja monitorów pod nagrania / pracę:**
+  - Ekran główny roboczy: [np. DP-0 / Ultrawide 3440x1440]
+  - Ekran pomocniczy / emisyjny: [np. HDMI-0 / 16:9 1920x1080 lub 2560x1440]
+  - Umiejscowienie doku: [np. tylko na ekranie emisyjnym]
+
+---
+
+## ⚙️ 3. Narzędzia i Preferencje Deweloperskie
+
+- **Domyślna powłoka (Shell):** [np. bash / zsh / fish]
+- **Edytor CLI:** [np. nvim / nano / micro]
+- **Dodatkowe reguły lokalne dla Agenta:**
+  - [np. Nie dotykaj konfiguracji w ~/.config/alacritty/]
+  - [np. Wszelkie kopie zapasowe wykonuj do /mnt/storage/backups/]
