@@ -1,0 +1,11 @@
+# Dziennik Zdarzeń i Audytów (Durable ISO Log)
+
+Niniejszy dokument stanowi chronologiczny rejestr wszystkich sesji roboczych z agentem AI.
+
+---
+
+## [YYYY-MM-DD] - Inicjalizacja Workstation Hub
+- **Cel:** Pierwsze uruchomienie i audyt stacji roboczej.
+- **Wykonane kroki:**
+  - Zainicjalizowano strukturę repozytorium.
+  - Wykonano audyt sprzętu poleceniem `make audit`.

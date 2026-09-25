@@ -1,0 +1,16 @@
+# Active Session State (RAM Operacyjny)
+
+## 🎯 Bieżący Cel Sesji (Sprint Goal)
+- [ ] Zainicjalizowanie środowiska stacji roboczej
+- [ ] Wykonanie audytu sprzętowego (`make audit`)
+- [ ] Wykonanie inwentaryzacji oprogramowania (`make inventory`)
+
+## 🖥️ Wykryta Konfiguracja Środowiska
+- **Dystrybucja:** [Do uzupełnienia po audycie]
+- **Karta graficzna / VRAM:** [Do uzupełnienia]
+- **Ekrany:** [Do uzupełnienia]
+- **Środowisko graficzne:** [Do uzupełnienia]
+
+## 📋 Aktywne Zadania i Stan
+- [ ] Pre-flight check
+- [ ] Generowanie dedykowanych skryptów i skilli

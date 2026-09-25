@@ -1,0 +1,27 @@
+# Local hardware and software inventory dumps (generated per machine)
+inventory/hardware.json
+inventory/hardware.md
+inventory/software.json
+inventory/software.md
+inventory/pkg-lists/*
+!inventory/pkg-lists/.gitkeep
+
+# Active local session memory (keep templates in git)
+memory/SESSION_STATE.md
+memory/JOURNAL.md
+
+# Machine-specific backups and snapshots
+.backup/
+*.bak
+*.bak_*
+scripts/local_*
+
+# Dynamically generated local agent skills (tailored per machine)
+.agents/skills/desktop-manager/
+
+# General IDE and OS artifacts
+.DS_Store
+*.swp
+*~
+.vscode/
+.idea/
