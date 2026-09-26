@@ -89,11 +89,23 @@ Główne operacje stacji roboczej wywołuj poprzez ustandaryzowane komendy:
 
 ---
 
-## 5. STANDARDY BEZPIECZEŃSTWA
+## 5. STANDARDY BEZPIECZEŃSTWA I PROTOKÓŁ UPRAWNIEŃ (USER-SPACE VS SUDO)
 
-1. **Brak destrukcyjnych operacji bez potwierdzenia:**
-   - Polecenia niszczące dane (`rm -rf`, formatowanie dysków, modyfikacje fstab) wymagają jednoznacznego zatwierdzenia.
-2. **Idempotentność:**
-   - Każdy skrypt w `scripts/` musi być bezpieczny przy wielokrotnym uruchomieniu.
-3. **Kopie zapasowe przed edycją:**
-   - Przed modyfikacją plików w `~/.config/` lub `/etc/` twórz kopię z rozszerzeniem `.bak`.
+1. **User-Space by Default (Minimalny Promień Rażenia / Blast Radius):**
+   - Wszystko, co dotyczy konfiguracji użytkownika, środowisk uruchomieniowych (`uv`, venv, nvm, cargo), skryptów CLI (`~/.local/bin`), aplikacji desktopowych (`flatpak --user`), usług sesyjnych (`systemctl --user`) oraz modyfikacji pulpitu/motywów (`gsettings`, `dconf`, `~/.local/share/themes`), Agent wykonuje autonomicznie w przestrzeni użytkownika bez podnoszenia uprawnień do roota.
+   - Gwarantuje to bezpieczeństwo systemu (brak ryzyka uszkodzenia `/boot` czy `/etc`), zgodność ze standardami dystrybucji (np. PEP 668) oraz bezproblemowy backup i synchronizację dotfiles.
+
+2. **Zero Patologicznych Obejść (Zakaz "Szycia na Siłę"):**
+   - Agentowi **surowo zabrania się** implementowania niestabilnych obejść w user-space, gdy zadanie architektonicznie wymaga uprawnień roota (np. unikanie pliku wymiany SWAP, ułomne konfiguracje rootless docker bez wsparcia GPU passthrough, kompilowanie bazowych narzędzi CLI ze źródeł zamiast instalacji przez menedżer pakietów dystrybucji).
+
+3. **Czysty Kontrakt Eskalacji Sudo (Single-Command Escalation):**
+   - W sytuacji, gdy niezbędna jest ingerencja systemowa (pakiety `apt`, montowanie dysków w `/etc/fstab`, reguły `udev`, konfiguracja daemonów systemowych takich jak Docker czy Tailscale), Agent zatrzymuje się i przedstawia użytkownikowi **dokładnie jedno, gotowe polecenie `sudo ...`** z jednoznacznym wyjaśnieniem, co komenda robi i dlaczego wymaga podwyższonych uprawnień. Po zatwierdzeniu Agent wznawia autonomiczny przepływ pracy.
+
+4. **Brak destrukcyjnych operacji bez potwierdzenia:**
+   - Polecenia niszczące dane (`rm -rf`, formatowanie dysków, nadpisywanie surowych partycji) wymagają jednoznacznego zatwierdzenia przez człowieka.
+
+5. **Idempotentność:**
+   - Każdy skrypt w `scripts/` oraz receptura `Makefile` musi być bezpieczna przy wielokrotnym uruchomieniu (nie powiela wpisów, sprawdza warunki brzegowe).
+
+6. **Kopie zapasowe przed edycją:**
+   - Przed modyfikacją jakichkolwiek plików konfiguracyjnych w `~/.config/` lub systemowych w `/etc/` twórz kopię zapasową z rozszerzeniem `.bak`.
