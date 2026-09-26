@@ -312,6 +312,11 @@ apply_macos() {
     configure_vscode_csd "native"
     configure_chrome_csd "true"
 
+    # 7. Odświeżenie ramek okien X11/Qt/KDE (Mutter SSD)
+    log_info "Odświeżanie ramek okien menedżera okien (Mutter)..."
+    killall /usr/libexec/mutter-x11-frames 2>/dev/null || true
+    nohup /usr/libexec/mutter-x11-frames >/dev/null 2>&1 &
+
     log_ok "Profil macOS został pomyślnie zaaplikowany."
 }
 
@@ -374,11 +379,23 @@ subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 
     gsettings set org.gnome.desktop.interface gtk-theme 'ZorinBlue-Light' || true
     gsettings set org.gnome.desktop.interface icon-theme 'ZorinBlue-Light' || true
     gsettings set org.gnome.desktop.interface cursor-theme 'Zorin' || true
+    gsettings reset org.gnome.desktop.wm.preferences theme 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.user-theme name '' 2>/dev/null || true
 
-    # 5. Usunięcie nadpisań motywu WhiteSur w libadwaita/GTK4
-    log_info "Usuwanie nadpisań stylów GTK4 / libadwaita..."
-    rm -rf "$HOME/.config/gtk-4.0/"{gtk.css,gtk-dark.css,gtk-Light.css,gtk-Dark.css,assets,windows-assets} 2>/dev/null || true
+    # 5. Odinstalowanie nadpisań motywów WhiteSur (GTK, ikony, kursory, GTK4 / libadwaita)
+    log_info "Usuwanie nadpisań motywów WhiteSur (GTK, ikony, kursory, GTK4)..."
+    if [ -f "$HOME/repos/zorin-customization/WhiteSur-gtk-theme/install.sh" ]; then
+        "$HOME/repos/zorin-customization/WhiteSur-gtk-theme/install.sh" -u >/dev/null 2>&1 || true
+    fi
+    if [ -f "$HOME/repos/zorin-customization/WhiteSur-icon-theme/install.sh" ]; then
+        "$HOME/repos/zorin-customization/WhiteSur-icon-theme/install.sh" -u >/dev/null 2>&1 || true
+    fi
+    rm -rf "$HOME/.themes/WhiteSur"* 2>/dev/null || true
+    rm -rf "$HOME/.local/share/icons/WhiteSur"* 2>/dev/null || true
+    rm -rf "$HOME/.local/share/icons/McMojave"* 2>/dev/null || true
+    rm -rf "$HOME/.config/gtk-4.0/"* 2>/dev/null || true
+    rm -f "$HOME/.config/gtk-3.0/settings.ini" 2>/dev/null || true
+    rm -f "$HOME/.config/kdeglobals" 2>/dev/null || true
 
     # 6. Zatrzymanie Planka (proces + systemd) i usunięcie z autostartu
     log_info "Wyłączanie doku Plank..."
@@ -391,6 +408,11 @@ subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 
     log_info "Przywracanie domyślnych nagłówków w VS Code i Chrome..."
     configure_vscode_csd "custom"
     configure_chrome_csd "false"
+
+    # 8. Odświeżenie ramek okien X11/Qt/KDE (Mutter SSD)
+    log_info "Odświeżanie ramek okien menedżera okien (Mutter)..."
+    killall /usr/libexec/mutter-x11-frames 2>/dev/null || true
+    nohup /usr/libexec/mutter-x11-frames >/dev/null 2>&1 &
 
     log_ok "Pulpit został zresetowany do stanu fabrycznego Zorin OS."
 }
@@ -474,6 +496,12 @@ show_status() {
     echo -n "Style GTK4 / libadwaita:"
     if [ -f "$HOME/.config/gtk-4.0/gtk.css" ]; then
         echo -e "\033[1;35mWhiteSur Overrides Obecne\033[0m"
+    else
+        echo -e "\033[1;32mCzysty stan domyślny\033[0m"
+    fi
+    echo -n "Motywy w ~/.themes:     "
+    if [ -d "$HOME/.themes/WhiteSur-Light" ]; then
+        echo -e "\033[1;35mWhiteSur zainstalowany\033[0m"
     else
         echo -e "\033[1;32mCzysty stan domyślny\033[0m"
     fi
