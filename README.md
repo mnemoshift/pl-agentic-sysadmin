@@ -9,22 +9,23 @@ Tradycyjne podejście do konfiguracji systemu (ręczne wklepywanie komend, niesp
 
 ---
 
-## 🚀 Starting Points: Jak zacząć w 10 sekund
+## 🚀 Szybki Start: Uruchomienie w Antigravity 2.0
 
-Wybierz najwygodniejszą dla siebie ścieżkę wejścia do środowiska:
-
-### Ścieżka A (Rekomendowana – Szybki start z terminala)
-Jedna komenda klonuje repozytorium i natychmiast uruchamia je w środowisku **Antigravity 2.0**:
+### Krok 1: Pobranie repozytorium (Terminal)
+Wklej w terminalu polecenie klonowania:
 ```bash
-git clone https://github.com/mnemoshift/pl-agentic-sysadmin.git ~/workspaces/pl-agentic-sysadmin && antigravity ~/workspaces/pl-agentic-sysadmin
+git clone https://github.com/mnemoshift/pl-agentic-sysadmin.git ~/workspaces/pl-agentic-sysadmin
 ```
-*Od tego momentu zamykasz terminal — stery przejmuje Agent.*
 
-### Ścieżka B (Dla interfejsu graficznego GUI / Menu Zorina)
-1. Sklonuj repozytorium lub pobierz i rozpakuj ZIP do katalogu `~/workspaces/pl-agentic-sysadmin`.
-2. Uruchom **Antigravity 2.0** z menu aplikacji Zorina.
-3. W lewym panelu przejdź do zakładki **Projects** $\rightarrow$ kliknij **Add / Open Project** i wskaż folder `~/workspaces/pl-agentic-sysadmin`.
-4. Gotowe. Agent natychmiast załaduje reguły `AGENTS.md` oraz Core Skill `desktop-manager`.
+### Krok 2: Otwarcie i konfiguracja projektu w Antigravity 2.0
+1. Uruchom **Antigravity 2.0** (z menu aplikacji Zorina lub poleceniem `antigravity`).
+2. W lewym panelu bocznym przejdź do sekcji **Projects** $\rightarrow$ kliknij **Add Project** (lub **Open Folder**) i wskaż sklonowany katalog:  
+   `~/workspaces/pl-agentic-sysadmin`
+3. **Konfiguracja bezpieczeństwa (Potwierdzanie komend):**
+   * W prawym górnym rogu okna czatu / ustawieniach projektu:
+   * Ustaw **Tool Execution Policy** na `Request Review` (lub wyłącz *Auto-approve commands*).
+   * Dzięki temu Agent przed każdą modyfikacją systemu zaprezentuje plan operacyjny (*Implementation Plan*) i poprosi Cię o autoryzację komend shellowych.
+4. Gotowe — Agent natychmiast załaduje reguły `AGENTS.md` oraz Core Skill `desktop-manager`.
 
 ---
 
