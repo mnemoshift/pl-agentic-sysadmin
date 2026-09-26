@@ -87,21 +87,120 @@ for path in profiles:
 }
 
 # ------------------------------------------------------------------------------
-# 2. Wdrażanie profilu macOS (apply-macos)
+# 2. Zarządzanie repozytoriami motywów (WhiteSur, McMojave)
+# ------------------------------------------------------------------------------
+
+ensure_theme_repositories() {
+    local base_dir="$HOME/repos/zorin-customization"
+    mkdir -p "$base_dir"
+
+    # 1. WhiteSur GTK Theme
+    if [ ! -d "$base_dir/WhiteSur-gtk-theme" ]; then
+        log_info "Klonowanie WhiteSur-gtk-theme z GitHuba..."
+        git clone --depth 1 https://github.com/vinceliuice/WhiteSur-gtk-theme.git "$base_dir/WhiteSur-gtk-theme"
+    fi
+    log_info "Instalacja/aktualizacja motywu WhiteSur GTK..."
+    (cd "$base_dir/WhiteSur-gtk-theme" && ./install.sh -m -t default -l -c light >/dev/null 2>&1 || true)
+
+    # 2. WhiteSur Icon Theme
+    if [ ! -d "$base_dir/WhiteSur-icon-theme" ]; then
+        log_info "Klonowanie WhiteSur-icon-theme z GitHuba..."
+        git clone --depth 1 https://github.com/vinceliuice/WhiteSur-icon-theme.git "$base_dir/WhiteSur-icon-theme"
+    fi
+    log_info "Instalacja motywu ikon WhiteSur..."
+    (cd "$base_dir/WhiteSur-icon-theme" && ./install.sh >/dev/null 2>&1 || true)
+
+    # 3. McMojave Cursors
+    if [ ! -d "$base_dir/McMojave-cursors" ]; then
+        log_info "Klonowanie McMojave-cursors z GitHuba..."
+        git clone --depth 1 https://github.com/vinceliuice/McMojave-cursors.git "$base_dir/McMojave-cursors"
+    fi
+    log_info "Instalacja kursorów McMojave..."
+    (cd "$base_dir/McMojave-cursors" && ./install.sh >/dev/null 2>&1 || true)
+}
+
+# ------------------------------------------------------------------------------
+# 3. Konfiguracja doku Plank (Dual-Dock dla konfiguracji wielomonitorowej)
+# ------------------------------------------------------------------------------
+
+configure_plank_dual_dock() {
+    log_info "Konfiguracja podwójnego doku Plank (Dual-Dock: DP-4 + HDMI-0)..."
+
+    # Włącz obsługę wielu doków w Plank
+    dconf write /net/launchpad/plank/enabled-docks "['dock1', 'dock2']"
+
+    # Dok 1 (Ekran główny Ultrawide / DP-4): wszystkie przypięte aplikacje
+    dconf write /net/launchpad/plank/docks/dock1/monitor "'DP-4'"
+    dconf write /net/launchpad/plank/docks/dock1/position "'bottom'"
+    dconf write /net/launchpad/plank/docks/dock1/alignment "'center'"
+    dconf write /net/launchpad/plank/docks/dock1/theme "'Transparent'"
+    dconf write /net/launchpad/plank/docks/dock1/zoom-enabled "true"
+    dconf write /net/launchpad/plank/docks/dock1/show-dock-item "false"
+
+    # Dok 2 (Ekran nagraniowy 16:9 / HDMI-0): tylko aktywne aplikacje + menu
+    dconf write /net/launchpad/plank/docks/dock2/monitor "'HDMI-0'"
+    dconf write /net/launchpad/plank/docks/dock2/position "'bottom'"
+    dconf write /net/launchpad/plank/docks/dock2/alignment "'center'"
+    dconf write /net/launchpad/plank/docks/dock2/theme "'Transparent'"
+    dconf write /net/launchpad/plank/docks/dock2/zoom-enabled "true"
+    dconf write /net/launchpad/plank/docks/dock2/zoom-percent "150"
+    dconf write /net/launchpad/plank/docks/dock2/icon-size "48"
+    dconf write /net/launchpad/plank/docks/dock2/hide-mode "'intelligent'"
+    dconf write /net/launchpad/plank/docks/dock2/show-dock-item "false"
+    dconf write /net/launchpad/plank/docks/dock2/dock-items "['show-applications.dockitem', 'applications.dockitem']"
+
+    # Katalogi konfiguracji doków
+    mkdir -p "$HOME/.config/plank/dock1/launchers"
+    mkdir -p "$HOME/.config/plank/dock2/launchers"
+
+    # Zapewnij aktywatory menu w dock2
+    if [ ! -f "$HOME/.config/plank/dock2/launchers/applications.dockitem" ]; then
+        cat << 'EOF' > "$HOME/.config/plank/dock2/launchers/applications.dockitem"
+[PlankDockItemPreferences]
+Launcher=docklet://applications
+EOF
+    fi
+
+    if [ -f "$HOME/.local/share/applications/show-applications.desktop" ]; then
+        cat << 'EOF' > "$HOME/.config/plank/dock2/launchers/show-applications.dockitem"
+[PlankDockItemPreferences]
+Launcher=file:///home/jarek/.local/share/applications/show-applications.desktop
+EOF
+    fi
+
+    # Usuń z doku nagraniowego dock2 zbędne przypięte aplikacje (mają być tylko te aktualnie otwarte na HDMI-0)
+    rm -f "$HOME/.config/plank/dock2/launchers/"{antigravity,org.gnome.Terminal,org.gnome.Nautilus,google-chrome,code-url-handler,capcut}.dockitem 2>/dev/null || true
+
+    # Autostart i usługa systemd
+    mkdir -p "$HOME/.config/autostart"
+    if [ -f /usr/share/applications/plank.desktop ]; then
+        cp /usr/share/applications/plank.desktop "$HOME/.config/autostart/" 2>/dev/null || true
+    fi
+
+    if systemctl --user list-unit-files plank.service 2>/dev/null | grep -q "plank.service"; then
+        log_info "Restartowanie usługi Plank przez systemd user service..."
+        systemctl --user enable plank.service 2>/dev/null || true
+        systemctl --user restart plank.service 2>/dev/null || systemctl --user start plank.service 2>/dev/null || true
+    else
+        killall plank 2>/dev/null || true
+        nohup plank >/dev/null 2>&1 &
+        sleep 0.5
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 4. Wdrażanie profilu macOS (apply-macos)
 # ------------------------------------------------------------------------------
 
 apply_macos() {
     log_info "Wdrażanie profilu pulpitu macOS (WhiteSur)..."
 
-    # 1. Sprawdzenie i instalacja motywu WhiteSur jeśli dostępny w ~/repos
+    # 1. Sprawdzenie, klonowanie i instalacja motywów z GitHuba
+    ensure_theme_repositories
+
     local gtk_theme="WhiteSur-Light"
     local icon_theme="WhiteSur-light"
     local cursor_theme="McMojave-cursors"
-
-    if [ -d "$HOME/repos/zorin-customization/WhiteSur-gtk-theme" ]; then
-        log_info "Aktualizacja motywu WhiteSur GTK..."
-        (cd "$HOME/repos/zorin-customization/WhiteSur-gtk-theme" && ./install.sh -m -t default >/dev/null 2>&1 || true)
-    fi
 
     # 2. GNOME / Mutter ustawienia
     log_info "Konfiguracja motywów i kursora GNOME..."
@@ -118,23 +217,10 @@ apply_macos() {
     log_info "Przenoszenie paska systemowego Zorina na górę..."
     gnome-extensions enable zorin-taskbar@zorinos.com 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-position 'TOP' 2>/dev/null || true
-    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-positions '{}' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-positions '{"0":"TOP","1":"TOP"}' 2>/dev/null || true
 
-    # 5. Uruchomienie i autostart doku Plank na dole
-    log_info "Konfiguracja doku Plank..."
-    mkdir -p "$HOME/.config/autostart"
-    if [ -f /usr/share/applications/plank.desktop ]; then
-        cp /usr/share/applications/plank.desktop "$HOME/.config/autostart/" 2>/dev/null || true
-    fi
-    # Obsługa przez systemd --user jeśli usługa istnieje, w przeciwnym razie bezpośrednio
-    if systemctl --user list-unit-files plank.service 2>/dev/null | grep -q "plank.service"; then
-        log_info "Startowanie doku Plank przez systemd user service..."
-        systemctl --user enable --now plank.service 2>/dev/null || true
-    elif ! pgrep -x "plank" >/dev/null; then
-        log_info "Startowanie doku Plank w tle..."
-        nohup plank >/dev/null 2>&1 &
-        sleep 0.5
-    fi
+    # 5. Uruchomienie i konfiguracja podwójnego doku Plank na dole
+    configure_plank_dual_dock
 
     # 6. Unifikacja aplikacji CSD (VS Code & Google Chrome)
     log_info "Wymuszanie natywnej belki okna w VS Code i Google Chrome..."
@@ -230,6 +316,24 @@ show_status() {
         echo -e "\033[1;32mTAK\033[0m"
     else
         echo -e "\033[1;33mNIE\033[0m"
+    fi
+    echo -n "Plank multi-dock:      "
+    local enabled_docks
+    enabled_docks=$(dconf read /net/launchpad/plank/enabled-docks 2>/dev/null || echo "N/A")
+    echo "$enabled_docks"
+    if [[ "$enabled_docks" == *"dock1"* ]]; then
+        local m1
+        m1=$(dconf read /net/launchpad/plank/docks/dock1/monitor 2>/dev/null || echo "domyślny")
+        local count1
+        count1=$(ls -1 "$HOME/.config/plank/dock1/launchers" 2>/dev/null | wc -l)
+        echo "  -> dock1 (Monitor: $m1, przypiętych: $count1)"
+    fi
+    if [[ "$enabled_docks" == *"dock2"* ]]; then
+        local m2
+        m2=$(dconf read /net/launchpad/plank/docks/dock2/monitor 2>/dev/null || echo "domyślny")
+        local count2
+        count2=$(ls -1 "$HOME/.config/plank/dock2/launchers" 2>/dev/null | wc -l)
+        echo "  -> dock2 (Monitor: $m2, aktywatorów: $count2 — tylko otwarte okna + menu)"
     fi
     echo -n "Style GTK4 / libadwaita:"
     if [ -f "$HOME/.config/gtk-4.0/gtk.css" ]; then
