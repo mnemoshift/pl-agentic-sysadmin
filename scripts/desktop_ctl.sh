@@ -125,7 +125,12 @@ apply_macos() {
     if [ -f /usr/share/applications/plank.desktop ]; then
         cp /usr/share/applications/plank.desktop "$HOME/.config/autostart/" 2>/dev/null || true
     fi
-    if ! pgrep -x "plank" >/dev/null; then
+    # Obsługa przez systemd --user jeśli usługa istnieje, w przeciwnym razie bezpośrednio
+    if systemctl --user list-unit-files plank.service 2>/dev/null | grep -q "plank.service"; then
+        log_info "Startowanie doku Plank przez systemd user service..."
+        systemctl --user enable --now plank.service 2>/dev/null || true
+    elif ! pgrep -x "plank" >/dev/null; then
+        log_info "Startowanie doku Plank w tle..."
         nohup plank >/dev/null 2>&1 &
         sleep 0.5
     fi
@@ -159,14 +164,20 @@ reset_defaults() {
     gsettings set org.gnome.desktop.interface gtk-theme 'ZorinBlue-Light' || true
     gsettings set org.gnome.desktop.interface icon-theme 'ZorinBlue-Light' || true
     gsettings set org.gnome.desktop.interface cursor-theme 'Zorin' || true
-    gsettings reset org.gnome.shell.extensions.user-theme name 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.user-theme name '' 2>/dev/null || true
 
-    # 4. Zatrzymanie Planka i usunięcie z autostartu
+    # 4. Usunięcie nadpisań motywu WhiteSur w libadwaita/GTK4
+    log_info "Usuwanie nadpisań stylów GTK4 / libadwaita..."
+    rm -rf "$HOME/.config/gtk-4.0/"{gtk.css,gtk-dark.css,gtk-Light.css,gtk-Dark.css,assets,windows-assets} 2>/dev/null || true
+
+    # 5. Zatrzymanie Planka (systemd + proces) i usunięcie z autostartu
     log_info "Wyłączanie doku Plank..."
-    killall plank 2>/dev/null || true
+    systemctl --user stop plank.service 2>/dev/null || true
+    systemctl --user disable plank.service 2>/dev/null || true
+    killall -9 plank 2>/dev/null || true
     rm -f "$HOME/.config/autostart/plank.desktop"
 
-    # 5. Przywrócenie CSD dla VS Code i Chrome
+    # 6. Przywrócenie CSD dla VS Code i Chrome
     log_info "Przywracanie domyślnych nagłówków w VS Code i Chrome..."
     configure_vscode_csd "custom"
     configure_chrome_csd "false"
@@ -192,17 +203,31 @@ show_status() {
     gsettings get org.gnome.desktop.interface icon-theme
     echo -n "Kursor myszy:           "
     gsettings get org.gnome.desktop.interface cursor-theme
+    echo -n "Rozszerzenie user-theme:"
+    gsettings get org.gnome.shell.extensions.user-theme name 2>/dev/null || echo "N/A"
     echo -n "Dok Plank aktywny:      "
     if pgrep -x "plank" >/dev/null; then
         echo -e "\033[1;32mTAK (PID $(pgrep -x plank))\033[0m"
     else
-        echo -e "\033[1;33mNIE\033[0m"
+        echo -e "\033[1;33mNIE (nieaktywny)\033[0m"
+    fi
+    echo -n "Plank w systemd:        "
+    if systemctl --user is-active plank.service 2>/dev/null | grep -q "^active"; then
+        echo -e "\033[1;32mACTIVE (enabled: $(systemctl --user is-enabled plank.service 2>/dev/null || echo 'no'))\033[0m"
+    else
+        echo -e "\033[1;33mINACTIVE / DISABLED\033[0m"
     fi
     echo -n "Plank w autostarcie:    "
     if [ -f "$HOME/.config/autostart/plank.desktop" ]; then
         echo -e "\033[1;32mTAK\033[0m"
     else
         echo -e "\033[1;33mNIE\033[0m"
+    fi
+    echo -n "Style GTK4 / libadwaita:"
+    if [ -f "$HOME/.config/gtk-4.0/gtk.css" ]; then
+        echo -e "\033[1;35mWhiteSur Overrides Obecne\033[0m"
+    else
+        echo -e "\033[1;32mCzysty stan domyślny\033[0m"
     fi
     echo "=========================================================="
 }
