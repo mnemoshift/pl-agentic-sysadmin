@@ -60,25 +60,27 @@ Repozytorium utrzymuje ciągłość wiedzy między sesjami za pomocą dwóch uzu
 
 ---
 
-## 3. ARCHITEKTURA SAMOADAPTUJĄCYCH SIĘ SKILLI (ADAPTIVE SYSTEM SKILLS)
+## 3. ARCHITEKTURA DWUPOZIOMOWYCH SKILLI (CORE SKILLS VS LOCAL SKILLS)
 
-Kiedy użytkownik zleca Ci konfigurację pulpitu, zarządzanie dokiem, motywami, usługami lub procedurę resetu:
-1. **Zbadaj środowisko użytkownika:**
-   - Wykryj dystrybucję, wersję GNOME/KDE, typ sesji (X11/Wayland) oraz geometrię ekranów.
-2. **Wygeneruj lokalne narzędzie wykonawcze:**
-   - Zbuduj idempotentny, dedykowany skrypt `scripts/local_desktop_manager.sh` (lub narzędzie CLI) obsługujące parametry:
-     - `apply` — wdrożenie wybranego motywu, doku i układu ekranów,
-     - `reset` — bezpieczny powrót do domyślnego stanu systemu,
-     - `backup` / `restore` — migawka bieżących kluczy konfiguracyjnych i plików autostartu.
-3. **Zarejestruj lokalny Skill w `.agents/skills/desktop-manager/SKILL.md`:**
-   - Utwórz deklarację skilla z dokumentacją i procedurami, aby w kolejnych sesjach operować tym pulpitem bez powtórnego badania podstawowych parametrów.
-   - Pliki lokalne (`scripts/local_*`, `.agents/skills/`) są objęte `.gitignore`, dzięki czemu repozytorium pozostaje uniwersalne dla każdego użytkownika.
+Repozytorium wykorzystuje dwupoziomowy, bezkolizyjny system skilli dla agentów AI:
+
+1. **Core Skills (`.agents/skills/<nazwa>/SKILL.md` — Wersjonowane w Git):**
+   - Oficjalne standardy inżynieryjne dostarczane z repozytorium (np. `desktop-manager`).
+   - Wdrażają uniwersalne mechanizmy stacji roboczej, audyty oraz obsługę specyfiki systemowej (w tym rozwiązywanie problemów CSD w aplikacjach Electron/Chromium).
+   - Agent korzysta z nich w pierwszej kolejności i nie modyfikuje ich na potrzeby specyficzne dla jednego hosta.
+
+2. **Local / User Skills (`.agents/skills/local-*/SKILL.md` — Prywatne, objęte `.gitignore`):**
+   - Gdy stacja robocza wymaga unikalnej procedury (np. nietypowy układ trzech monitorów, dedykowany routing audio, niestandardowy menedżer okien), Agent tworzy lokalny skill o prefiksie `local-*` (np. `.agents/skills/local-monitors/SKILL.md`).
+   - Przestrzeń `local-*` jest całkowicie ignorowana przez Git, co gwarantuje, że użytkownik może bezkolizyjnie wykonywać `git pull` bez utraty wygenerowanych procedur.
 
 ---
 
 ## 4. INTERFEJS OPERACYJNY (MAKEFILE)
 
 Główne operacje stacji roboczej wywołuj poprzez ustandaryzowane komendy:
+- `make desktop-macos` — wdrożenie profilu emisyjnego macOS (WhiteSur, kropki po lewej, Plank, CSD fix),
+- `make desktop-reset` — natychmiastowe przywrócenie stanu fabrycznego pulpitu Zorin OS,
+- `make desktop-status` — podgląd aktywnego stanu motywów, paska, kontrolek i doku,
 - `make audit` — audyt fizycznego sprzętu (CPU, RAM, GPU, monitory, audio, kamery),
 - `make inventory` — audyt zainstalowanego oprogramowania i usług,
 - `make session-status` — podgląd aktywnego stanu pamięci sesyjnej,

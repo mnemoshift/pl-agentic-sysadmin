@@ -19,8 +19,11 @@ AGENTS.local.md
 *.bak_*
 scripts/local_*
 
-# Dynamically generated local agent skills (tailored per machine)
-.agents/skills/desktop-manager/
+# Dynamically generated user/local agent skills (tailored per machine, private)
+.agents/skills/local-*
+.agents/skills/user-*
+.agents/skills/custom-*
+.agents/skills/local/
 
 # General IDE and OS artifacts
 .DS_Store

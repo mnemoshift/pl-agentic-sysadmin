@@ -1,4 +1,4 @@
-.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run
+.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-reset desktop-status
 
 # Domyślny cel
 help:
@@ -9,6 +9,9 @@ help:
 	@echo "  make audit           - Wykonuje audyt fizycznego sprzętu (CPU, RAM, Storage, GPU, Audio, Kamery)"
 	@echo "  make inventory       - Wykonuje inwentaryzację oprogramowania (APT, Flatpak, Repozytoria, Runtimes)"
 	@echo "  make all-audits      - Uruchamia pełny zestaw audytów (sprzęt + oprogramowanie)"
+	@echo "  make desktop-macos   - Wdraża profil emisyjny macOS (WhiteSur, traffic lights po lewej, Plank, CSD)"
+	@echo "  make desktop-reset   - Przywraca stan fabryczny pulpitu Zorin OS (kropki po prawej, pasek na dole)"
+	@echo "  make desktop-status  - Sprawdza aktywny stan konfiguracji pulpitu i doku"
 	@echo "  make session-status  - Wyświetla aktualny stan z memory/SESSION_STATE.md"
 	@echo "  make session-log MSG=\"...\" - Dopisuje wpis ze znacznikiem czasu do memory/JOURNAL.md"
 	@echo "  make check           - Sprawdza integralność plików pamięci i inwentarza"
@@ -51,3 +54,15 @@ check:
 restore-dry-run:
 	@chmod +x scripts/restore_workstation.sh
 	@./scripts/restore_workstation.sh --dry-run
+
+desktop-macos:
+	@chmod +x scripts/desktop_ctl.sh
+	@./scripts/desktop_ctl.sh apply-macos
+
+desktop-reset:
+	@chmod +x scripts/desktop_ctl.sh
+	@./scripts/desktop_ctl.sh reset
+
+desktop-status:
+	@chmod +x scripts/desktop_ctl.sh
+	@./scripts/desktop_ctl.sh status
