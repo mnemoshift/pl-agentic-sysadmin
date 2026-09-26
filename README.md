@@ -9,24 +9,41 @@ Tradycyjne podejście do konfiguracji systemu (ręczne wklepywanie komend, niesp
 
 ---
 
-## ⚡ Szybki Start
+## 🚀 Starting Points: Jak zacząć w 10 sekund
 
+Wybierz najwygodniejszą dla siebie ścieżkę wejścia do środowiska:
+
+### Ścieżka A (Rekomendowana – Szybki start z terminala)
+Jedna komenda klonuje repozytorium i natychmiast uruchamia je w środowisku **Antigravity 2.0**:
 ```bash
-# 1. Klonowanie repozytorium
-git clone https://github.com/mnemoshift/pl-agentic-sysadmin.git
-cd pl-agentic-sysadmin
+git clone https://github.com/mnemoshift/pl-agentic-sysadmin.git ~/workspaces/pl-agentic-sysadmin && antigravity ~/workspaces/pl-agentic-sysadmin
+```
+*Od tego momentu zamykasz terminal — stery przejmuje Agent.*
 
-# 2. Wyświetlenie dostępnych poleceń interfejsu
+### Ścieżka B (Dla interfejsu graficznego GUI / Menu Zorina)
+1. Sklonuj repozytorium lub pobierz i rozpakuj ZIP do katalogu `~/workspaces/pl-agentic-sysadmin`.
+2. Uruchom **Antigravity 2.0** z menu aplikacji Zorina.
+3. W lewym panelu przejdź do zakładki **Projects** $\rightarrow$ kliknij **Add / Open Project** i wskaż folder `~/workspaces/pl-agentic-sysadmin`.
+4. Gotowe. Agent natychmiast załaduje reguły `AGENTS.md` oraz Core Skill `desktop-manager`.
+
+---
+
+## ⚡ Dostępne Polecenia Operacyjne (Makefile)
+
+Jeśli wolisz wywoływać procedury bezpośrednio z konsoli:
+```bash
+# Wyświetlenie wszystkich dostępnych komend
 make help
 
-# 3. Przeprowadzenie błyskawicznego audytu sprzętu (CPU, RAM, GPU, Audio, Kamery)
-make audit
+# 🖥️ Zarządzanie profilem pulpitu (Nowość z EP002)
+make desktop-macos   # Wdrożenie profilu emisyjnego macOS (WhiteSur, kropki po lewej, Plank, CSD fix)
+make desktop-reset   # Natychmiastowy powrót do stanu fabrycznego Zorin OS (1 sekunda)
+make desktop-status  # Audyt dekoracji okien, pozycji paska Zorina i doku
 
-# 4. Sprawdzenie zainstalowanego oprogramowania i usług
-make inventory
-
-# 5. Bezpieczna symulacja procedury Disaster Recovery (Dry-Run)
-make restore-dry-run
+# 🔍 Audyt sprzętu i oprogramowania
+make audit           # Audyt CPU, RAM, GPU, Audio, Kamery, Ekrany
+make inventory       # Living Inventory pakietów APT, Flatpak i repozytoriów
+make restore-dry-run # Bezpieczna symulacja Disaster Recovery
 ```
 
 ---
@@ -73,12 +90,9 @@ Co kluczowe dla użytkowników GitHuba: repozytorium rozdziela standard framewor
 - **`memory/SESSION_STATE.md` (Pamięć operacyjna / RAM):** Stan bieżący, aktywny cel sprintu, lista ukończonych zadań i parametry wykrytych monitorów.
 - **`memory/JOURNAL.md` (Pamięć trwała / Dysk):** Niezmienny, chronologiczny rejestr zdarzeń pod datą `[YYYY-MM-DD]` zawierający twarde dowody z konsoli.
 
-### 3. Samoadaptujące się Skille (Adaptive System Skills)
-Kiedy zlecasz agentowi konfigurację pulpitu (np. instalację doku Plank, zmianę motywów, optymalizację pod wiele monitorów) lub procedurę resetu:
-- Agent bada Twoją dystrybucję (Zorin, Ubuntu, Fedora, Arch) oraz środowisko graficzne (GNOME, KDE).
-- Generuje lokalne skrypty wykonawcze (`scripts/local_*`).
-- Rejestruje w projekcie lokalnego skilla `.agents/skills/desktop-manager/SKILL.md`.
-- Wszystkie pliki specyficzne dla danej maszyny są w `.gitignore`, co pozwala zachować repozytorium w 100% czystym stanie.
+### 3. Dwupoziomowe Skille (Core Skills vs Local Skills)
+- **Core Skills (`.agents/skills/`):** Gotowe, uniwersalne procedury dostarczane w Git przez twórcę (np. `desktop-manager` z obsługą specyfiki CSD w aplikacjach Electron/Chromium).
+- **Local Skills (`.agents/skills/local-*/`):** Gdy Agent na Twojej maszynie generuje specyficzną procedurę (np. niestandardowy układ trzech monitorów czy routing audio), zapisuje ją w przestrzeni `local-*` objętej `.gitignore`. Daje to 100% powtarzalności bez konfliktów przy kolejnych `git pull`.
 
 ### 4. Living Inventory & Disaster Recovery
 Każda zainstalowana aplikacja, biblioteka czy usługa jest katalogowana w `inventory/`. W razie awarii dysku procedura `make restore-dry-run` oraz `scripts/restore_workstation.sh` przywracają całe środowisko programistyczne w 3 minuty.
