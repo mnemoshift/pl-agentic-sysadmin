@@ -32,3 +32,4 @@ scripts/local_*
 .vscode/
 .idea/
 .obsidian/
+.trash/

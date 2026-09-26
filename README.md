@@ -1,4 +1,4 @@
-# `pl-agentic-sysadmin` — Autonomiczny Workstation Hub & Protokół AI SysAdmin (PL)
+# `pl-agentic-sysadmin` — Autonomiczny 'Workstation Hub' & Protokół Agentic AI SysAdmin (PL)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Channel: MnemoShift](https://img.shields.io/badge/YouTube-MnemoShift-red.svg)](https://youtube.com)
@@ -23,9 +23,12 @@ git clone https://github.com/mnemoshift/pl-agentic-sysadmin.git ~/workspaces/pl-
    `~/workspaces/pl-agentic-sysadmin`
 3. **Konfiguracja bezpieczeństwa (Potwierdzanie komend):**
    * W prawym górnym rogu okna czatu / ustawieniach projektu:
-   * Ustaw **Tool Execution Policy** na `Request Review` (lub wyłącz *Auto-approve commands*).
-   * Dzięki temu Agent przed każdą modyfikacją systemu zaprezentuje plan operacyjny (*Implementation Plan*) i poprosi Cię o autoryzację komend shellowych.
-4. Gotowe — Agent natychmiast załaduje reguły `AGENTS.md` oraz Core Skill `desktop-manager`.
+   * Ustaw **Agent Settings -> Security Preset** na `Default`.
+	   * Przy tym ustawieniu Agent poprosi Cię o autoryzację komend shellowych.
+   * Ustaw **Agent Behavior -> Artifact Review Policy** na `Always Ask`
+	   * Dzięki temu Agent przed każdą modyfikacją systemu zaprezentuje plan operacyjny (*Implementation Plan*) do akceptacji.
+   * Jeżeli nabierzesz zaufania, zmęczysz się ciągłą akceptacją, lub po prostu chcesz zostawić agenta by działał a ty zajmował się innymi sprawami, można rozluźnić te restrykcje by Agent otrzymał większą autonomię w działaniu.
+1. Gotowe — Agent natychmiast załaduje reguły `AGENTS.md` oraz Core Skill `desktop-manager`.
 
 ---
 
@@ -53,30 +56,30 @@ make restore-dry-run # Bezpieczna symulacja Disaster Recovery
 
 ```mermaid
 graph TD
-    User([Inżynier / Twórca]) <--> Agent[Agent AI w Antigravity IDE]
+    User([Inżynier / Twórca / Ty]) <--> Agent[Agent AI w Antigravity 2.0]
     
     subgraph Protokół i Pamięć
         AGENTS[AGENTS.md - Zasada Zero-Guessing]
         STATE[memory/SESSION_STATE.md - Aktywny RAM]
-        JRNL[memory/JOURNAL.md - Pamięć trwała ISO]
+        MEMORY[memory/JOURNAL.md - Pamięć trwała ISO]
     end
 
     subgraph Diagnostyka i Fakty
-        Audit[scripts/audit_hardware.sh - make audit]
-        Inv[inventory/ - Living Inventory]
-        Make[Makefile - Interfejs operacyjny]
+        Audit[scripts/audit_hardware.sh & make audit - audyt systemu]
+        Inventory[inventory/ - lista zasobów]
+        Make[Makefile - Deterministyczny interfejs operacyjny]
     end
 
     subgraph Adaptacja i Skille
-        Skills[.agents/skills/ - Lokalne skille agenta]
-        LocalScripts[scripts/local_* - Idempotentne skrypty stacji]
+        Skills[.agents/skills/ - Dostarczone oraz Lokalne skille agenta]
+        LocalScripts[scripts/local_* - Deterministyczne i Idempotentne skrypty]
     end
 
     Agent --> AGENTS
     Agent <--> STATE
-    Agent --> JRNL
+    Agent --> MEMORY
     Agent --> Audit
-    Agent --> Inv
+    Agent --> Inventory
     Agent --> Make
     Agent --> Skills
     Agent --> LocalScripts
@@ -85,14 +88,14 @@ graph TD
 ### 1. Zasada Zero-Guessing & Bezkolizyjne Aktualizacje (`AGENTS.md` + `AGENTS.local.md`)
 Agent AI **nie ma prawa zgadywać** stanu Twojej maszyny. Każda zmiana jest poprzedzona audytem stanu faktycznego (*Pre-flight check*), wykonana atomowo z kopią zapasową i zweryfikowana po zakończeniu (*Post-flight verification*).
 
-Co kluczowe dla użytkowników GitHuba: repozytorium rozdziela standard frameworka (`AGENTS.md`) od Twoich prywatnych reguł (`AGENTS.local.md` w `.gitignore`). Możesz w dowolnym momencie wykonać `git pull` po nowe funkcje od twórcy, a Twoje lokalne preferencje (KDE, inny dok, własne monitory) pozostaną w 100% nienaruszone (zero konfliktów Git).
+Co kluczowe dla użytkowników GitHuba: repozytorium rozdziela standard frameworka (`AGENTS.md`) od Twoich prywatnych reguł (`AGENTS.local.md` w `.gitignore`). Możesz w dowolnym momencie wykonać `git pull` po nowe funkcje z githuba, a Twoje lokalne preferencje (KDE, inny dok, własne monitory) pozostaną w 100% nienaruszone (zero konfliktów Git).
 
 ### 2. Dwuwarstwowa Pamięć Międzysesyjna (Dual-Layer Memory)
-- **`memory/SESSION_STATE.md` (Pamięć operacyjna / RAM):** Stan bieżący, aktywny cel sprintu, lista ukończonych zadań i parametry wykrytych monitorów.
-- **`memory/JOURNAL.md` (Pamięć trwała / Dysk):** Niezmienny, chronologiczny rejestr zdarzeń pod datą `[YYYY-MM-DD]` zawierający twarde dowody z konsoli.
+- **`memory/SESSION_STATE.md` (Pamięć operacyjna / RAM):** Stan bieżący, aktywny cel aktywnych sesji, lista ostatnio ukończonych zadań.
+- **`memory/JOURNAL.md` (Pamięć trwała / Dysk):** Niezmienny (append-only), chronologiczny rejestr zdarzeń zorganizowany w oparciu o daty `[YYYY-MM-DD]` zawierający wykonane operacje, oraz podjęte decyzje.
 
 ### 3. Dwupoziomowe Skille (Core Skills vs Local Skills)
-- **Core Skills (`.agents/skills/`):** Gotowe, uniwersalne procedury dostarczane w Git przez twórcę (np. `desktop-manager` z obsługą specyfiki CSD w aplikacjach Electron/Chromium).
+- **Core Skills (`.agents/skills/`):** Gotowe, uniwersalne procedury dostarczane w Git  (np. `desktop-manager` z obsługą specyfiki CSD w aplikacjach Electron/Chromium).
 - **Local Skills (`.agents/skills/local-*/`):** Gdy Agent na Twojej maszynie generuje specyficzną procedurę (np. niestandardowy układ trzech monitorów czy routing audio), zapisuje ją w przestrzeni `local-*` objętej `.gitignore`. Daje to 100% powtarzalności bez konfliktów przy kolejnych `git pull`.
 
 ### 4. Living Inventory & Disaster Recovery
