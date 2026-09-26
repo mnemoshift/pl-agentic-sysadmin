@@ -189,7 +189,64 @@ EOF
 }
 
 # ------------------------------------------------------------------------------
-# 4. Wdrażanie profilu macOS (apply-macos)
+# 4. Konfiguracja górnego paska Zorin OS w stylu macOS
+# ------------------------------------------------------------------------------
+
+configure_zorin_top_panel() {
+    log_info "Konfiguracja smukłego paska górnego w stylu macOS (bez apek, zegar na środku, menu Zorin)..."
+    gnome-extensions enable zorin-taskbar@zorinos.com 2>/dev/null || true
+    gnome-extensions enable zorin-menu@zorinos.com 2>/dev/null || true
+
+    # Pozycja TOP na wszystkich monitorach
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-position 'TOP' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-positions '{"0":"TOP","1":"TOP"}' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar multi-monitors true 2>/dev/null || true
+
+    # Likwidacja drugiego pustego paska GNOME (stockgs-keep-top-panel=false)
+    gsettings set org.gnome.shell.extensions.zorin-taskbar stockgs-keep-top-panel false 2>/dev/null || true
+
+    # Smukła wysokość a la macOS (28px zamiast 48px) oraz brak marginesu
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-size 28 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-sizes '{"0":28,"1":28}' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-margin 0 2>/dev/null || true
+
+    # Ukrycie aplikacji w pasku (aplikacje są w doku Plank na dole)
+    gsettings set org.gnome.shell.extensions.zorin-taskbar show-running-apps false 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar show-favorites false 2>/dev/null || true
+
+    # Rozmieszczenie elementów w pasku:
+    # Lewa strona: leftBox (menu Zorin)
+    # Środek: dateMenu (zegar i data w centrum ekranu - styl macOS)
+    # Prawa strona: systemMenu (zasilanie, sieć, głośność) + rightBox (tacka)
+    # Wyłączone: taskbar (okna/apki), showAppsButton, activitiesButton, desktopButton
+    python3 -c "
+import subprocess, json
+
+elements = [
+    {'element': 'showAppsButton', 'visible': False, 'position': 'stackedTL'},
+    {'element': 'activitiesButton', 'visible': False, 'position': 'stackedTL'},
+    {'element': 'leftBox', 'visible': True, 'position': 'stackedTL'},
+    {'element': 'taskbar', 'visible': False, 'position': 'stackedTL'},
+    {'element': 'dateMenu', 'visible': True, 'position': 'centerMonitor'},
+    {'element': 'centerBox', 'visible': False, 'position': 'stackedBR'},
+    {'element': 'systemMenu', 'visible': True, 'position': 'stackedBR'},
+    {'element': 'rightBox', 'visible': True, 'position': 'stackedBR'},
+    {'element': 'desktopButton', 'visible': False, 'position': 'stackedBR'}
+]
+
+positions = {'0': elements, '1': elements}
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions', json.dumps(positions)], check=False)
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions-monitors-sync', 'true'], check=False)
+" 2>/dev/null || true
+
+    # Przeładowanie rozszerzenia, aby natychmiast zaaplikować nową geometrię
+    gnome-extensions disable zorin-taskbar@zorinos.com 2>/dev/null || true
+    sleep 0.2
+    gnome-extensions enable zorin-taskbar@zorinos.com 2>/dev/null || true
+}
+
+# ------------------------------------------------------------------------------
+# 5. Wdrażanie profilu macOS (apply-macos)
 # ------------------------------------------------------------------------------
 
 apply_macos() {
@@ -213,11 +270,8 @@ apply_macos() {
     log_info "Ustawianie kontrolek okien (traffic lights) po lewej stronie..."
     gsettings set org.gnome.desktop.wm.preferences button-layout 'close,minimize,maximize:'
 
-    # 4. Przeniesienie paska Zorin na górę (jak w macOS / likwidacja kolizji z dokiem)
-    log_info "Przenoszenie paska systemowego Zorina na górę..."
-    gnome-extensions enable zorin-taskbar@zorinos.com 2>/dev/null || true
-    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-position 'TOP' 2>/dev/null || true
-    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-positions '{"0":"TOP","1":"TOP"}' 2>/dev/null || true
+    # 4. Konfiguracja smukłego paska Zorin na górze ekranu (macOS menu bar)
+    configure_zorin_top_panel
 
     # 5. Uruchomienie i konfiguracja podwójnego doku Plank na dole
     configure_plank_dual_dock
@@ -231,7 +285,7 @@ apply_macos() {
 }
 
 # ------------------------------------------------------------------------------
-# 3. Przywracanie stanu domyślnego (reset / vanilla Zorin)
+# 6. Przywracanie stanu domyślnego (reset / vanilla Zorin)
 # ------------------------------------------------------------------------------
 
 reset_defaults() {
@@ -246,12 +300,24 @@ reset_defaults() {
     log_info "Przywracanie kontrolek okien na prawą stronę..."
     gsettings set org.gnome.desktop.wm.preferences button-layout 'appmenu:minimize,maximize,close'
 
-    # 3. Pasek systemowy na dół ekranu (na wszystkich monitorach)
+    # 3. Pasek systemowy na dół ekranu (na wszystkich monitorach, standardowa wysokość 48px)
     log_info "Konfiguracja dolnego paska zadań Zorina..."
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-position 'BOTTOM' 2>/dev/null || true
-    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-positions '{}' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-positions '{"0":"BOTTOM","1":"BOTTOM"}' 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar multi-monitors true 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar stockgs-keep-top-panel false 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-size 48 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-sizes '{}' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-margin 4 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar show-running-apps true 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar show-favorites true 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-element-positions '{}' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-element-positions-monitors-sync true 2>/dev/null || true
+
+    # Przeładowanie paska zadań Zorina
+    gnome-extensions disable zorin-taskbar@zorinos.com 2>/dev/null || true
+    sleep 0.2
+    gnome-extensions enable zorin-taskbar@zorinos.com 2>/dev/null || true
 
     # 4. Motyw Zorin domyślny
     log_info "Przywracanie motywów fabrycznych Zorina..."
@@ -264,11 +330,11 @@ reset_defaults() {
     log_info "Usuwanie nadpisań stylów GTK4 / libadwaita..."
     rm -rf "$HOME/.config/gtk-4.0/"{gtk.css,gtk-dark.css,gtk-Light.css,gtk-Dark.css,assets,windows-assets} 2>/dev/null || true
 
-    # 6. Zatrzymanie Planka (systemd + proces) i usunięcie z autostartu
+    # 6. Zatrzymanie Planka (proces + systemd) i usunięcie z autostartu
     log_info "Wyłączanie doku Plank..."
+    killall -9 plank 2>/dev/null || true
     systemctl --user stop plank.service 2>/dev/null || true
     systemctl --user disable plank.service 2>/dev/null || true
-    killall -9 plank 2>/dev/null || true
     rm -f "$HOME/.config/autostart/plank.desktop"
 
     # 7. Przywrócenie CSD dla VS Code i Chrome
@@ -291,6 +357,26 @@ show_status() {
     gsettings get org.gnome.desktop.wm.preferences button-layout
     echo -n "Pozycja paska Zorina:   "
     gsettings get org.gnome.shell.extensions.zorin-taskbar panel-position 2>/dev/null || echo "N/A"
+    echo -n "Wysokość paska Zorina:  "
+    local psize
+    psize=$(gsettings get org.gnome.shell.extensions.zorin-taskbar panel-size 2>/dev/null || echo "48")
+    echo "${psize}px"
+    echo -n "Aplikacje w pasku:      "
+    local show_apps
+    show_apps=$(gsettings get org.gnome.shell.extensions.zorin-taskbar show-running-apps 2>/dev/null || echo "true")
+    if [ "$show_apps" = "false" ]; then
+        echo -e "\033[1;32mUkryte (przeniesione do doku Plank)\033[0m"
+    else
+        echo -e "\033[1;33mWidoczne (domyślny taskbar)\033[0m"
+    fi
+    echo -n "Układ zegara i daty:    "
+    local elem_pos
+    elem_pos=$(gsettings get org.gnome.shell.extensions.zorin-taskbar panel-element-positions 2>/dev/null || echo "")
+    if [[ "$elem_pos" == *"centerMonitor"* ]]; then
+        echo -e "\033[1;32mWyśrodkowany (macOS / GNOME)\033[0m"
+    else
+        echo -e "\033[1;33mDomyślny (po prawej)\033[0m"
+    fi
     echo -n "Motyw GTK:              "
     gsettings get org.gnome.desktop.interface gtk-theme
     echo -n "Motyw ikon:             "
