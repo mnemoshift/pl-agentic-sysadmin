@@ -116,8 +116,9 @@ apply_macos() {
 
     # 4. Przeniesienie paska Zorin na górę (jak w macOS / likwidacja kolizji z dokiem)
     log_info "Przenoszenie paska systemowego Zorina na górę..."
+    gnome-extensions enable zorin-taskbar@zorinos.com 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-position 'TOP' 2>/dev/null || true
-    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-positions '{"0":"TOP","1":"TOP"}' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-positions '{}' 2>/dev/null || true
 
     # 5. Uruchomienie i autostart doku Plank na dole
     log_info "Konfiguracja doku Plank..."
@@ -150,34 +151,41 @@ apply_macos() {
 reset_defaults() {
     log_info "Przywracanie domyślnych ustawień pulpitu Zorin OS (Vanilla Reset)..."
 
-    # 1. Kropki okien na prawą stronę
+    # 1. Włączenie natywnych rozszerzeń paska zadań i menu Zorina (Layout 1 / Windows Style)
+    log_info "Włączanie rozszerzeń paska i menu Zorina..."
+    gnome-extensions enable zorin-taskbar@zorinos.com 2>/dev/null || true
+    gnome-extensions enable zorin-menu@zorinos.com 2>/dev/null || true
+
+    # 2. Kropki okien na prawą stronę
     log_info "Przywracanie kontrolek okien na prawą stronę..."
     gsettings set org.gnome.desktop.wm.preferences button-layout 'appmenu:minimize,maximize,close'
 
-    # 2. Pasek systemowy na dół ekranu
-    log_info "Przenoszenie paska systemowego na dół..."
+    # 3. Pasek systemowy na dół ekranu (na wszystkich monitorach)
+    log_info "Konfiguracja dolnego paska zadań Zorina..."
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-position 'BOTTOM' 2>/dev/null || true
-    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-positions '{"0":"BOTTOM","1":"BOTTOM"}' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-positions '{}' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar multi-monitors true 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar stockgs-keep-top-panel false 2>/dev/null || true
 
-    # 3. Motyw Zorin domyślny
+    # 4. Motyw Zorin domyślny
     log_info "Przywracanie motywów fabrycznych Zorina..."
     gsettings set org.gnome.desktop.interface gtk-theme 'ZorinBlue-Light' || true
     gsettings set org.gnome.desktop.interface icon-theme 'ZorinBlue-Light' || true
     gsettings set org.gnome.desktop.interface cursor-theme 'Zorin' || true
     gsettings set org.gnome.shell.extensions.user-theme name '' 2>/dev/null || true
 
-    # 4. Usunięcie nadpisań motywu WhiteSur w libadwaita/GTK4
+    # 5. Usunięcie nadpisań motywu WhiteSur w libadwaita/GTK4
     log_info "Usuwanie nadpisań stylów GTK4 / libadwaita..."
     rm -rf "$HOME/.config/gtk-4.0/"{gtk.css,gtk-dark.css,gtk-Light.css,gtk-Dark.css,assets,windows-assets} 2>/dev/null || true
 
-    # 5. Zatrzymanie Planka (systemd + proces) i usunięcie z autostartu
+    # 6. Zatrzymanie Planka (systemd + proces) i usunięcie z autostartu
     log_info "Wyłączanie doku Plank..."
     systemctl --user stop plank.service 2>/dev/null || true
     systemctl --user disable plank.service 2>/dev/null || true
     killall -9 plank 2>/dev/null || true
     rm -f "$HOME/.config/autostart/plank.desktop"
 
-    # 6. Przywrócenie CSD dla VS Code i Chrome
+    # 7. Przywrócenie CSD dla VS Code i Chrome
     log_info "Przywracanie domyślnych nagłówków w VS Code i Chrome..."
     configure_vscode_csd "custom"
     configure_chrome_csd "false"
