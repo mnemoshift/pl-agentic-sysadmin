@@ -1,12 +1,8 @@
 ### Cel / Intencja
-* Oczekiwany efekt: Maksymalne podobieństwo do pulpitu MacOS - przezroczysty i animowany dok  na dole, górny smukły pasek statusu (28px) z wyśrodkowanym zegarem i menu Zorin z lewej strony, kropki okien (traffic lights) po lewej stronie, kursor macOS.
----
-### Inicjalizacja Agentic Way w Antigravity 2.0
-- README - sekcja: **Szybki Start: Uruchomienie w Antigravity 2.0**
-
+> Oczekiwany efekt: Maksymalne podobieństwo do pulpitu MacOS - przezroczysty i animowany dok  na dole, górny smukły pasek statusu (28px) z wyśrodkowanym zegarem i menu Zorin z lewej strony, kropki okien (traffic lights) po lewej stronie, kursor macOS.
 ---
 ### Reset do stanu domyślnego po instalacji (Vanilla Reset #1)
-- W celach prezentacyjnych - powrót do ustawień domyślnych Zorina:
+> W celach prezentacyjnych - powrót do ustawień domyślnych Zorina:
 
 ```bash
 make desktop-reset
@@ -98,20 +94,23 @@ mkdir -p ~/.config/Code/User && echo '{"window.titleBarStyle": "native"}' > ~/.c
 ```
 
 ---
+### Inicjalizacja Agentic Way w Antigravity 2.0
+> README - sekcja: **Szybki Start: Uruchomienie w Antigravity 2.0**
 
+---
 ### Prompt (Czysta intencja bez komend konfiguracji)
 - Stan bieżący - pulpit w  motywie domyślnym
 - Wklej lub podyktuj głosem do Agenta w ramach nowej sesji w założonym projekcie:
 
-> *Przygotuj ten system tak aby pulpit i uruchamiane aplikacje wygłądały w sposób maksymalnie podobny do pulpitu w MacOS.  
+> *Przygotuj ten system tak aby pulpit i uruchamiane aplikacje wyglądały w sposób maksymalnie podobny do pulpitu w MacOS.  
 
 Następująca część promptu powinna być konsekwencją instrukcji w AGENTS.md (nie wklejamy)
-> 1. Przeprowadź audyt sprzętu i podłączonych monitorów.  
-> 2. Przedstaw mi plan konfiguracji i poproś o zatwierdzenie.  
-> 3. Wykonaj to deterministycznie i udokumentuj fakty w dzienniku sesji.
+> *1. Przeprowadź audyt sprzętu i podłączonych monitorów.  
+> 1. Przedstaw mi plan konfiguracji i poproś o zatwierdzenie.  
+> 2. Wykonaj to deterministycznie i udokumentuj fakty w dzienniku sesji.*
 
 Następująca część prompta powinna być wynikiem analizy i 'inteligencji' agenta (nie wklejamy).
-> 1. Skonfiguruj pulpit: pobierz i skompiluj motyw WhiteSur z GitHuba, włącz kolorowe kontrolki okien (traffic lights) po lewej stronie (w tym natywne belki CSD dla VS Code i Chrome), kursor macOS, podwójny dok Plank na dole (na monitorze głównym Ultrawide pełen zestaw skrótów, a na ekranie nagraniowym 16:9 minimalistyczny dok z aktywnymi oknami i menu), smukły górny pasek Zorina o wysokości 28px na obydwu monitorach (bez listy otwartych okien – te mają być wyłącznie w doku Plank na dole, z wyśrodkowanym zegarem i datą, oraz z menu Zorin po lewej stronie pod znaczkiem Zorina; bez podwójnego paska) oraz skonfiguruj autostart. Wykorzystaj wbudowane w repozytorium skille i kontrolery.  
+> *Skonfiguruj pulpit: pobierz i skompiluj motyw WhiteSur z GitHuba, włącz kolorowe kontrolki okien (traffic lights) po lewej stronie (w tym natywne belki CSD dla VS Code i Chrome), kursor macOS, podwójny dok Plank na dole (na monitorze głównym Ultrawide pełen zestaw skrótów, a na ekranie nagraniowym 16:9 minimalistyczny dok z aktywnymi oknami i menu), smukły górny pasek Zorina o wysokości 28px na obydwu monitorach (bez listy otwartych okien – te mają być wyłącznie w doku Plank na dole, z wyśrodkowanym zegarem i datą, oraz z menu Zorin po lewej stronie pod znaczkiem Zorina; bez podwójnego paska) oraz skonfiguruj autostart. Wykorzystaj wbudowane w repozytorium skille i kontrolery.*
 
 ---
 
@@ -121,7 +120,7 @@ Następująca część prompta powinna być wynikiem analizy i 'inteligencji' ag
 ---
 
 ### Interaktywna Korekta na Żywo (Aha-Moment: Elastyczność Agenta)
-- Weryfikacja VS Code - jeżeli brak MaOSowej belki
+- Weryfikacja VS Code - jeżeli brak MacOSowej belki
 
 > *VS Code nie ma belki stylizowanej pod MacOS - wprowadź niezbędne zmiany.*
 
@@ -133,10 +132,7 @@ Następująca część prompta powinna być wynikiem analizy i 'inteligencji' ag
 * **Oczekiwane Działanie Agenta:** Agent odczytuje `~/.config/Code/User/settings.json`, usuwa wpis `window.titleBarStyle: native` i raportuje zmianę.
 * **Efekt na ekranie:** VS Code wymaga restartu - okno wraca do eleganckiego, bezramkowego paska, podczas gdy reszta systemu ma traffic lights.
 
-### Zastosowanie skill'a z repo
-- Dopracowanie pulpitu wymagało pracy z agentem
-- Bez potrzeby ręcznego edytowania, ale problemy wymagały zgłaszania ich do agenta, który sukcesywnie je naprawiał
-
-### Puenta na koniec
-  - **sedno pracy z Agentic SysAdminem:** to nie jest sztywny, jednorazowy instalator, z którym musisz walczyć. To interaktywny partner — mówisz po ludzku, co Ci się nie podoba, a on atomowo dostosowuje środowisko pod Twoje preferencje.”*
-* Wyświetl wpis w `memory/JOURNAL.md` oraz wykonaj `make restore-dry-run` jako dowód powtarzalności Disaster Recovery!
+### Podsumowanie
+  - **sedno pracy z Agentic SysAdminem:** to nie jest sztywny, jednorazowy instalator, z którym musisz walczyć. To interaktywny partner — mówisz po ludzku, co Ci się nie podoba, a on atomowo dostosowuje środowisko pod Twoje preferencje.
+  - korzysta ze skryptów (skills), ale reaguje na błędy, specyfike intencji, poprawia je i wykorzystuje w innych kontekstach
+  - Wyświetl wpis w `memory/JOURNAL.md` oraz wykonaj `make restore-dry-run` jako dowód powtarzalności Disaster Recovery!
