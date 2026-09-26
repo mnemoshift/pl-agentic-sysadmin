@@ -171,6 +171,21 @@ EOF
     # Usuń z doku nagraniowego dock2 zbędne przypięte aplikacje (mają być tylko te aktualnie otwarte na HDMI-0)
     rm -f "$HOME/.config/plank/dock2/launchers/"{antigravity,org.gnome.Terminal,org.gnome.Nautilus,google-chrome,code-url-handler,capcut}.dockitem 2>/dev/null || true
 
+    # Usuń uszkodzony/pusty element capcut z doku głównego dock1
+    rm -f "$HOME/.config/plank/dock1/launchers/capcut.dockitem" 2>/dev/null || true
+    python3 -c "
+import subprocess
+try:
+    res = subprocess.run(['dconf', 'read', '/net/launchpad/plank/docks/dock1/dock-items'], stdout=subprocess.PIPE, text=True)
+    if res.stdout and 'capcut.dockitem' in res.stdout:
+        val = res.stdout.strip()
+        items = eval(val)
+        items = [x for x in items if x != 'capcut.dockitem']
+        subprocess.run(['dconf', 'write', '/net/launchpad/plank/docks/dock1/dock-items', str(items)], check=False)
+except Exception:
+    pass
+" 2>/dev/null || true
+
     # Autostart i usługa systemd
     mkdir -p "$HOME/.config/autostart"
     if [ -f /usr/share/applications/plank.desktop ]; then
@@ -199,7 +214,6 @@ configure_zorin_top_panel() {
 
     # Pozycja TOP na wszystkich monitorach
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-position 'TOP' 2>/dev/null || true
-    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-positions '{"0":"TOP","1":"TOP"}' 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar multi-monitors true 2>/dev/null || true
 
     # Likwidacja drugiego pustego paska GNOME (stockgs-keep-top-panel=false)
@@ -207,7 +221,6 @@ configure_zorin_top_panel() {
 
     # Smukła wysokość a la macOS (28px zamiast 48px) oraz brak marginesu
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-size 28 2>/dev/null || true
-    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-sizes '{"0":28,"1":28}' 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-margin 0 2>/dev/null || true
 
     # Ukrycie aplikacji w pasku (aplikacje są w doku Plank na dole)
@@ -220,7 +233,25 @@ configure_zorin_top_panel() {
     # Prawa strona: systemMenu (zasilanie, sieć, głośność) + rightBox (tacka)
     # Wyłączone: taskbar (okna/apki), showAppsButton, activitiesButton, desktopButton
     python3 -c "
-import subprocess, json
+import json, subprocess
+keys = ['0', '1']
+try:
+    import dbus
+    bus = dbus.SessionBus()
+    proxy = bus.get_object('org.gnome.Mutter.DisplayConfig', '/org/gnome/Mutter/DisplayConfig')
+    iface = dbus.Interface(proxy, 'org.gnome.Mutter.DisplayConfig')
+    serial, monitors, logical_monitors, properties = iface.GetCurrentState()
+    for i, lm in enumerate(logical_monitors):
+        keys.append(str(i))
+        mon = lm[5][0]
+        connector, vendor, product, mon_serial = mon[0], mon[1], mon[2], mon[3]
+        if vendor and mon_serial:
+            keys.append(f'{vendor}-{mon_serial}')
+        if connector:
+            keys.append(str(connector))
+except Exception:
+    pass
+keys = list(set(keys))
 
 elements = [
     {'element': 'showAppsButton', 'visible': False, 'position': 'stackedTL'},
@@ -234,15 +265,15 @@ elements = [
     {'element': 'desktopButton', 'visible': False, 'position': 'stackedBR'}
 ]
 
-positions = {'0': elements, '1': elements}
-subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions', json.dumps(positions)], check=False)
+pos_dict = {k: 'TOP' for k in keys}
+size_dict = {k: 28 for k in keys}
+elem_dict = {k: elements for k in keys}
+
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-positions', json.dumps(pos_dict)], check=False)
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-sizes', json.dumps(size_dict)], check=False)
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions', json.dumps(elem_dict)], check=False)
 subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions-monitors-sync', 'true'], check=False)
 " 2>/dev/null || true
-
-    # Przeładowanie rozszerzenia, aby natychmiast zaaplikować nową geometrię
-    gnome-extensions disable zorin-taskbar@zorinos.com 2>/dev/null || true
-    sleep 0.2
-    gnome-extensions enable zorin-taskbar@zorinos.com 2>/dev/null || true
 }
 
 # ------------------------------------------------------------------------------
@@ -303,21 +334,40 @@ reset_defaults() {
     # 3. Pasek systemowy na dół ekranu (na wszystkich monitorach, standardowa wysokość 48px)
     log_info "Konfiguracja dolnego paska zadań Zorina..."
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-position 'BOTTOM' 2>/dev/null || true
-    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-positions '{"0":"BOTTOM","1":"BOTTOM"}' 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar multi-monitors true 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar stockgs-keep-top-panel false 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-size 48 2>/dev/null || true
-    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-sizes '{}' 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-margin 4 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar show-running-apps true 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar show-favorites true 2>/dev/null || true
-    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-element-positions '{}' 2>/dev/null || true
-    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-element-positions-monitors-sync true 2>/dev/null || true
 
-    # Przeładowanie paska zadań Zorina
-    gnome-extensions disable zorin-taskbar@zorinos.com 2>/dev/null || true
-    sleep 0.2
-    gnome-extensions enable zorin-taskbar@zorinos.com 2>/dev/null || true
+    python3 -c "
+import json, subprocess
+keys = ['0', '1']
+try:
+    import dbus
+    bus = dbus.SessionBus()
+    proxy = bus.get_object('org.gnome.Mutter.DisplayConfig', '/org/gnome/Mutter/DisplayConfig')
+    iface = dbus.Interface(proxy, 'org.gnome.Mutter.DisplayConfig')
+    serial, monitors, logical_monitors, properties = iface.GetCurrentState()
+    for i, lm in enumerate(logical_monitors):
+        keys.append(str(i))
+        mon = lm[5][0]
+        connector, vendor, product, mon_serial = mon[0], mon[1], mon[2], mon[3]
+        if vendor and mon_serial:
+            keys.append(f'{vendor}-{mon_serial}')
+        if connector:
+            keys.append(str(connector))
+except Exception:
+    pass
+keys = list(set(keys))
+pos_dict = {k: 'BOTTOM' for k in keys}
+size_dict = {k: 48 for k in keys}
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-positions', json.dumps(pos_dict)], check=False)
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-sizes', json.dumps(size_dict)], check=False)
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions', '{}'], check=False)
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions-monitors-sync', 'true'], check=False)
+" 2>/dev/null || true
 
     # 4. Motyw Zorin domyślny
     log_info "Przywracanie motywów fabrycznych Zorina..."
