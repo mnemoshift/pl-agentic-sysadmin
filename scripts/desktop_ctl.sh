@@ -312,11 +312,6 @@ apply_macos() {
     configure_vscode_csd "native"
     configure_chrome_csd "true"
 
-    # 7. Odświeżenie ramek okien X11/Qt/KDE (Mutter SSD)
-    log_info "Odświeżanie ramek okien menedżera okien (Mutter)..."
-    killall /usr/libexec/mutter-x11-frames 2>/dev/null || true
-    nohup /usr/libexec/mutter-x11-frames >/dev/null 2>&1 &
-
     log_ok "Profil macOS został pomyślnie zaaplikowany."
 }
 
@@ -408,11 +403,6 @@ subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 
     log_info "Przywracanie domyślnych nagłówków w VS Code i Chrome..."
     configure_vscode_csd "custom"
     configure_chrome_csd "false"
-
-    # 8. Odświeżenie ramek okien X11/Qt/KDE (Mutter SSD)
-    log_info "Odświeżanie ramek okien menedżera okien (Mutter)..."
-    killall /usr/libexec/mutter-x11-frames 2>/dev/null || true
-    nohup /usr/libexec/mutter-x11-frames >/dev/null 2>&1 &
 
     log_ok "Pulpit został zresetowany do stanu fabrycznego Zorin OS."
 }
