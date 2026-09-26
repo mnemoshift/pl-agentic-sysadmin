@@ -25,8 +25,8 @@ make restore-dry-run
 ```bash
 mkdir -p ~/workspaces/mnemoshift
 cd ~/workspaces/mnemoshift
-git clone https://github.com/mnemoshift/agentic-sysadmin.git
-cd agentic-sysadmin
+git clone https://github.com/mnemoshift/pl-agentic-sysadmin.git
+cd pl-agentic-sysadmin
 ```
 
 ### KROK 2: Weryfikacja Sprzętu

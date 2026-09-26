@@ -1,11 +1,11 @@
-# `agentic-sysadmin` — Autonomous Workstation Hub & AI SysAdmin Protocol
+# `pl-agentic-sysadmin` — Autonomiczny Workstation Hub & Protokół AI SysAdmin (PL)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Channel: MnemoShift](https://img.shields.io/badge/YouTube-MnemoShift-red.svg)](https://youtube.com)
 
-> *Autonomiczne centrum kontroli, audytu i odtwarzania stacji roboczej Linux, współpracujące w modelu ciągłej pamięci z agentami AI (Antigravity IDE, Claude Code).*
+> *Autonomiczne centrum kontroli, audytu i odtwarzania stacji roboczej Linux, współpracujące w modelu ciągłej pamięci z agentami AI (Antigravity IDE, Claude Code) — edycja polskojęzyczna.*
 
-Tradycyjne podejście do konfiguracji systemu (ręczne wklepywanie komend, niespójne dotfiles, amnezja chatbotów w przeglądarce) zawodzi w erze inżynierii agentowej. **`agentic-sysadmin`** zamienia Twoje repozytorium w żyjący hub stacji roboczej, który daje agentowi AI oczy (audyt sprzętu), ręce (deterministyczne skrypty i Makefile) oraz trwałą pamięć.
+Tradycyjne podejście do konfiguracji systemu (ręczne wklepywanie komend, niespójne dotfiles, amnezja chatbotów w przeglądarce) zawodzi w erze inżynierii agentowej. **`pl-agentic-sysadmin`** zamienia Twoje repozytorium w żyjący hub stacji roboczej, który daje agentowi AI oczy (audyt sprzętu), ręce (deterministyczne skrypty i Makefile) oraz trwałą pamięć.
 
 ---
 
@@ -13,8 +13,8 @@ Tradycyjne podejście do konfiguracji systemu (ręczne wklepywanie komend, niesp
 
 ```bash
 # 1. Klonowanie repozytorium
-git clone https://github.com/mnemoshift/agentic-sysadmin.git
-cd agentic-sysadmin
+git clone https://github.com/mnemoshift/pl-agentic-sysadmin.git
+cd pl-agentic-sysadmin
 
 # 2. Wyświetlenie dostępnych poleceń interfejsu
 make help
