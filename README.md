@@ -1,7 +1,9 @@
 # `pl-agentic-sysadmin` — Autonomiczny 'Workstation Hub' & Protokół Agentic AI SysAdmin (PL)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Channel: MnemoShift](https://img.shields.io/badge/YouTube-MnemoShift-red.svg)](https://youtube.com)
+[![Channel: MnemoShift](https://img.shields.io/badge/YouTube-MnemoShift-red.svg)](https://www.youtube.com/@mnemoshift)
+
+> 🌐 **English Documentation:** Looking for the English guide and quickstart? [Read README_EN.md](README_EN.md).
 
 > *Autonomiczne centrum kontroli, audytu i odtwarzania stacji roboczej Linux, współpracujące w modelu ciągłej pamięci z agentami AI (Antigravity IDE, Claude Code) — edycja polskojęzyczna.*
 
@@ -106,7 +108,7 @@ Każda zainstalowana aplikacja, biblioteka czy usługa jest katalogowana w `inve
 ## 📺 Materiał Wideo (YouTube)
 
 Odcinek instruktażowy prezentujący działanie tego repozytorium krok po kroku oraz kontrast między pracą w terminalu a trybem Agentic:
-- 🎬 **MnemoShift EP002:** *Pulpit Zorin OS: Terminal Oldschool vs Agentic SysAdmin (Od zera w Antigravity)* — [Obejrzyj na YouTube](https://youtube.com)
+- 🎬 **MnemoShift EP002:** *Pulpit Zorin OS: Terminal Oldschool vs Agentic SysAdmin (Od zera w Antigravity)* — [Obejrzyj na YouTube](https://www.youtube.com/watch?v=wEVas1TWCns)
 
 ---
 
