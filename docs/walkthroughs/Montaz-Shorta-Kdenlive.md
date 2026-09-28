@@ -57,36 +57,28 @@ melt work/EP002_Short/EP002_Short.kdenlive -consumer avformat:work/EP002_Short/o
 Otwierasz Antigravity w głównym katalogu `pl-agentic-sysadmin`. Agent automatycznie ładuje reguły z `AGENTS.md` oraz serwer `kdenlive-mcp`.
 
 #### Krok 1: Weryfikacja środowiska i narzędzi montażowych
-Wklejasz do czatu:
-> *Sprawdź konfigurację serwera MCP kdenlive oraz dostępność silnika melt i naszych narzędzi w scripts/media/.*
+Wklejasz lub dyktujesz do czatu:
+> *Sprawdź, czy mamy skonfigurowany serwer Kdenlive i gotowe narzędzia do montażu wideo.*
 
 * **Działanie Agenta:** Wywołuje narzędzia MCP `mcp_kdenlive_*`, sprawdza wersję silnika `melt` oraz obecność modułów w `scripts/media/`.
 
 #### Krok 2: Audyt i automatyczne czyszczenie audio
-> *Przeanalizuj surowe nagranie z OBS-a w work/EP002_Short/input/raw_voiceover.mp4. Użyj naszego modułu scripts/media/clean_audio.py: wytnij początkową ciszę, falstart przed 30 sekundą oraz martwy ogon. Znormalizuj głośność do standardu -14 LUFS (EBU R128) i zapisz czysty plik WAV w work/EP002_Short/assets/EP002_Short_VoiceOver_CLEAN.wav.*
+> *Przeanalizuj to surowe nagranie z OBS-a. Wytnij początkową ciszę, falstart przed 30 sekundą oraz martwy ogon. Wyrównaj głośność pod YouTube i przygotuj czysty dźwięk do montażu.*
 
-* **Działanie Agenta:** Odpala skrypt, obcina nagranie do przedziału `[00:00:00.200 - 00:00:30.600]`, aplikuje dwuprzebiegowy filtr EBU R128 i weryfikuje głośność. W lewym panelu pojawia się folder `assets/` z czystym dźwiękiem.
+* **Działanie Agenta:** Lokalizuje nagranie w `work/EP002_Short/input/`, obcina nagranie do przedziału `[00:00:00.200 - 00:00:30.600]`, aplikuje dwuprzebiegowy filtr EBU R128 i weryfikuje głośność. W lewym panelu pojawia się folder `assets/` z czystym dźwiękiem oraz raport w czacie (-14.0 LUFS).
 
 #### Krok 3: Generacja kadrów 9:16 pod ujęcia wertykalne
-> *Wygeneruj 3 grafiki koncepcyjne 9:16 do pierwszych 3 scen Shorta i zapisz w work/EP002_Short/assets/:*
-> *1. Cybernetyczny rdzeń decyzyjny (Agentic SysAdmin).*
-> *2. Złożony labirynt plików konfiguracyjnych i dotfiles.*
-> *3. Czyste biurko: laptop w tle z domyślnym pulpitem Zorina, laptop na pierwszym planie z pulpitem w stylu macOS (dok Plank, okna traffic lights).*
-> *Warunek krytyczny: górna 1/3 kadru musi być ciemna i pozbawiona jakichkolwiek napisów.*
+> *Wygeneruj 3 grafiki pionowe do pierwszych scen: cybernetyczny rdzeń decyzyjny, chaos w plikach konfiguracyjnych i minimalistyczny pulpit w stylu macOS. Zostaw ciemną górę bez tekstu pod napisy.*
 
 * **Działanie Agenta:** Generuje grafiki z zachowaniem zasady ciemnej góry kadru, aby nie kolidowały z tytułami tekstowymi.
 
 #### Krok 4: Zbudowanie osi czasu Kdenlive (Kaskada rozmycia + Tytuły)
-> *Zbuduj projekt Kdenlive 1080x1920 @ 60fps w work/EP002_Short/EP002_Short.kdenlive przy użyciu naszego generatora scripts/media/build_kdenlive_short.py:*
-> *- Na ścieżce audio A1 umieść assets/EP002_Short_VoiceOver_CLEAN.wav.*
-> *- Na ścieżkach wideo ułóż 3 grafiki oraz 2 wycinki z input/footage_ep002.mp4.*
-> *- Zastosuj kaskadę: na dolnej ścieżce V1 powiększone, rozmyte tło (gblur), na ścieżce V2 ostry obraz z cieniem.*
-> *- Na ścieżce V3 dodaj plansze tytułowe dla każdej z 5 fraz z fontem Inter Black.*
+> *Zbuduj projekt Kdenlive w pionie na bazie przygotowanego dźwięku. Rozmieść grafiki i fragmenty wideo z poprzedniego odcinka, dodaj rozmyte tło dla poziomych klipów i plansze tytułowe.*
 
-* **Działanie Agenta:** Wykorzystuje szablon MLT XML, mapuje zasoby na ścieżki i tworzy gotowy plik `.kdenlive`.
+* **Działanie Agenta:** Wykorzystuje szablon MLT XML, mapuje zasoby na ścieżki i tworzy gotowy plik `.kdenlive` z kaskadą kompozycji `qtblend`.
 
 #### Krok 5: Dynamiczne napisy CapCut Karaoke (Whisper + ASS)
-> *Wygeneruj dynamiczne napisy w stylu CapCut Karaoke dla pliku work/EP002_Short/assets/EP002_Short_VoiceOver_CLEAN.wav przy użyciu modułu scripts/media/generate_karaoke.py (lub make media-karaoke z flagą FAST=1). Sformatuj je jako plik ASS z fontem Inter Black 76px, białym tekstem, 10px czarnym obrysem i neonowo-zielonym podświetleniem aktywnego słowa (#00FF66). Zapisz w work/EP002_Short/assets/EP002_Short_Karaoke.ass i podepnij pod projekt Kdenlive.*
+> *Wygeneruj dynamiczne napisy karaoke w stylu CapCuta ze skaczącym zielonym podświetleniem słów i podepnij je pod nasz projekt Kdenlive.*
 
 * **Działanie Agenta:** Whisper analizuje audio ze znacznikami czasu dla każdego słowa, grupuje je po 2-3 wyrazy, generuje klatki ASS z podświetleniem neonową zielenią i podpina filtr `avfilter.subtitles` do projektu Kdenlive.
 
