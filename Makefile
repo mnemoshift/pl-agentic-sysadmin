@@ -1,4 +1,4 @@
-.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-reset desktop-status
+.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-reset desktop-status media-clean-audio media-karaoke media-build-short
 
 # Domyślny cel
 help:
@@ -16,6 +16,10 @@ help:
 	@echo "  make session-log MSG=\"...\" - Dopisuje wpis ze znacznikiem czasu do memory/JOURNAL.md"
 	@echo "  make check           - Sprawdza integralność plików pamięci i inwentarza"
 	@echo "  make restore-dry-run - Symuluje procedurę odtworzenia Disaster Recovery bez wprowadzania zmian"
+	@echo "  --- Narzędzia Wideo & Audio (Kdenlive & Studio) ---"
+	@echo "  make media-clean-audio INPUT=... OUTPUT=... [START=...] [END=...] [LUFS=-14.0]"
+	@echo "  make media-karaoke AUDIO=... OUTPUT=... [FAST=1] [FONT=...]"
+	@echo "  make media-build-short WORKSPACE=... [NAME=EP002_Short]"
 	@echo "=========================================================="
 
 audit:
@@ -66,3 +70,37 @@ desktop-reset:
 desktop-status:
 	@chmod +x scripts/desktop_ctl.sh
 	@./scripts/desktop_ctl.sh status
+
+media-clean-audio:
+	@if [ -z "$(INPUT)" ] || [ -z "$(OUTPUT)" ]; then \
+		echo "[BŁĄD] Wymagane parametry INPUT i OUTPUT. Przykład:"; \
+		echo "  make media-clean-audio INPUT=input.mp4 OUTPUT=clean.wav [START=00:00:00.200] [END=00:00:30.600] [LUFS=-14.0]"; \
+		exit 1; \
+	fi
+	@chmod +x scripts/media/clean_audio.py
+	@./scripts/media/clean_audio.py -i "$(INPUT)" -o "$(OUTPUT)" \
+		$(if $(START),--start "$(START)") \
+		$(if $(END),--end "$(END)") \
+		$(if $(LUFS),--lufs "$(LUFS)")
+
+media-karaoke:
+	@if [ -z "$(AUDIO)" ] || [ -z "$(OUTPUT)" ]; then \
+		echo "[BŁĄD] Wymagane parametry AUDIO i OUTPUT. Przykład:"; \
+		echo "  make media-karaoke AUDIO=voice.wav OUTPUT=subtitles.ass [FAST=1]"; \
+		exit 1; \
+	fi
+	@chmod +x scripts/media/generate_karaoke.py
+	@uv run scripts/media/generate_karaoke.py -a "$(AUDIO)" -o "$(OUTPUT)" \
+		$(if $(FAST),--fast) \
+		$(if $(FONT),--font "$(FONT)") \
+		$(if $(HIGHLIGHT),--highlight "$(HIGHLIGHT)")
+
+media-build-short:
+	@if [ -z "$(WORKSPACE)" ]; then \
+		echo "[BŁĄD] Wymagany parametr WORKSPACE. Przykład:"; \
+		echo "  make media-build-short WORKSPACE=~/workspaces/EP002_Short [NAME=EP002_Short]"; \
+		exit 1; \
+	fi
+	@chmod +x scripts/media/build_kdenlive_short.py
+	@./scripts/media/build_kdenlive_short.py -w "$(WORKSPACE)" $(if $(NAME),-n "$(NAME)")
+

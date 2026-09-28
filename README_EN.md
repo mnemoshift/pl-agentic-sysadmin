@@ -57,6 +57,11 @@ make desktop-status  # Audit window decorations, Zorin panel position, and Plank
 make audit           # Audit CPU, RAM, GPU, audio daemons, cameras, and display outputs
 make inventory       # Living inventory of installed APT packages, Flatpaks, and repositories
 make restore-dry-run # Safe dry-run simulation of workstation disaster recovery
+
+# 🎬 Media & Video Automation (New in EP003 - Kdenlive & Whisper)
+make media-clean-audio INPUT=raw.mp4 OUTPUT=clean.wav START=00:00:00.200 END=00:00:30.600
+make media-karaoke AUDIO=clean.wav OUTPUT=subtitles.ass FAST=1
+make media-build-short WORKSPACE=~/workspaces/EP002_Short
 ```
 
 ---

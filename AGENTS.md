@@ -85,7 +85,11 @@ Główne operacje stacji roboczej wywołuj poprzez ustandaryzowane komendy:
 - `make inventory` — audyt zainstalowanego oprogramowania i usług,
 - `make session-status` — podgląd aktywnego stanu pamięci sesyjnej,
 - `make restore-dry-run` — symulacja odtworzenia stacji roboczej (Disaster Recovery),
-- `make check` — weryfikacja integralności repozytorium.
+- `make check` — weryfikacja integralności repozytorium,
+- `make media-clean-audio` — audyt, przycięcie ciszy/falstartów i normalizacja audio do -14 LUFS (EBU R128),
+- `make media-karaoke` — generowanie dynamicznych napisów ASS (CapCut Karaoke) z lokalnym Whisperem,
+- `make media-build-short` — automatyczny montaż wertykalnego projektu Kdenlive 9:16 (kaskada rozmycia + napisy).
+
 
 ---
 
