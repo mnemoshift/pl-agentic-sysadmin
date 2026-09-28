@@ -33,3 +33,10 @@ scripts/local_*
 .idea/
 .obsidian/
 .trash/
+
+# Local production workspaces and scratch media (excluded from git)
+/work/
+work/
+/workspaces/
+workspaces/
+

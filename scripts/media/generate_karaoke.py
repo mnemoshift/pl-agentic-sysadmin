@@ -67,9 +67,13 @@ def generate_karaoke(args):
 
     output_ass.parent.mkdir(parents=True, exist_ok=True)
 
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    default_ref_ass = repo_root / "templates" / "kdenlive" / "short_karaoke_reference.ass"
+
     cache_candidates = []
     if args.cache:
         cache_candidates.append(args.cache)
+    cache_candidates.append(default_ref_ass)
     cache_candidates.append(audio_path.parent / ".cache" / "EP002_Short_Karaoke.ass")
     cache_candidates.append(audio_path.parent / "EP002_Short_Karaoke.ass")
 

@@ -30,18 +30,22 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
 
     print(f"[Kdenlive] Generowanie osi czasu projektu: {target_kdenlive.name} w {workspace}...")
 
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    default_template = repo_root / "templates" / "kdenlive" / "short_9_16_template.kdenlive"
+
     # Szukanie referencyjnego pliku .kdenlive
     candidates_kdenlive = []
     if ref_kdenlive_path:
         candidates_kdenlive.append(ref_kdenlive_path)
     candidates_kdenlive.extend([
+        default_template,
         workspace / "assets" / ".cache" / f"{name}_Agentic_SysAdmin_reference.kdenlive",
         workspace / f"{name}.kdenlive"
     ])
 
     ref_kdenlive = next((p for p in candidates_kdenlive if p.exists()), None)
     if not ref_kdenlive:
-        print(f"[BŁĄD] Nie znaleziono pliku referencyjnego .kdenlive w {workspace}", file=sys.stderr)
+        print(f"[BŁĄD] Nie znaleziono pliku referencyjnego .kdenlive w {workspace} ani w {default_template}", file=sys.stderr)
         sys.exit(1)
 
     content = ref_kdenlive.read_text(encoding="utf-8")
@@ -60,13 +64,16 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
     new_sub_prop = f"<property name=\"av.filename\">{target_sidecar.resolve()}</property>"
     content = content.replace(old_sub_prop, new_sub_prop)
 
+    default_template_ass = repo_root / "templates" / "kdenlive" / f"short_9_16_template.kdenlive{seq_uuid}-1.ass"
+
     # Szukanie referencyjnego pliku ASS
     candidates_ass = []
     if ref_ass_path:
         candidates_ass.append(ref_ass_path)
     candidates_ass.extend([
-        workspace / "assets" / ".cache" / f"{name}_Agentic_SysAdmin_reference.kdenlive{seq_uuid}-1.ass",
         workspace / "assets" / f"{name}_Karaoke.ass",
+        default_template_ass,
+        workspace / "assets" / ".cache" / f"{name}_Agentic_SysAdmin_reference.kdenlive{seq_uuid}-1.ass",
         target_sidecar
     ])
 
