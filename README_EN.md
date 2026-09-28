@@ -59,9 +59,9 @@ make inventory       # Living inventory of installed APT packages, Flatpaks, and
 make restore-dry-run # Safe dry-run simulation of workstation disaster recovery
 
 # 🎬 Media & Video Automation (New in EP003 - Kdenlive & Whisper)
-make media-clean-audio INPUT=raw.mp4 OUTPUT=clean.wav START=00:00:00.200 END=00:00:30.600
-make media-karaoke AUDIO=clean.wav OUTPUT=subtitles.ass FAST=1
-make media-build-short WORKSPACE=~/workspaces/EP002_Short
+make media-clean-audio INPUT=work/EP002_Short/input/raw_voiceover.mp4 OUTPUT=work/EP002_Short/assets/clean.wav START=00:00:00.200 END=00:00:30.600
+make media-karaoke AUDIO=work/EP002_Short/assets/clean.wav OUTPUT=work/EP002_Short/assets/subtitles.ass FAST=1
+make media-build-short WORKSPACE=work/EP002_Short
 ```
 
 ---
@@ -114,6 +114,14 @@ To prevent merge hell, the framework strictly decouples upstream core logic (`AG
 
 ### 4. Living Inventory & Disaster Recovery
 Every installed tool, library, and system extension is continuously logged in `inventory/`. In the event of a disk failure or machine migration, `make restore-dry-run` and `scripts/restore_workstation.sh` recreate the entire developer environment in under 3 minutes.
+
+---
+
+## 📚 Interactive Walkthroughs & Playbooks
+
+Explore practical end-to-end sessions in `docs/walkthroughs/` comparing legacy terminal toil against modern Agentic workflows:
+- 🖥️ [**macOS-style Desktop on Zorin OS**](docs/walkthroughs/Desktop-a-la-MacOS.md) — GNOME desktop transformation, dual Plank docks, WhiteSur styling, and CSD headerbar fixes.
+- 🎬 [**Autonomous YouTube Short Editing in Kdenlive with Agentic AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) — zero-subscription, local alternative to CapCut Pro: audio audit & normalization (-14 LUFS), 9:16 timeline composition, and dynamic karaoke subtitles (Whisper + ASS).
 
 ---
 

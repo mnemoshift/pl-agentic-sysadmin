@@ -52,9 +52,9 @@ make inventory       # Living Inventory pakietów APT, Flatpak i repozytoriów
 make restore-dry-run # Bezpieczna symulacja Disaster Recovery
 
 # 🎬 Automatyzacja Mediów i Wideo (Nowość z EP003 - Kdenlive & Whisper)
-make media-clean-audio INPUT=raw.mp4 OUTPUT=clean.wav START=00:00:00.200 END=00:00:30.600
-make media-karaoke AUDIO=clean.wav OUTPUT=subtitles.ass FAST=1
-make media-build-short WORKSPACE=~/workspaces/EP002_Short
+make media-clean-audio INPUT=work/EP002_Short/input/raw_voiceover.mp4 OUTPUT=work/EP002_Short/assets/clean.wav START=00:00:00.200 END=00:00:30.600
+make media-karaoke AUDIO=work/EP002_Short/assets/clean.wav OUTPUT=work/EP002_Short/assets/subtitles.ass FAST=1
+make media-build-short WORKSPACE=work/EP002_Short
 ```
 
 ---
@@ -107,6 +107,14 @@ Co kluczowe dla użytkowników GitHuba: repozytorium rozdziela standard framewor
 
 ### 4. Living Inventory & Disaster Recovery
 Każda zainstalowana aplikacja, biblioteka czy usługa jest katalogowana w `inventory/`. W razie awarii dysku procedura `make restore-dry-run` oraz `scripts/restore_workstation.sh` przywracają całe środowisko programistyczne w 3 minuty.
+
+---
+
+## 📚 Praktyczne Scenariusze i Przewodniki (Walkthroughs)
+
+W katalogu `docs/walkthroughs/` znajdziesz szczegółowe scenariusze sesji z agentem z porównaniem tradycyjnego klepania komend w terminalu vs podejścia agentowego:
+- 🖥️ [**Pulpit à la macOS na Zorin OS**](docs/walkthroughs/Desktop-a-la-MacOS.md) — transformacja środowiska graficznego GNOME, podwójny dok Plank, styl WhiteSur i naprawa belek CSD.
+- 🎬 [**Autonomiczny Montaż Shorta w Kdenlive z Agentem AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) — bezpłatna, lokalna alternatywa dla CapCuta: audyt i normalizacja audio (-14 LUFS), kaskadowy montaż 9:16 i dynamiczne napisy karaoke (Whisper + ASS).
 
 ---
 
