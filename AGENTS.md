@@ -65,9 +65,11 @@ Repozytorium utrzymuje ciągłość wiedzy między sesjami za pomocą dwóch uzu
 Repozytorium wykorzystuje dwupoziomowy, bezkolizyjny system skilli dla agentów AI:
 
 1. **Core Skills (`.agents/skills/<nazwa>/SKILL.md` — Wersjonowane w Git):**
-   - Oficjalne standardy inżynieryjne dostarczane z repozytorium (np. `desktop-manager`).
-   - Wdrażają uniwersalne mechanizmy stacji roboczej, audyty oraz obsługę specyfiki systemowej (w tym rozwiązywanie problemów CSD w aplikacjach Electron/Chromium).
-   - Agent korzysta z nich w pierwszej kolejności i nie modyfikuje ich na potrzeby specyficzne dla jednego hosta.
+   - Oficjalne standardy inżynieryjne dostarczane z repozytorium:
+     * `desktop-manager` — zarządzanie profilami pulpitu (macOS / vanilla Zorin), unifikacja CSD i dok Plank.
+     * `media-short-editor` — automatyzacja montażu wideo 9:16 w Kdenlive, obróbka audio z OBS-a i napisy Whisper Karaoke.
+   - Wdrażają uniwersalne mechanizmy stacji roboczej, audyty oraz obsługę specyfiki systemowej.
+   - Agent korzysta z nich w pierwszej kolejności na bazie krótkich, jednozdaniowych promptów intencyjnych.
 
 2. **Local / User Skills (`.agents/skills/local-*/SKILL.md` — Prywatne, objęte `.gitignore`):**
    - Gdy stacja robocza wymaga unikalnej procedury (np. nietypowy układ trzech monitorów, dedykowany routing audio, niestandardowy menedżer okien), Agent tworzy lokalny skill o prefiksie `local-*` (np. `.agents/skills/local-monitors/SKILL.md`).

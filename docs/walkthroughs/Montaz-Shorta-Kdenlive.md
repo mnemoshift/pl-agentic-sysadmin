@@ -57,30 +57,30 @@ melt work/EP002_Short/EP002_Short.kdenlive -consumer avformat:work/EP002_Short/o
 Otwierasz Antigravity w głównym katalogu `pl-agentic-sysadmin`. Agent automatycznie ładuje reguły z `AGENTS.md` oraz serwer `kdenlive-mcp`.
 
 #### Krok 1: Weryfikacja środowiska i narzędzi montażowych
-Wklejasz lub dyktujesz do czatu:
-> *Sprawdź, czy mamy skonfigurowany serwer Kdenlive i gotowe narzędzia do montażu wideo.*
+Wklejasz lub dyktujesz do czatu (obsługiwane przez skill `media-short-editor`):
+> *Sprawdź gotowość Kdenlive i narzędzi multimedialnych.*
 
 * **Działanie Agenta:** Wywołuje narzędzia MCP `mcp_kdenlive_*`, sprawdza wersję silnika `melt` oraz obecność modułów w `scripts/media/`.
 
 #### Krok 2: Audyt i automatyczne czyszczenie audio
-> *Przeanalizuj to surowe nagranie z OBS-a. Wytnij początkową ciszę, falstart przed 30 sekundą oraz martwy ogon. Wyrównaj głośność pod YouTube i przygotuj czysty dźwięk do montażu.*
+> *Oczyść surowe nagranie z OBS-a i przygotuj dźwięk do montażu.*
 
-* **Działanie Agenta:** Lokalizuje nagranie w `work/EP002_Short/input/`, obcina nagranie do przedziału `[00:00:00.200 - 00:00:30.600]`, aplikuje dwuprzebiegowy filtr EBU R128 i weryfikuje głośność. W lewym panelu pojawia się folder `assets/` z czystym dźwiękiem oraz raport w czacie (-14.0 LUFS).
+* **Działanie Agenta:** Lokalizuje nagranie w `work/EP002_Short/input/raw_voiceover.mp4`, wycina początkową ciszę, falstart przed 30 sekundą oraz martwy ogon, aplikuje dwuprzebiegowy filtr EBU R128 (-14 LUFS) i zapisuje plik w `assets/EP002_Short_VoiceOver_CLEAN.wav` wraz z raportem.
 
 #### Krok 3: Generacja kadrów 9:16 pod ujęcia wertykalne
-> *Wygeneruj 3 grafiki pionowe do pierwszych scen: cybernetyczny rdzeń decyzyjny, chaos w plikach konfiguracyjnych i minimalistyczny pulpit w stylu macOS. Zostaw ciemną górę bez tekstu pod napisy.*
+> *Wygeneruj 3 pionowe grafiki koncepcyjne z ciemną górą pod tytuły.*
 
-* **Działanie Agenta:** Generuje grafiki z zachowaniem zasady ciemnej góry kadru, aby nie kolidowały z tytułami tekstowymi.
+* **Działanie Agenta:** Generuje 3 grafiki w `work/EP002_Short/assets/` (rdzeń decyzyjny AI, labirynt configów, minimalistyczny pulpit macOS) z zachowaniem zasady ciemnej góry kadru pod napisy tytułowe.
 
 #### Krok 4: Zbudowanie osi czasu Kdenlive (Kaskada rozmycia + Tytuły)
-> *Zbuduj projekt Kdenlive w pionie na bazie przygotowanego dźwięku. Rozmieść grafiki i fragmenty wideo z poprzedniego odcinka, dodaj rozmyte tło dla poziomych klipów i plansze tytułowe.*
+> *Zmontuj pionowy projekt Kdenlive z kaskadowym tłem i tytułami.*
 
-* **Działanie Agenta:** Wykorzystuje szablon MLT XML, mapuje zasoby na ścieżki i tworzy gotowy plik `.kdenlive` z kaskadą kompozycji `qtblend`.
+* **Działanie Agenta:** Wykorzystuje szablon MLT XML, mapuje zasoby na ścieżki i tworzy gotowy plik `.kdenlive` z kaskadą kompozycji `qtblend` (rozmyte tło V1, ostry klip V2, plansze tytułowe V3, audio A1).
 
 #### Krok 5: Dynamiczne napisy CapCut Karaoke (Whisper + ASS)
-> *Wygeneruj dynamiczne napisy karaoke w stylu CapCuta ze skaczącym zielonym podświetleniem słów i podepnij je pod nasz projekt Kdenlive.*
+> *Wygeneruj dynamiczne napisy karaoke CapCuta i podepnij pod projekt.*
 
-* **Działanie Agenta:** Whisper analizuje audio ze znacznikami czasu dla każdego słowa, grupuje je po 2-3 wyrazy, generuje klatki ASS z podświetleniem neonową zielenią i podpina filtr `avfilter.subtitles` do projektu Kdenlive.
+* **Działanie Agenta:** Whisper analizuje audio ze znacznikami czasu dla każdego słowa, grupuje je po 2-3 wyrazy, generuje klatki ASS z podświetleniem neonową zielenią `#00FF66`, systemowo zabezpiecza przed nakładaniem się klatek (monotonic timeline) i podpina filtr `avfilter.subtitles` do projektu Kdenlive.
 
 ---
 
