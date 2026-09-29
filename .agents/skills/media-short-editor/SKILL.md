@@ -71,11 +71,9 @@ Agent interpretuje krótkie, jednozdaniowe polecenia użytkownika i automatyczni
 ### Krok 3: Generacja grafik pionowych 9:16
 * **Prompt użytkownika:** `Wygeneruj 3 pionowe grafiki koncepcyjne z ciemną górą pod tytuły.`
 * **Działanie Agenta:**
-  1. Pobiera treść i czasy trwania pierwszych 3 scen z wygenerowanego w Kroku 2 pliku transkrypcji (`EP002_Short_Transcript.md`):
-     - **Scena 1 [0:00 - 0:05]** -> `kadr1_agentic_sysadmin.jpg`: Cybernetyczny rdzeń decyzyjny AI / serwerownia.
-     - **Scena 2 [0:05 - 0:12]** -> `kadr2_config_chaos.jpg`: Złożony labirynt plików konfiguracyjnych i dotfiles.
-     - **Scena 3 [0:12 - 0:16]** -> `kadr3_macos_desktop.jpg`: Minimalistyczne biurko, kontrast domyślny Zorin vs styl macOS.
-  2. **Żelazna reguła kadrowania:** Górna 1/3 kadru musi pozostać ciemna i pozbawiona jakichkolwiek wtopionych napisów (przestrzeń zarezerwowana na napisy tytułowe w Kdenlive).
+  1. Pobiera treść, intencję i koncepcje wizualne pierwszych 3 scen z wygenerowanego w Kroku 2 pliku transkrypcji (`Transcript.md` / `short_script.md`).
+  2. Generuje grafiki od zera w `work/<ID>/assets/` wyłącznie na bazie promptów tekstowych (bez obrazów referencyjnych).
+  3. **Żelazna reguła kadrowania:** Górna 1/3 kadru musi pozostać ciemna i pozbawiona jakichkolwiek wtopionych napisów (przestrzeń zarezerwowana na napisy tytułowe w Kdenlive).
 
 ### Krok 4: Kaskadowy montaż osi czasu Kdenlive
 * **Prompt użytkownika:** `Zmontuj pionowy projekt Kdenlive z kaskadowym tłem i tytułami.`

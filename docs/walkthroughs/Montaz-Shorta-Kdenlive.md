@@ -20,8 +20,8 @@ Oczekiwany efekt:
 Repozytorium rozróżnia dwa poziomy plików:
 1. **Publiczne szablony (`templates/`):** Generyczne, czyste pliki bazowe współdzielone w repozytorium:
    - `templates/kdenlive/short_script.md` — uniwersalny szablon 5 scen z instrukcjami i placeholderami,
-   - `templates/kdenlive/short_9_16_template.kdenlive` — profil MLT 1080x1920 @ 60fps z kaskadą rozmycia,
-   - `templates/assets/` — neutralne kadry tła 9:16 bez tekstu (bezpieczne placeholdery).
+   - `templates/kdenlive/short_9_16_template.kdenlive` — profil MLT 1080x1920 @ 60fps z kaskadą rozmycia.
+   *(W repozytorium nie przechowujemy statycznych grafik referencyjnych – każdy short ma własne, unikalne sceny, a grafiki są generowane od zera przez Agenta na bazie promptów z transkrypcji).*
 2. **Prywatny katalog roboczy (`work/<PROJEKT>/`):** Folder wykluczony z Gita (`.gitignore`), w którym pracujesz ze swoim filmem:
 
 ```bash
@@ -77,7 +77,7 @@ Wklejasz lub dyktujesz do czatu (obsługiwane przez skill `media-short-editor`):
 #### Krok 3: Generacja kadrów 9:16 pod ujęcia wertykalne
 > *Wygeneruj 3 pionowe grafiki koncepcyjne z ciemną górą pod tytuły.*
 
-* **Działanie Agenta:** Generuje 3 grafiki w `work/EP002_Short/assets/` (rdzeń decyzyjny AI, labirynt configów, minimalistyczny pulpit macOS) z zachowaniem zasady ciemnej góry kadru pod napisy tytułowe.
+* **Działanie Agenta:** Generuje 3 grafiki w `work/EP002_Short/assets/` od zera na bazie promptów ze scenariusza/transkrypcji (bez obrazów referencyjnych). Każdy kadr odzwierciedla intencję i treść danej sceny, ściśle przestrzegając zasady ciemnej góry kadru pod napisy tytułowe.
 
 #### Krok 4: Zbudowanie osi czasu Kdenlive (Kaskada rozmycia + Tytuły)
 > *Zmontuj pionowy projekt Kdenlive z kaskadowym tłem i tytułami.*

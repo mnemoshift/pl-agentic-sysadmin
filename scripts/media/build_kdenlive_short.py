@@ -33,15 +33,9 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
     repo_root = Path(__file__).resolve().parent.parent.parent
     default_template = repo_root / "templates" / "kdenlive" / "short_9_16_template.kdenlive"
 
-    # Zapewnienie katalogu assets i kopiowanie domyślnych placeholderów graficznych jeśli brak
+    # Zapewnienie katalogu assets
     assets_dir = workspace / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
-    template_assets = repo_root / "templates" / "assets"
-    if template_assets.exists():
-        for img in template_assets.glob("*.jpg"):
-            target_img = assets_dir / img.name
-            if not target_img.exists():
-                shutil.copy(img, target_img)
 
     # Szukanie referencyjnego pliku .kdenlive
     candidates_kdenlive = []
@@ -100,6 +94,21 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
         except ValueError:
             rel_mp4 = chosen_mp4.name
         content = content.replace("EP002_Zorin_Desktop_FINAL.mp4", str(rel_mp4))
+
+    # Dynamiczne dopasowanie grafik kadrów (JPG/PNG) wygenerowanych w assets/
+    image_files = sorted([
+        p for p in assets_dir.glob("*")
+        if p.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp"]
+    ])
+    default_img_refs = [
+        "assets/kadr1_agentic_sysadmin.jpg",
+        "assets/kadr2_config_chaos.jpg",
+        "assets/kadr3_macos_desktop.jpg"
+    ]
+    for idx, default_ref in enumerate(default_img_refs):
+        if idx < len(image_files):
+            img_rel = f"assets/{image_files[idx].name}"
+            content = content.replace(default_ref, img_rel)
 
     default_template_ass = repo_root / "templates" / "kdenlive" / f"short_9_16_template.kdenlive{seq_uuid}-1.ass"
 
