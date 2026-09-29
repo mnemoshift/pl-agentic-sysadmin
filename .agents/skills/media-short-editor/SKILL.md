@@ -14,6 +14,10 @@ Skill dostarcza w pełni zautomatyzowane, powtarzalne procedury przygotowania i 
 Wszystkie operacje są wspierane przez moduły w `scripts/media/` oraz dedykowane cele w `Makefile`:
 
 ```bash
+# 0. Konfiguracja i audyt Kdenlive MCP (User-Space, Flatpak, venv uv, wrappery CLI)
+make media-check-mcp
+make media-setup-mcp
+
 # 1. Czyszczenie audio: przycięcie ciszy, usunięcie falstartu i normalizacja do -14 LUFS (EBU R128)
 make media-clean-audio
 # lub: python3 scripts/media/clean_audio.py -i work/<ID>/input/raw_voiceover.mp4 -o work/<ID>/assets/<ID>_VoiceOver_CLEAN.wav
@@ -32,6 +36,15 @@ make media-build-short
 ## 2. Standard Wykonawczy dla Jednozdaniowych Promptów
 
 Agent interpretuje krótkie, jednozdaniowe polecenia użytkownika i automatycznie realizuje kompletny cykl procedury:
+
+### Krok 0: Konfiguracja i instalacja środowiska (Gdy Kdenlive nie jest zainstalowany)
+* **Prompt użytkownika:** `Skonfiguruj Kdenlive i serwer MCP do montażu wideo.`
+* **Działanie Agenta:**
+  1. Sprawdza i instaluje Flatpak `org.kde.kdenlive` w user-space (`flatpak install --user flathub org.kde.kdenlive -y`).
+  2. Tworzy wrappery w `~/.local/bin/` dla `kdenlive` oraz `melt`.
+  3. Klonuje serwer `kdenlive-mcp`, tworzy środowisko `uv venv` z `mcp<2` i aplikuje poprawki XML.
+  4. Generuje konfigurację w `~/.gemini/config/mcp_config.json`.
+  5. Raportuje pełną gotowość.
 
 ### Krok 1: Weryfikacja środowiska
 * **Prompt użytkownika:** `Sprawdź gotowość Kdenlive i narzędzi multimedialnych.`

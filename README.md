@@ -51,7 +51,9 @@ make audit           # Audyt CPU, RAM, GPU, Audio, Kamery, Ekrany
 make inventory       # Living Inventory pakietów APT, Flatpak i repozytoriów
 make restore-dry-run # Bezpieczna symulacja Disaster Recovery
 
-# 🎬 Automatyzacja Mediów i Wideo (Nowość z EP003 - Kdenlive & Whisper)
+# 🎬 Automatyzacja Mediów i Wideo (Nowość z EP003 - Kdenlive MCP & Whisper)
+make media-check-mcp # Audyt instalacji Kdenlive i serwera MCP
+make media-setup-mcp # Autonomiczna instalacja Kdenlive i serwera MCP w user-space
 make media-clean-audio INPUT=work/EP002_Short/input/raw_voiceover.mp4 OUTPUT=work/EP002_Short/assets/clean.wav START=00:00:00.200 END=00:00:30.600
 make media-karaoke AUDIO=work/EP002_Short/assets/clean.wav OUTPUT=work/EP002_Short/assets/subtitles.ass FAST=1
 make media-build-short WORKSPACE=work/EP002_Short
@@ -114,6 +116,7 @@ Każda zainstalowana aplikacja, biblioteka czy usługa jest katalogowana w `inve
 
 W katalogu `docs/walkthroughs/` znajdziesz szczegółowe scenariusze sesji z agentem z porównaniem tradycyjnego klepania komend w terminalu vs podejścia agentowego:
 - 🖥️ [**Pulpit à la macOS na Zorin OS**](docs/walkthroughs/Desktop-a-la-MacOS.md) — transformacja środowiska graficznego GNOME, podwójny dok Plank, styl WhiteSur i naprawa belek CSD.
+- ⚙️ [**Konfiguracja Kdenlive i Serwera MCP w User-Space**](docs/walkthroughs/Konfiguracja-Kdenlive-MCP.md) — instalacja Flatpak bez roota, wrappery CLI silnika MLT melt, naprawa generatora XML i integracja z Antigravity.
 - 🎬 [**Autonomiczny Montaż Shorta w Kdenlive z Agentem AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) — bezpłatna, lokalna alternatywa dla CapCuta: audyt i normalizacja audio (-14 LUFS), kaskadowy montaż 9:16 i dynamiczne napisy karaoke (Whisper + ASS).
 
 ---

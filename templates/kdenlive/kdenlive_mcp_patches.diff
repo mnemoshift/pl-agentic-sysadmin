@@ -1,0 +1,86 @@
+diff --git a/src/kdenlive_mcp/kdenlive/adapter/xml_writer.py b/src/kdenlive_mcp/kdenlive/adapter/xml_writer.py
+index c4be485..39801d3 100644
+--- a/src/kdenlive_mcp/kdenlive/adapter/xml_writer.py
++++ b/src/kdenlive_mcp/kdenlive/adapter/xml_writer.py
+@@ -32,6 +32,7 @@ normally as a result (no `hide="audio"` is set on video-track tracks).
+ 
+ from __future__ import annotations
+ 
++import json
+ import uuid
+ import xml.etree.ElementTree as ET
+ from pathlib import Path
+@@ -247,16 +248,23 @@ class KdenliveXmlWriter:
+         for pos, t in enumerate(sequence.video_tracks(), start=1 + len(sequence.audio_tracks())):
+             track_position[t.id] = pos
+ 
+-        master = _sub(mlt, "tractor", id="{%s}" % _pad_uuid(project.id),
++        master = _sub(mlt, "tractor", id="{%s}" % _pad_uuid(sequence.id),
+                        **{"in": "00:00:00.000"}, out=frames_to_timecode(max(1, sequence.duration()), settings.fps))
+         seq_uuid = master.get("id")
++        doc_uuid = "{%s}" % _pad_uuid(project.id)
+         _prop(master, "kdenlive:uuid", seq_uuid)
+         _prop(master, "kdenlive:clipname", sequence.name)
+         _prop(master, "kdenlive:sequenceproperties.hasAudio", "1" if sequence.audio_tracks() else "0")
+         _prop(master, "kdenlive:sequenceproperties.hasVideo", "1" if sequence.video_tracks() else "0")
+         _prop(master, "kdenlive:sequenceproperties.tracksCount", str(len(sequence.tracks)))
+-        _prop(master, "kdenlive:sequenceproperties.documentuuid", seq_uuid)
++        _prop(master, "kdenlive:sequenceproperties.documentuuid", doc_uuid)
+         _prop(master, "kdenlive:duration", frames_to_timecode(sequence.duration(), settings.fps))
++        if sequence.markers:
++            guides_data = [
++                {"comment": m.name, "pos": int(m.frame), "type": 0}
++                for m in sequence.markers
++            ]
++            _prop(master, "kdenlive:sequenceproperties.guides", json.dumps(guides_data))
+ 
+         for pos, producer_ref in enumerate(master_track_order):
+             _sub(master, "track", producer=producer_ref)
+@@ -272,9 +280,12 @@ class KdenliveXmlWriter:
+             _prop(t, "sum", "1")
+ 
+         video_start = 1 + len(sequence.audio_tracks())
+-        for pos, track in enumerate(sequence.video_tracks(), start=video_start):
++        for idx, track in enumerate(sequence.video_tracks()):
+             pos = video_start + idx
+             t = _sub(master, "transition", id=self.ids.next("transition"))
+-            _prop(t, "a_track", "0")
++            # Bottom video track composites over background (track 0), upper video tracks composite over the track below
++            a_track = 0 if idx == 0 else pos - 1
++            _prop(t, "a_track", str(a_track))
+             _prop(t, "b_track", str(pos))
+             _prop(t, "compositing", "0")
+             _prop(t, "distort", "0")
+@@ -404,9 +415,15 @@ class KdenliveXmlWriter:
+         _prop(main_bin, "kdenlive:docproperties.uuid", "{%s}" % _pad_uuid(project.id))
+         sequence = project.active_sequence()
+         if sequence:
+-            seq_uuid = "{%s}" % _pad_uuid(project.id)
++            seq_uuid = "{%s}" % _pad_uuid(sequence.id)
+             _prop(main_bin, "kdenlive:docproperties.opensequences", seq_uuid)
+             _prop(main_bin, "kdenlive:docproperties.activetimeline", seq_uuid)
++            if sequence.markers:
++                guides_data = [
++                    {"comment": m.name, "pos": int(m.frame), "type": 0}
++                    for m in sequence.markers
++                ]
++                _prop(main_bin, "kdenlive:docproperties.guides", json.dumps(guides_data))
+         for key, value in project.metadata.items():
+             _prop(main_bin, f"kdenlive:docproperties.{key}", str(value))
+         for folder_name, folder_id in self._folder_ids.items():
+diff --git a/src/kdenlive_mcp/validation/project_validator.py b/src/kdenlive_mcp/validation/project_validator.py
+index b9a8631..64e026c 100644
+--- a/src/kdenlive_mcp/validation/project_validator.py
++++ b/src/kdenlive_mcp/validation/project_validator.py
+@@ -135,6 +135,10 @@ def _try_melt_validate(project: Project, media_index: MediaIndex) -> tuple[bool
+     finally:
+         scratch_path.unlink(missing_ok=True)
+ 
+-    if not result.ok or "Failed to load" in result.stderr:
++    clean_stderr = "\n".join(
++        line for line in result.stderr.splitlines()
++        if "Failed to load module" not in line
++    )
++    if not result.ok or "Failed to load" in clean_stderr:
+         return False, None
+     return True, None

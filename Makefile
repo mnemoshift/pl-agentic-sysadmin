@@ -1,4 +1,4 @@
-.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-reset desktop-status media-clean-audio media-karaoke media-build-short
+.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short
 
 # Domyślny cel
 help:
@@ -17,6 +17,8 @@ help:
 	@echo "  make check           - Sprawdza integralność plików pamięci i inwentarza"
 	@echo "  make restore-dry-run - Symuluje procedurę odtworzenia Disaster Recovery bez wprowadzania zmian"
 	@echo "  --- Narzędzia Wideo & Audio (Kdenlive & Studio) ---"
+	@echo "  make media-check-mcp - Sprawdza stan Kdenlive, wrapperów CLI i serwera MCP"
+	@echo "  make media-setup-mcp - Instaluje Kdenlive (Flatpak user) i konfiguruje serwer MCP"
 	@echo "  make media-clean-audio INPUT=... OUTPUT=... [START=...] [END=...] [LUFS=-14.0]"
 	@echo "  make media-karaoke AUDIO=... OUTPUT=... [FAST=1] [FONT=...]"
 	@echo "  make media-build-short WORKSPACE=... [NAME=EP002_Short]"
@@ -103,4 +105,13 @@ media-build-short:
 	fi
 	@chmod +x scripts/media/build_kdenlive_short.py
 	@./scripts/media/build_kdenlive_short.py -w "$(WORKSPACE)" $(if $(NAME),-n "$(NAME)")
+
+media-check-mcp:
+	@chmod +x scripts/media/setup_kdenlive_mcp.sh
+	@./scripts/media/setup_kdenlive_mcp.sh --check
+
+media-setup-mcp:
+	@chmod +x scripts/media/setup_kdenlive_mcp.sh
+	@./scripts/media/setup_kdenlive_mcp.sh --setup
+
 
