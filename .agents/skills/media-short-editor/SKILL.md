@@ -54,22 +54,27 @@ Agent interpretuje krótkie, jednozdaniowe polecenia użytkownika i automatyczni
   3. Potwierdza obecność modułów w `scripts/media/` i szablonów w `templates/kdenlive/`.
   4. Zwraca zwięzłe podsumowanie: status serwera, wersja silnika, gotowość do pracy.
 
-### Krok 2: Audyt i czyszczenie audio
+### Krok 2: Audyt, czyszczenie i transkrypcja audio
 * **Prompt użytkownika:** `Oczyść surowe nagranie z OBS-a i przygotuj dźwięk do montażu.`
 * **Działanie Agenta:**
-  1. Lokalizuje surowy plik w katalogu roboczym (domyślnie `work/EP002_Short/input/raw_voiceover.mp4`).
-  2. Wykonuje moduł `scripts/media/clean_audio.py` (lub `make media-clean-audio`).
+  1. Lokalizuje surowy plik w katalogu roboczym (domyślnie `work/EP002_Short/input/raw_voiceover.mp4`) oraz weryfikuje scenariusz `work/EP002_Short/input/short_script.md`.
+  2. Wykonuje procedurę `make media-clean-audio` (lub `clean_audio.py` + `transcribe_audio.py`).
   3. Automatycznie wycina początkową ciszę, usuwa falstart przed 30 sekundą oraz martwy ogon nagrania.
-  4. Przeprowadza dwuprzebiegową normalizację do standardu YouTube (`-14.0 LUFS`, True Peak `< -1.0 dBFS`).
-  5. Zapisuje wyjściowy plik `assets/EP002_Short_VoiceOver_CLEAN.wav` i raportuje dokładną długość oraz parametry EBU R128 w czacie.
+  4. Przeprowadza normalizację do standardu YouTube (`-14.0 LUFS`, True Peak `< -1.0 dBFS`).
+  5. Uruchamia model Whisper i generuje precyzyjną transkrypcję z podziałem na 5 scen pod montaż.
+  6. Zapisuje wyjściowe pliki:
+     - `assets/EP002_Short_VoiceOver_CLEAN.wav` (czyste audio -14 LUFS)
+     - `assets/EP002_Short_Transcript.md` (tabela harmonogramu scen)
+     - `assets/EP002_Short_Transcript.json` (znaczniki czasowe)
+  7. Wyświetla w czacie Antigravity tabelę 5 scen z czasami i kwestiami — stanowiącą bezpośrednią bazę pod generację kadrów w Kroku 3 i montaż w Kroku 4.
 
 ### Krok 3: Generacja grafik pionowych 9:16
 * **Prompt użytkownika:** `Wygeneruj 3 pionowe grafiki koncepcyjne z ciemną górą pod tytuły.`
 * **Działanie Agenta:**
-  1. Generuje 3 wertykalne kadry 1080x1920 do katalogu roboczego `work/EP002_Short/assets/`:
-     - `kadr1_agentic_sysadmin.jpg`: Cybernetyczny rdzeń decyzyjny AI / serwerownia.
-     - `kadr2_config_chaos.jpg`: Złożony labirynt plików konfiguracyjnych i dotfiles.
-     - `kadr3_macos_desktop.jpg`: Minimalistyczne biurko, kontrast domyślny Zorin vs styl macOS.
+  1. Pobiera treść i czasy trwania pierwszych 3 scen z wygenerowanego w Kroku 2 pliku transkrypcji (`EP002_Short_Transcript.md`):
+     - **Scena 1 [0:00 - 0:05]** -> `kadr1_agentic_sysadmin.jpg`: Cybernetyczny rdzeń decyzyjny AI / serwerownia.
+     - **Scena 2 [0:05 - 0:12]** -> `kadr2_config_chaos.jpg`: Złożony labirynt plików konfiguracyjnych i dotfiles.
+     - **Scena 3 [0:12 - 0:16]** -> `kadr3_macos_desktop.jpg`: Minimalistyczne biurko, kontrast domyślny Zorin vs styl macOS.
   2. **Żelazna reguła kadrowania:** Górna 1/3 kadru musi pozostać ciemna i pozbawiona jakichkolwiek wtopionych napisów (przestrzeń zarezerwowana na napisy tytułowe w Kdenlive).
 
 ### Krok 4: Kaskadowy montaż osi czasu Kdenlive
