@@ -59,7 +59,7 @@ Agent interpretuje krótkie, jednozdaniowe polecenia użytkownika i automatyczni
 * **Działanie Agenta:**
   1. Lokalizuje surowy plik w katalogu roboczym (np. `work/EP002_Short/input/raw_voiceover.mp4`) oraz weryfikuje scenariusz `input/short_script.md` (jeśli brak, kopiuje z `templates/kdenlive/short_script.md`).
   2. Wykonuje procedurę `make media-clean-audio` (lub `clean_audio.py` + `transcribe_audio.py`).
-  3. Automatycznie wycina początkową ciszę, usuwa falstart przed 30 sekundą oraz martwy ogon nagrania.
+  3. Automatycznie wycina falstart (`--exclude 28.9-32.6`), zachowując pełne nagranie lektorskie do końca (nigdy nie ucina na sztywno do 30 sekund).
   4. Przeprowadza normalizację do standardu YouTube (`-14.0 LUFS`, True Peak `< -1.0 dBFS`).
   5. Uruchamia model Whisper i generuje precyzyjną transkrypcję z podziałem na 5 scen pod montaż.
   6. Zapisuje wyjściowe pliki:

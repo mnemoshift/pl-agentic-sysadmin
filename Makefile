@@ -76,13 +76,14 @@ desktop-status:
 media-clean-audio:
 	@if [ -z "$(INPUT)" ] || [ -z "$(OUTPUT)" ]; then \
 		echo "[BŁĄD] Wymagane parametry INPUT i OUTPUT. Przykład:"; \
-		echo "  make media-clean-audio INPUT=input.mp4 OUTPUT=clean.wav [START=00:00:00.200] [END=00:00:30.600] [LUFS=-14.0] [FAST=1]"; \
+		echo "  make media-clean-audio INPUT=input.mp4 OUTPUT=clean.wav [START=...] [END=...] [EXCLUDE=28.9-32.6] [LUFS=-14.0] [FAST=1]"; \
 		exit 1; \
 	fi
 	@chmod +x scripts/media/clean_audio.py scripts/media/transcribe_audio.py
 	@./scripts/media/clean_audio.py -i "$(INPUT)" -o "$(OUTPUT)" \
 		$(if $(START),--start "$(START)") \
 		$(if $(END),--end "$(END)") \
+		$(if $(EXCLUDE),--exclude "$(EXCLUDE)") \
 		$(if $(LUFS),--lufs "$(LUFS)")
 	@uv run scripts/media/transcribe_audio.py -a "$(OUTPUT)" $(if $(FAST),--fast) $(if $(SCRIPT),--script "$(SCRIPT)")
 

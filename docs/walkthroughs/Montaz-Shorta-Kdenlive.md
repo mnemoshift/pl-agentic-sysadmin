@@ -38,16 +38,16 @@ work/<NAZWA_PROJEKTU>/ (np. work/EP002_Short/)
 Wyłącznie w celach porównawczych – pokazuje, ile żmudnego klikania i komend oszczędza Agent:
 
 ```bash
-# 1. Obcięcie audio i normalizacja do -14 LUFS w ffmpeg
-ffmpeg -y -ss 00:00:00.200 -to 00:00:30.600 -i work/EP002_Short/input/raw_voiceover.mp4 \
-  -af "loudnorm=I=-14:LRA=7:tp=-1.5" -ar 48000 -ac 2 work/EP002_Short/assets/EP002_Short_VoiceOver_CLEAN.wav
+# 1. Wycięcie falstartu i normalizacja do -14 LUFS (bez ucinania do 30s)
+python3 scripts/media/clean_audio.py -i work/EP002_Short/input/raw_voiceover.mp4 \
+  -o work/EP002_Short/assets/EP002_Short_VoiceOver_CLEAN.wav --exclude 28.9-32.6
 
 # 2. Generowanie napisów Whisper z dokładnością do słowa
 # Wymaga napisania skryptu w Pythonie grupowania w linijki i formatowania znaczników kolorów ASS:
 # {\c&H0000FF66&}SŁOWO{\c&H00FFFFFF&}
 uv run scripts/media/generate_karaoke.py \
   -a work/EP002_Short/assets/EP002_Short_VoiceOver_CLEAN.wav \
-  -o work/EP002_Short/assets/EP002_Short_Karaoke.ass --fast
+  -o work/EP002_Short/assets/EP002_Short_Karaoke.ass
 
 # 3. Ręczne składanie XML-a projektu Kdenlive / MLT
 # Prawidłowe UUID traktorów, kaskada qtblend, filtry gblur i avfilter.subtitles
@@ -72,7 +72,7 @@ Wklejasz lub dyktujesz do czatu (obsługiwane przez skill `media-short-editor`):
 #### Krok 2: Audyt i automatyczne czyszczenie audio
 > *Oczyść surowe nagranie z OBS-a i przygotuj dźwięk do montażu.*
 
-* **Działanie Agenta:** Lokalizuje nagranie w `work/EP002_Short/input/raw_voiceover.mp4`, wycina początkową ciszę, falstart przed 30 sekundą oraz martwy ogon, aplikuje dwuprzebiegowy filtr EBU R128 (-14 LUFS) i zapisuje plik w `assets/EP002_Short_VoiceOver_CLEAN.wav` wraz z raportem.
+* **Działanie Agenta:** Lokalizuje nagranie w `work/EP002_Short/input/raw_voiceover.mp4`, wycina falstart (28.9s-32.6s), zachowuje pełną treść wszystkich 5 scen (bez ucinania na sztywno do 30s), aplikuje dwuprzebiegowy filtr EBU R128 (-14 LUFS) i zapisuje plik w `assets/EP002_Short_VoiceOver_CLEAN.wav` wraz z harmonogramem Whisper.
 
 #### Krok 3: Generacja kadrów 9:16 pod ujęcia wertykalne
 > *Wygeneruj 3 pionowe grafiki koncepcyjne z ciemną górą pod tytuły.*

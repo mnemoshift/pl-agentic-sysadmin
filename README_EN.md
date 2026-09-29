@@ -59,7 +59,7 @@ make inventory       # Living inventory of installed APT packages, Flatpaks, and
 make restore-dry-run # Safe dry-run simulation of workstation disaster recovery
 
 # 🎬 Media & Video Automation (New in EP003 - Kdenlive & Whisper)
-make media-clean-audio INPUT=work/EP002_Short/input/raw_voiceover.mp4 OUTPUT=work/EP002_Short/assets/clean.wav START=00:00:00.200 END=00:00:30.600
+make media-clean-audio INPUT=work/EP002_Short/input/raw_voiceover.mp4 OUTPUT=work/EP002_Short/assets/clean.wav EXCLUDE=28.9-32.6
 make media-karaoke AUDIO=work/EP002_Short/assets/clean.wav OUTPUT=work/EP002_Short/assets/subtitles.ass FAST=1
 make media-build-short WORKSPACE=work/EP002_Short
 ```

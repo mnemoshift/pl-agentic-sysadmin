@@ -2,14 +2,16 @@
 """
 Montaż wertykalnego projektu Kdenlive 1080x1920 @ 60fps
 z wykorzystaniem silnika MLT / Kdenlive XML i kaskadowej kompozycji:
-- Ścieżka A1: VoiceOver CLEAN WAV
+- Ścieżka A1: VoiceOver CLEAN WAV (dynamicznie dopasowana do rzeczywistej długości nagrania)
 - Ścieżka V1: Rozmyte tło (gblur) dla wideo 16:9 powiększonego do pionu
 - Ścieżka V2: Ostry pierwszy plan (kadry 9:16 + wycinki wideo z cieniem)
 - Ścieżka V3: Dynamiczne tytuły tekstowe (Inter Black)
-- Traktor: Filtr avfilter.subtitles ładujący plik ASS z karaoke
+- Traktor: Filtr avfilter.subtitles ładujący plik ASS z karaoke (generowany dla bieżącego audio)
 """
 import argparse
+import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -23,6 +25,27 @@ def parse_args():
     parser.add_argument("--ref-kdenlive", type=Path, default=None, help="Ścieżka do referencyjnego pliku .kdenlive")
     parser.add_argument("--ref-ass", type=Path, default=None, help="Ścieżka do referencyjnego pliku .ass sidecara")
     return parser.parse_args()
+
+def get_audio_duration(audio_path: Path) -> float:
+    try:
+        import wave
+        with wave.open(str(audio_path), "rb") as wf:
+            return wf.getnframes() / float(wf.getframerate())
+    except Exception:
+        res = subprocess.run([
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)
+        ], capture_output=True, text=True)
+        try:
+            return float(res.stdout.strip())
+        except ValueError:
+            return 30.5
+
+def format_ts_mlt(seconds: float) -> str:
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:06.3f}"
 
 def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: Path, ref_ass_path: Path):
     target_kdenlive = workspace / f"{name}.kdenlive"
@@ -70,15 +93,51 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
 
     # Dynamiczne dopasowanie ścieżki do pliku lektora (WAV)
     candidate_wavs = list(assets_dir.glob("*.wav")) + list((workspace / "input").glob("*.wav"))
+    audio_duration = 30.5
+    clean_wav = None
     if candidate_wavs:
         # Preferujemy plik z CLEAN w nazwie
         clean_wav = next((w for w in candidate_wavs if "CLEAN" in w.name.upper()), candidate_wavs[0])
-        # Względna ścieżka od workspace
         try:
             rel_wav = clean_wav.relative_to(workspace)
         except ValueError:
             rel_wav = f"assets/{clean_wav.name}"
         content = content.replace("assets/EP002_Short_VoiceOver_CLEAN.wav", str(rel_wav))
+        audio_duration = get_audio_duration(clean_wav)
+        print(f"[Audio] Wykryto plik lektorski: {rel_wav} (długość: {audio_duration:.2f}s)")
+
+    # Dynamiczne dostosowanie długości osi czasu do rzeczywistego czasu audio
+    dur_str = format_ts_mlt(audio_duration)
+    frames = int(round(audio_duration * 60))
+
+    content = re.sub(r'<property name="kdenlive:duration">00:00:30\.\d+</property>', f'<property name="kdenlive:duration">{dur_str}</property>', content)
+    content = re.sub(r'<chain id="chain0" out="00:00:30\.\d+">', f'<chain id="chain0" out="{dur_str}">', content)
+
+    # Zastąpienie pociętej ścieżki audio w playlist0 jedną ciągłą ścieżką do końca nagrania
+    old_playlist0_pat = r'<playlist id="playlist0">.*?</playlist>'
+    new_playlist0 = f'''<playlist id="playlist0">
+   <property name="kdenlive:audio_track">1</property>
+   <entry in="00:00:00.000" out="{dur_str}" producer="chain0">
+    <property name="kdenlive:id">6</property>
+   </entry>
+  </playlist>'''
+    content = re.sub(old_playlist0_pat, new_playlist0, content, flags=re.DOTALL)
+
+    for t_id in ["tractor0", "tractor2", "tractor3", "tractor4", seq_uuid, "tractor5"]:
+        escaped_id = re.escape(t_id)
+        content = re.sub(rf'<tractor id="{escaped_id}" in="00:00:00\.000" out="00:00:30\.\d+">', f'<tractor id="{t_id}" in="00:00:00.000" out="{dur_str}">', content)
+
+    content = re.sub(r'<entry in="00:00:00\.000" out="00:00:30\.\d+" producer="chain0"/>', f'<entry in="00:00:00.000" out="{dur_str}" producer="chain0"/>', content)
+    content = re.sub(rf'<entry in="00:00:00\.000" out="00:00:30\.\d+" producer="{re.escape(seq_uuid)}"/>', f'<entry in="00:00:00.000" out="{dur_str}" producer="{seq_uuid}"/>', content)
+    content = re.sub(rf'<track in="00:00:00\.000" out="00:00:30\.\d+" producer="{re.escape(seq_uuid)}"/>', f'<track in="00:00:00.000" out="{dur_str}" producer="{seq_uuid}"/>', content)
+
+    # Rozciągnięcie ostatniego klipu wideo (Scena 5) na ścieżkach V1 i V2 do końca audio
+    content = re.sub(
+        r'(<playlist id="playlist[46]".*?<entry [^>]*? out=")00:00:30\.\d+(")',
+        rf'\g<1>{dur_str}\g<2>',
+        content,
+        flags=re.DOTALL
+    )
 
     # Dynamiczne dopasowanie pliku wideo z b-rolla / screencastu (MP4)
     input_dir = workspace / "input"
@@ -110,28 +169,30 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
             img_rel = f"assets/{image_files[idx].name}"
             content = content.replace(default_ref, img_rel)
 
-    default_template_ass = repo_root / "templates" / "kdenlive" / f"short_9_16_template.kdenlive{seq_uuid}-1.ass"
-
-    # Szukanie referencyjnego pliku ASS
-    candidates_ass = []
-    if ref_ass_path:
-        candidates_ass.append(ref_ass_path)
-    candidates_ass.extend([
-        workspace / "assets" / f"{name}_Karaoke.ass",
-        default_template_ass,
-        workspace / "assets" / ".cache" / f"{name}_Agentic_SysAdmin_reference.kdenlive{seq_uuid}-1.ass",
-        target_sidecar
-    ])
-
-    ref_ass = next((p for p in candidates_ass if p.exists()), None)
+    # Obsługa napisów Karaoke ASS
+    karaoke_file = workspace / "assets" / f"{name}_Karaoke.ass"
+    if ref_ass_path and ref_ass_path.exists():
+        shutil.copy(ref_ass_path, target_sidecar)
+        print(f"[OK] Skopiowano podany plik ASS: {ref_ass_path} -> {target_sidecar.name}")
+    elif karaoke_file.exists():
+        shutil.copy(karaoke_file, target_sidecar)
+        print(f"[OK] Podpięto wygenerowane napisy Karaoke: {karaoke_file.name}")
+    elif clean_wav and clean_wav.exists():
+        print(f"[Karaoke] Brak {karaoke_file.name}. Automatyczne generowanie Whisper Karaoke dla {clean_wav.name}...")
+        gen_script = repo_root / "scripts" / "media" / "generate_karaoke.py"
+        res = subprocess.run([
+            "uv", "run", str(gen_script),
+            "-a", str(clean_wav),
+            "-o", str(karaoke_file)
+        ], capture_output=True, text=True)
+        if res.returncode == 0 and karaoke_file.exists():
+            shutil.copy(karaoke_file, target_sidecar)
+            print(f"[OK] Wygenerowano i podpięto napisy Karaoke: {target_sidecar.name}")
+        else:
+            print(f"[Ostrzeżenie Karaoke]: Nie udało się wygenerować napisów:\n{res.stderr}", file=sys.stderr)
 
     target_kdenlive.write_text(content, encoding="utf-8")
-    if ref_ass and ref_ass != target_sidecar:
-        shutil.copy(ref_ass, target_sidecar)
-
-    print(f"[OK] Wygenerowano projekt Kdenlive: {target_kdenlive}")
-    if target_sidecar.exists():
-        print(f"[OK] Skonfigurowano sidecar napisów Karaoke: {target_sidecar.name}")
+    print(f"[OK] Wygenerowano projekt Kdenlive: {target_kdenlive} (czas osi: {dur_str})")
 
 if __name__ == "__main__":
     args = parse_args()

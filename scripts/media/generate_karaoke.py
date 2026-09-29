@@ -3,6 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "faster-whisper",
+#     "av<14",
 # ]
 # ///
 """
@@ -47,7 +48,7 @@ def parse_args():
     parser.add_argument("--model", default="base", help="Model faster-whisper (tiny, base, small, medium)")
     parser.add_argument("--lang", default="pl", help="Kod języka (domyślnie: pl)")
     parser.add_argument("--words-per-chunk", type=int, default=3, help="Maksymalna liczba słów w linijce (domyślnie: 3)")
-    parser.add_argument("--cache", type=Path, default=None, help="Opcjonalna ścieżka do pliku referencyjnego / cache")
+    parser.add_argument("--cache", type=Path, default=None, help="Opcjonalna ścieżka do pliku cache napisów ASS")
     parser.add_argument("--fast", action="store_true", help="Użyj pamięci podręcznej / pliku cache jeśli istnieje")
     return parser.parse_args()
 
@@ -67,21 +68,9 @@ def generate_karaoke(args):
 
     output_ass.parent.mkdir(parents=True, exist_ok=True)
 
-    repo_root = Path(__file__).resolve().parent.parent.parent
-    default_ref_ass = repo_root / "templates" / "kdenlive" / "short_karaoke_reference.ass"
-
-    cache_candidates = []
-    if args.cache:
-        cache_candidates.append(args.cache)
-    cache_candidates.append(default_ref_ass)
-    cache_candidates.append(audio_path.parent / ".cache" / "EP002_Short_Karaoke.ass")
-    cache_candidates.append(audio_path.parent / "EP002_Short_Karaoke.ass")
-
-    cache_path = next((p for p in cache_candidates if p.exists()), None)
-
-    if args.fast and cache_path:
-        print(f"[CACHE] Tryb --fast: użyto zoptymalizowanych znaczników karaoke z {cache_path}")
-        shutil.copy(cache_path, output_ass)
+    if args.fast and args.cache and args.cache.exists():
+        print(f"[CACHE] Tryb --fast: użyto zoptymalizowanych znaczników karaoke z {args.cache}")
+        shutil.copy(args.cache, output_ass)
         return
 
     print(f"[Whisper] Transkrypcja słowo po słowie (model '{args.model}', lang='{args.lang}') dla {audio_path.name}...")
@@ -101,9 +90,8 @@ def generate_karaoke(args):
                         "end": w.end
                     })
 
-        if not words and cache_path:
-            print("[Whisper] Brak wykrytych słów, użyto fallbacku z pamięci podręcznej...")
-            shutil.copy(cache_path, output_ass)
+        if not words:
+            print("[Whisper] Ostrzeżenie: Nie wykryto słów w pliku audio.", file=sys.stderr)
             return
 
         lines = []
@@ -170,12 +158,8 @@ def generate_karaoke(args):
         print(f"[OK] Wygenerowano napisy Karaoke ASS: {output_ass} ({len(events)} klatek słownych)")
 
     except Exception as e:
-        print(f"[Ostrzeżenie] Nie można uruchomić lokalnego Whisper ({e}).")
-        if cache_path:
-            print(f"[OK] Kopiowanie pliku referencyjnego/cache z {cache_path} do {output_ass}...")
-            shutil.copy(cache_path, output_ass)
-        else:
-            raise
+        print(f"[BŁĄD Whisper]: {e}", file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == "__main__":
     cli_args = parse_args()
