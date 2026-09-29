@@ -116,13 +116,10 @@ def generate_karaoke(args):
         if current_chunk:
             lines.append(current_chunk)
 
-        events = []
+        raw_events = []
         for chunk in lines:
             line_words = [item["word"] for item in chunk]
             for idx, active in enumerate(chunk):
-                start_str = format_ts(active["start"])
-                end_str = format_ts(active["end"])
-
                 parts = []
                 for i, w in enumerate(line_words):
                     if i == idx:
@@ -130,7 +127,33 @@ def generate_karaoke(args):
                     else:
                         parts.append(w)
                 line_text = " ".join(parts)
-                events.append(f"Dialogue: 0,{start_str},{end_str},CapCutKaraoke,,0,0,0,,{line_text}")
+                raw_events.append({
+                    "start": active["start"],
+                    "end": active["end"],
+                    "text": line_text
+                })
+
+        # Zabezpieczenie przed nakładaniem się klatek (Anti-overlap & Monotonic timeline)
+        raw_events.sort(key=lambda x: x["start"])
+        for i in range(len(raw_events) - 1):
+            cur = raw_events[i]
+            nxt = raw_events[i + 1]
+            # Jeśli koniec obecnego nachodzi na początek następnego - dotnij do początku następnego
+            if cur["end"] > nxt["start"]:
+                cur["end"] = nxt["start"]
+            # Wygładzenie mikro-przerw (< 0.08s) w mowie ciągłej zapobiegające migotaniu
+            elif 0 < (nxt["start"] - cur["end"]) < 0.08:
+                cur["end"] = nxt["start"]
+
+            # Gwarancja minimalnego czasu trwania klatki
+            if cur["end"] <= cur["start"]:
+                cur["end"] = cur["start"] + 0.05
+
+        events = []
+        for ev in raw_events:
+            start_str = format_ts(ev["start"])
+            end_str = format_ts(ev["end"])
+            events.append(f"Dialogue: 0,{start_str},{end_str},CapCutKaraoke,,0,0,0,,{ev['text']}")
 
         header = ASS_HEADER_TEMPLATE.format(
             font=args.font,
