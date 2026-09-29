@@ -178,28 +178,34 @@ EOF
     )
 
     # 5. Konfiguracja MCP w Antigravity
-    echo "[5/5] Weryfikacja rejestracji serwera MCP w Antigravity..."
+    echo "[5/5] Rejestracja serwera MCP w konfiguracji Antigravity..."
     mkdir -p "$(dirname "${GLOBAL_MCP_CONFIG}")"
-    if [[ ! -f "${GLOBAL_MCP_CONFIG}" ]]; then
-        cat << EOF > "${GLOBAL_MCP_CONFIG}"
-{
-  "mcpServers": {
-    "kdenlive": {
-      "command": "${TARGET_MCP_DIR}/.venv/bin/kdenlive-mcp",
-      "args": [],
-      "env": {
+    python3 - << PYEOF
+import json
+from pathlib import Path
+
+p = Path("${GLOBAL_MCP_CONFIG}")
+if p.exists():
+    try:
+        data = json.loads(p.read_text())
+    except Exception:
+        data = {}
+else:
+    data = {}
+
+servers = data.setdefault("mcpServers", {})
+servers["kdenlive"] = {
+    "command": "${TARGET_MCP_DIR}/.venv/bin/kdenlive-mcp",
+    "args": [],
+    "env": {
         "KDENLIVE_MCP_KDENLIVE": "${TARGET_BIN_DIR}/kdenlive",
         "KDENLIVE_MCP_MELT": "${TARGET_BIN_DIR}/melt"
-      }
     }
-  }
 }
-EOF
-        echo "  [✓] Utworzono konfigurację MCP w ${GLOBAL_MCP_CONFIG}"
-    else
-        echo "  [i] Plik ${GLOBAL_MCP_CONFIG} istnieje. Upewnij się, że zawiera blok 'kdenlive':"
-        echo '      "command": "'"${TARGET_MCP_DIR}"'/.venv/bin/kdenlive-mcp"'
-    fi
+
+p.write_text(json.dumps(data, indent=2) + "\n")
+print(f"  [✓] Zarejestrowano serwer 'kdenlive' w {p}")
+PYEOF
 
     echo ""
     echo "[OK] Instalacja i konfiguracja Kdenlive MCP zakończona sukcesem."

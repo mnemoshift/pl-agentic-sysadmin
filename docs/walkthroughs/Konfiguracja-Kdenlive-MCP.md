@@ -50,13 +50,12 @@ Całość opiera się na zasadzie izolacji w przestrzeni użytkownika — żadna
 
 ---
 
-## 3. Instalacja Krok po Kroku (Manualna lub Automatyczna)
+## 3. Instalacja Krok po Kroku (Tryb Agentic vs Terminal)
 
-W naszym repozytorium cały proces jest zautomatyzowany jednym poleceniem:
-```bash
-make media-setup-mcp
-```
-Poniżej opis techniczny poszczególnych etapów, które skrypt wykonuje pod spodem.
+W erze Agentic SysAdmina nie musisz ręcznie wklepywać komend, pisać wrapperów ani edytować plików JSON. Wystarczy, że w czacie Antigravity wpiszesz lub podyktujesz jedno zdanie:
+> `Skonfiguruj Kdenlive i serwer MCP do montażu wideo.`
+
+Agent samodzielnie przeprowadzi całą procedurę instalacyjną (lub możesz wywołać `make media-setup-mcp` z poziomu konsoli). Poniżej opis techniczny poszczególnych etapów, które system wykonuje pod spodem.
 
 ### Etap 1: Instalacja Kdenlive via Flatpak User
 Instalujemy oficjalny pakiet z Flathuba w przestrzeni użytkownika (`--user`):
