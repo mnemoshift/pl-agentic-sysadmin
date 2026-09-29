@@ -15,14 +15,21 @@ Oczekiwany efekt:
 
 ---
 
-### Środowisko Robocze i Pliki Źródłowe
-Praca odbywa się wewnątrz repozytorium `pl-agentic-sysadmin` w wykluczonym z Gita folderze roboczym `work/EP002_Short/`:
+### Środowisko Robocze: Szablony (`templates/`) vs Przestrzeń Robocza (`work/`)
+
+Repozytorium rozróżnia dwa poziomy plików:
+1. **Publiczne szablony (`templates/`):** Generyczne, czyste pliki bazowe współdzielone w repozytorium:
+   - `templates/kdenlive/short_script.md` — uniwersalny szablon 5 scen z instrukcjami i placeholderami,
+   - `templates/kdenlive/short_9_16_template.kdenlive` — profil MLT 1080x1920 @ 60fps z kaskadą rozmycia,
+   - `templates/assets/` — neutralne kadry tła 9:16 bez tekstu (bezpieczne placeholdery).
+2. **Prywatny katalog roboczy (`work/<PROJEKT>/`):** Folder wykluczony z Gita (`.gitignore`), w którym pracujesz ze swoim filmem:
 
 ```bash
-work/EP002_Short/
+work/<NAZWA_PROJEKTU>/ (np. work/EP002_Short/)
 └── input/
-    ├── raw_voiceover.mp4   # Surowy zrzut głosu z OBS-a
-    └── footage_ep002.mp4   # Długie nagranie wideo (materiał źródłowy)
+    ├── short_script.md     # Skopiowany z templates/ i wypełniony scenariusz
+    ├── raw_voiceover.mp4   # Surowy zrzut głosu z mikrofonu OBS
+    └── footage_ep002.mp4   # Długie nagranie wideo (materiał źródłowy 16:9)
 ```
 
 ---

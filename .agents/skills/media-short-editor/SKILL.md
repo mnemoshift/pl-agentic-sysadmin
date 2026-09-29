@@ -57,7 +57,7 @@ Agent interpretuje krótkie, jednozdaniowe polecenia użytkownika i automatyczni
 ### Krok 2: Audyt, czyszczenie i transkrypcja audio
 * **Prompt użytkownika:** `Oczyść surowe nagranie z OBS-a i przygotuj dźwięk do montażu.`
 * **Działanie Agenta:**
-  1. Lokalizuje surowy plik w katalogu roboczym (domyślnie `work/EP002_Short/input/raw_voiceover.mp4`) oraz weryfikuje scenariusz `work/EP002_Short/input/short_script.md`.
+  1. Lokalizuje surowy plik w katalogu roboczym (np. `work/EP002_Short/input/raw_voiceover.mp4`) oraz weryfikuje scenariusz `input/short_script.md` (jeśli brak, kopiuje z `templates/kdenlive/short_script.md`).
   2. Wykonuje procedurę `make media-clean-audio` (lub `clean_audio.py` + `transcribe_audio.py`).
   3. Automatycznie wycina początkową ciszę, usuwa falstart przed 30 sekundą oraz martwy ogon nagrania.
   4. Przeprowadza normalizację do standardu YouTube (`-14.0 LUFS`, True Peak `< -1.0 dBFS`).

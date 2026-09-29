@@ -1,62 +1,78 @@
-# Scenariusz / Treść Posta do Shorta (EP002)
+# Szablon Scenariusza YouTube Shorts (Format Pionowy 9:16)
 
-> **Cel:** Promocja odcinka EP002 (*Agentic SysAdmin na Zorin OS*) w formacie pionowym YouTube Shorts (9:16, ~30 sekund).  
-> **Głos lektora:** Nagrany surowym zrzutem z mikrofonu w OBS-ie (`work/EP002_Short/input/raw_voiceover.mp4`).
+> **Instrukcja dla twórcy:**
+> 1. Skopiuj ten szablon do katalogu roboczego swojego projektu:  
+>    `cp templates/kdenlive/short_script.md work/<NAZWA_PROJEKTU>/input/short_script.md`
+> 2. Dostosuj poniższe 5 scen pod swój materiał (orientacyjny łączny czas: ~30-45 sekund).
+> 3. Skrypt jest automatycznie odczytywany przez pipeline `scripts/media/transcribe_audio.py` oraz Agenta AI w celu:
+>    - wygenerowania precyzyjnych promptów do kadrów tła 9:16 (dla Agenta lub Midjourney),
+>    - powiązania segmentów transkrypcji Whisper z tytułami plansz na ścieżce V3,
+>    - przygotowania dynamicznych napisów karaoke (CapCut style) z eliminacją nakładania klatek.
 
 ---
 
-### Rozpiska Kwestii i Koncepcji Scen (1 do 5):
+### Zasady Dobrego Shorta Technicznego:
+- **Scena 1 (Hak):** Pierwsze 3 sekundy decydują o zatrzymaniu scrollowania. Mocne, zaskakujące zdanie.
+- **Scena 2 (Problem):** Konkretne tarcie, ból inżynierski lub strata czasu, którą widz doskonale zna.
+- **Scena 3 (Zadanie):** Jednoznaczne polecenie lub demonstracja rozwiązania problemu.
+- **Scena 4 (Rezultat):** Dowód działania (screencast w tle, wykonanie planu, metryki, czysty kod).
+- **Scena 5 (CTA):** Zaproszenie do obejrzenia pełnego materiału na YouTube lub przejścia do otwartego repozytorium.
+- **Żelazna zasada kadrowania 9:16:** Górna 1/3 kadru **zawsze ciemna i bez wtopionego tekstu** (zarezerwowana na dynamiczne tytuły V3 i napisy karaoke).
+
+---
+
+### Rozpiska Scen (1 do 5):
 
 #### Scena 1 [0:00 - 0:05] — Hak Wizualny (Hook)
 * **Kwestia lektora:**  
-  *„Przestań traktować AI jak zabawkę do pogaduszek. Oto Agentic SysAdmin.”*
+  *„[Wpisz mocne, prowokujące lub intrygujące pierwsze zdanie lektora — np. Przestań traktować AI jak zabawkę...]”*
 * **Koncepcja graficzna 9:16:**  
-  Cybernetyczny rdzeń decyzyjny AI, nowoczesna minimalistyczna serwerownia / futurystyczny procesor w chłodnych odcieniach cyberpunka.
+  [Opis pionowego kadru tła — np. Cybernetyczny rdzeń AI, futurystyczny procesor w chłodnych odcieniach cyberpunka]
 * **Tytuł na osi czasu (Ścieżka V3):**  
-  `PRZESTAŃ TRAKTOWAĆ AI JAK ZABAWKĘ`
+  `[KRÓTKI DYNAMICZNY TYTUŁ WIELKIMI LITERAMI — MAX 4-5 SŁÓW]`
 * **Zasada kadrowania:**  
-  Górna 1/3 kadru ciemna, bez wtopionego tekstu (zarezerwowana pod dynamiczne tytuły i karaoke).
+  Górna 1/3 kadru ciemna, bez wtopionego tekstu (przestrzeń pod tytuły i karaoke).
 
 ---
 
 #### Scena 2 [0:05 - 0:12] — Zdefiniowanie Bólu (Problem)
 * **Kwestia lektora:**  
-  *„Zamiast marnować godziny na forach i dłubaniu w konfiguracji, dałem agentowi jedno proste zadanie:”*
+  *„[Opis frustracji lub powszechnego problemu — np. Zamiast marnować godziny na forach i dłubaniu w konfiguracji...]”*
 * **Koncepcja graficzna 9:16:**  
-  Złożony labirynt plików konfiguracyjnych, ściana surowego kodu dotfiles i skryptów w terminalu, poczucie frustracji i chaosu technicznego.
+  [Opis wizualny chaosu / problemu — np. Labirynt plików konfiguracyjnych, ściana surowego kodu dotfiles w terminalu]
 * **Tytuł na osi czasu (Ścieżka V3):**  
-  `KONIEC Z MARNOWANIEM CZASU NA FORACH`
+  `[TYTUŁ PODKREŚLAJĄCY PROBLEM LUB FRUSTRACJĘ]`
 * **Zasada kadrowania:**  
-  Ciemna górna partia kadru.
+  Górna 1/3 kadru ciemna, bez wtopionego tekstu.
 
 ---
 
-#### Scena 3 [0:12 - 0:16] — Zadanie Inżynierskie (Zadanie)
+#### Scena 3 [0:12 - 0:18] — Zadanie Inżynierskie (Zadanie / Rozwiązanie)
 * **Kwestia lektora:**  
-  *„Przekształć domyślny pulpit Zorina w czyste środowisko w stylu macOS.”*
+  *„[Konkretna intencja lub zlecenie dla systemu/agenta — np. Dałem agentowi jedno proste zadanie: przekształć pulpit...]”*
 * **Koncepcja graficzna 9:16:**  
-  Eleganckie, minimalistyczne stanowisko pracy z monitorem wyświetlającym smukły, dopracowany pulpit w stylu macOS (dok Plank, WhiteSur).
+  [Opis estetycznego rezultatu / interfejsu — np. Eleganckie stanowisko pracy, minimalistyczny pulpit z nowoczesnym dokiem]
 * **Tytuł na osi czasu (Ścieżka V3):**  
-  `ZORIN OS W STYLU MACOS`
+  `[TYTUŁ PREZENTUJĄCY CEL LUB ROZWIĄZANIE]`
 * **Zasada kadrowania:**  
-  Ciemna górna partia kadru.
+  Górna 1/3 kadru ciemna, bez wtopionego tekstu.
 
 ---
 
-#### Scena 4 [0:16 - 0:23] — Rezultat i Autonomia (Wycinek Wideo 1)
+#### Scena 4 [0:18 - 0:24] — Rezultat i Autonomia (Wycinek Wideo / Dowód)
 * **Kwestia lektora:**  
-  *„Minuta roboty, audyt w tle i gotowy plan wdrożenia. Bez dotknięcia ani jednego pliku konfiguracyjnego.”*
+  *„[Opis bezwysiłkowego rezultatu — np. Minuta roboty, audyt w tle i gotowy plan wdrożenia. Bez dotknięcia ani jednego pliku...]”*
 * **Koncepcja wideo:**  
-  Wycinek wideo z `footage_ep002.mp4` prezentujący agenta AI wykonującego plan wdrożenia w IDE Antigravity z rozmyciem `gblur` w tle.
+  [Wycinek z nagrania źródłowego 16:9 z rozmyciem tła gblur — np. Agent realizujący plan w terminalu / IDE]
 * **Tytuł na osi czasu (Ścieżka V3):**  
-  `MINUTA ROBOTY BEZ DOTKNIĘCIA PLIKÓW`
+  `[TYTUŁ AKCENTUJĄCY SZYBKOŚĆ LUB SKUTECZNOŚĆ]`
 
 ---
 
-#### Scena 5 [0:23 - 0:30] — Podsumowanie i Call to Action (Wycinek Wideo 2)
+#### Scena 5 [0:24 - 0:30] — Podsumowanie i Call to Action (Wycinek Wideo / Finał)
 * **Kwestia lektora:**  
-  *„Wraz z Agentic SysAdmin nadeszła nowa era Linuksa. Całą sesję na żywo i otwarte repozytorium znajdziesz w filmie poniżej!”*
+  *„[Podsumowanie i wezwanie do akcji — np. Całą sesję na żywo i gotowe skrypty znajdziesz w filmie pod linkiem poniżej!]”*
 * **Koncepcja wideo:**  
-  Wycinek wideo z `footage_ep002.mp4` prezentujący otwarte repozytorium GitHub `pl-agentic-sysadmin` z zaproszeniem do przejścia pod film.
+  [Wycinek z materiału źródłowego — np. Repozytorium GitHub, podsumowanie architektury lub plansza końcowa]
 * **Tytuł na osi czasu (Ścieżka V3):**  
-  `NOWA ERA LINUKSA Z AGENTIC SYSADMIN`
+  `[MOCNA PUENTA LUB WEZWANIE DO ZOBACZENIA PEŁNEGO FILMU]`

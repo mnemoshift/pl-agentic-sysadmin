@@ -84,7 +84,7 @@ media-clean-audio:
 		$(if $(START),--start "$(START)") \
 		$(if $(END),--end "$(END)") \
 		$(if $(LUFS),--lufs "$(LUFS)")
-	@uv run scripts/media/transcribe_audio.py -a "$(OUTPUT)" $(if $(FAST),--fast)
+	@uv run scripts/media/transcribe_audio.py -a "$(OUTPUT)" $(if $(FAST),--fast) $(if $(SCRIPT),--script "$(SCRIPT)")
 
 media-karaoke:
 	@if [ -z "$(AUDIO)" ] || [ -z "$(OUTPUT)" ]; then \

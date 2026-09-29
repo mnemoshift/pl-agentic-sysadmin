@@ -33,6 +33,16 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
     repo_root = Path(__file__).resolve().parent.parent.parent
     default_template = repo_root / "templates" / "kdenlive" / "short_9_16_template.kdenlive"
 
+    # Zapewnienie katalogu assets i kopiowanie domyślnych placeholderów graficznych jeśli brak
+    assets_dir = workspace / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    template_assets = repo_root / "templates" / "assets"
+    if template_assets.exists():
+        for img in template_assets.glob("*.jpg"):
+            target_img = assets_dir / img.name
+            if not target_img.exists():
+                shutil.copy(img, target_img)
+
     # Szukanie referencyjnego pliku .kdenlive
     candidates_kdenlive = []
     if ref_kdenlive_path:
@@ -63,6 +73,33 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
     old_sub_prop = f"<property name=\"av.filename\">EP002_Short_Agentic_SysAdmin.kdenlive{seq_uuid}-1.ass</property>"
     new_sub_prop = f"<property name=\"av.filename\">{target_sidecar.resolve()}</property>"
     content = content.replace(old_sub_prop, new_sub_prop)
+
+    # Dynamiczne dopasowanie ścieżki do pliku lektora (WAV)
+    candidate_wavs = list(assets_dir.glob("*.wav")) + list((workspace / "input").glob("*.wav"))
+    if candidate_wavs:
+        # Preferujemy plik z CLEAN w nazwie
+        clean_wav = next((w for w in candidate_wavs if "CLEAN" in w.name.upper()), candidate_wavs[0])
+        # Względna ścieżka od workspace
+        try:
+            rel_wav = clean_wav.relative_to(workspace)
+        except ValueError:
+            rel_wav = f"assets/{clean_wav.name}"
+        content = content.replace("assets/EP002_Short_VoiceOver_CLEAN.wav", str(rel_wav))
+
+    # Dynamiczne dopasowanie pliku wideo z b-rolla / screencastu (MP4)
+    input_dir = workspace / "input"
+    candidate_mp4s = []
+    if input_dir.exists():
+        candidate_mp4s.extend([p for p in input_dir.glob("*.mp4") if "voiceover" not in p.name.lower()])
+    candidate_mp4s.extend([p for p in workspace.glob("*.mp4") if "voiceover" not in p.name.lower() and p.name != f"{name}.mp4"])
+
+    if candidate_mp4s:
+        chosen_mp4 = candidate_mp4s[0]
+        try:
+            rel_mp4 = chosen_mp4.relative_to(workspace)
+        except ValueError:
+            rel_mp4 = chosen_mp4.name
+        content = content.replace("EP002_Zorin_Desktop_FINAL.mp4", str(rel_mp4))
 
     default_template_ass = repo_root / "templates" / "kdenlive" / f"short_9_16_template.kdenlive{seq_uuid}-1.ass"
 
