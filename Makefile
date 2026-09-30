@@ -1,4 +1,4 @@
-.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short
+.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short media-clean-work media-prepare-demo
 
 # Domyślny cel
 help:
@@ -22,6 +22,8 @@ help:
 	@echo "  make media-clean-audio INPUT=... OUTPUT=... [START=...] [END=...] [LUFS=-14.0]"
 	@echo "  make media-karaoke AUDIO=... OUTPUT=... [FAST=1] [FONT=...]"
 	@echo "  make media-build-short WORKSPACE=... [NAME=EP002_Short]"
+	@echo "  make media-clean-work - Czyści wygenerowane artefakty (assets, .kdenlive), zachowując input/"
+	@echo "  make media-prepare-demo - Inicjalizuje/odnawia pliki wejściowe w work/EP002_Short/input/"
 	@echo "=========================================================="
 
 audit:
@@ -115,5 +117,14 @@ media-check-mcp:
 media-setup-mcp:
 	@chmod +x scripts/media/setup_kdenlive_mcp.sh
 	@./scripts/media/setup_kdenlive_mcp.sh --setup
+
+media-clean-work:
+	@echo "Czyszczenie wygenerowanych artefaktów montażu w work/..."
+	@rm -rf work/*/assets work/*/*.kdenlive* work/*/*.ass work/*/*.mp4 2>/dev/null || true
+	@echo "[OK] Wyczyszczono artefakty montażu. Pliki wejściowe w work/*/input/ zachowane."
+
+media-prepare-demo:
+	@chmod +x scripts/media/prepare_demo.sh
+	@./scripts/media/prepare_demo.sh
 
 
