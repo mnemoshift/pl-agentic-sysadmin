@@ -92,23 +92,24 @@ media-clean-audio:
 media-karaoke:
 	@if [ -z "$(AUDIO)" ] || [ -z "$(OUTPUT)" ]; then \
 		echo "[BŁĄD] Wymagane parametry AUDIO i OUTPUT. Przykład:"; \
-		echo "  make media-karaoke AUDIO=voice.wav OUTPUT=subtitles.ass [FAST=1]"; \
+		echo "  make media-karaoke AUDIO=voice.wav OUTPUT=subtitles.ass [KDENLIVE=project.kdenlive] [FAST=1]"; \
 		exit 1; \
 	fi
 	@chmod +x scripts/media/generate_karaoke.py
 	@uv run scripts/media/generate_karaoke.py -a "$(AUDIO)" -o "$(OUTPUT)" \
 		$(if $(FAST),--fast) \
 		$(if $(FONT),--font "$(FONT)") \
-		$(if $(HIGHLIGHT),--highlight "$(HIGHLIGHT)")
+		$(if $(HIGHLIGHT),--highlight "$(HIGHLIGHT)") \
+		$(if $(KDENLIVE),--kdenlive "$(KDENLIVE)")
 
 media-build-short:
 	@if [ -z "$(WORKSPACE)" ]; then \
 		echo "[BŁĄD] Wymagany parametr WORKSPACE. Przykład:"; \
-		echo "  make media-build-short WORKSPACE=~/workspaces/EP002_Short [NAME=EP002_Short]"; \
+		echo "  make media-build-short WORKSPACE=~/workspaces/EP002_Short [NAME=EP002_Short] [WITH_KARAOKE=1]"; \
 		exit 1; \
 	fi
 	@chmod +x scripts/media/build_kdenlive_short.py
-	@./scripts/media/build_kdenlive_short.py -w "$(WORKSPACE)" $(if $(NAME),-n "$(NAME)")
+	@./scripts/media/build_kdenlive_short.py -w "$(WORKSPACE)" $(if $(NAME),-n "$(NAME)") $(if $(WITH_KARAOKE),--with-karaoke)
 
 media-check-mcp:
 	@chmod +x scripts/media/setup_kdenlive_mcp.sh

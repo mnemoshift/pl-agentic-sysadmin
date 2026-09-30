@@ -17,6 +17,7 @@ Parametry domyślne:
 """
 import argparse
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -40,6 +41,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Generowanie napisów ASS w stylu CapCut Karaoke z lokalnym Whisperem.")
     parser.add_argument("-a", "--audio", required=True, type=Path, help="Ścieżka do wejściowego pliku audio (WAV)")
     parser.add_argument("-o", "--output", required=True, type=Path, help="Ścieżka do pliku wyjściowego (.ass)")
+    parser.add_argument("-k", "--kdenlive", type=Path, default=None, help="Ścieżka do projektu .kdenlive pod który podpiąć napisy (opcjonalnie; autodetekcja jeśli nie podano)")
     parser.add_argument("--font", default="Inter Black", help="Nazwa czcionki (domyślnie: Inter Black)")
     parser.add_argument("--fontsize", type=int, default=76, help="Rozmiar czcionki (domyślnie: 76)")
     parser.add_argument("--color", default="&H00FFFFFF&", help="Główny kolor tekstu w formacie ASS hex (domyślnie: biały)")
@@ -71,6 +73,7 @@ def generate_karaoke(args):
     if args.fast and args.cache and args.cache.exists():
         print(f"[CACHE] Tryb --fast: użyto zoptymalizowanych znaczników karaoke z {args.cache}")
         shutil.copy(args.cache, output_ass)
+        attach_to_kdenlive(output_ass, args.kdenlive)
         return
 
     print(f"[Whisper] Transkrypcja słowo po słowie (model '{args.model}', lang='{args.lang}') dla {audio_path.name}...")
@@ -156,10 +159,104 @@ def generate_karaoke(args):
             f.write("\n".join(events) + "\n")
 
         print(f"[OK] Wygenerowano napisy Karaoke ASS: {output_ass} ({len(events)} klatek słownych)")
+        attach_to_kdenlive(output_ass, args.kdenlive)
 
     except Exception as e:
         print(f"[BŁĄD Whisper]: {e}", file=sys.stderr)
         sys.exit(1)
+
+def attach_to_kdenlive(output_ass: Path, kdenlive_arg: Path | None = None):
+    kdenlive_path = kdenlive_arg
+    if not kdenlive_path:
+        # Autodetekcja projektu .kdenlive w katalogu projektu
+        candidates = []
+        if output_ass.parent.name == "assets":
+            candidates.extend(output_ass.parent.parent.glob("*.kdenlive"))
+        candidates.extend(output_ass.parent.glob("*.kdenlive"))
+        valid_candidates = [c for c in candidates if not c.name.startswith(".")]
+        if valid_candidates:
+            kdenlive_path = valid_candidates[0]
+
+    if not kdenlive_path:
+        return
+
+    if not kdenlive_path.exists():
+        print(f"[Ostrzeżenie] Wskazany plik projektu Kdenlive nie istnieje: {kdenlive_path}", file=sys.stderr)
+        return
+
+    try:
+        content = kdenlive_path.read_text(encoding="utf-8")
+
+        # Wykrycie UUID traktora sekwencji
+        m_uuid = re.search(r'<property name="kdenlive:docproperties\.activetimeline">({[0-9a-fA-F-]+})</property>', content)
+        if not m_uuid:
+            m_uuid = re.search(r'<tractor id="({[0-9a-fA-F-]+})"', content)
+        seq_uuid = m_uuid.group(1) if m_uuid else "{d2e1ab66-a2fb-4e67-a630-734b7bdff6a6}"
+
+        # Utworzenie i skopiowanie pliku sidecar Kdenlive
+        target_sidecar = kdenlive_path.parent / f"{kdenlive_path.name}{seq_uuid}-1.ass"
+        shutil.copy(output_ass, target_sidecar)
+        print(f"[OK] Skopiowano plik sidecar: {target_sidecar.name}")
+
+        # Aktualizacja sequenceproperties.subtitlesList
+        sub_list_xml = f'''<property name="kdenlive:sequenceproperties.subtitlesList">[
+    {{
+        "file": "{target_sidecar.resolve()}",
+        "id": 1,
+        "name": "CapCut Karaoke"
+    }}
+]
+</property>'''
+        if '<property name="kdenlive:sequenceproperties.subtitlesList">' in content:
+            content = re.sub(
+                r'<property name="kdenlive:sequenceproperties\.subtitlesList">.*?</property>',
+                sub_list_xml,
+                content,
+                flags=re.DOTALL
+            )
+        else:
+            needle = '<property name="kdenlive:sequenceproperties.globalSubtitleStyles">[\n]\n</property>'
+            if needle in content:
+                content = content.replace(needle, f"{needle}\n  {sub_list_xml}")
+
+        # Aktualizacja activeSubtitleIndex
+        if '<property name="kdenlive:sequenceproperties.kdenlive:activeSubtitleIndex">' in content:
+            content = re.sub(
+                r'<property name="kdenlive:sequenceproperties\.kdenlive:activeSubtitleIndex">.*?</property>',
+                '<property name="kdenlive:sequenceproperties.kdenlive:activeSubtitleIndex">1</property>',
+                content
+            )
+
+        # Sprawdzenie obecności filtru avfilter.subtitles
+        if '<property name="mlt_service">avfilter.subtitles</property>' in content:
+            content = re.sub(
+                r'(<property name="mlt_service">avfilter\.subtitles</property>.*?<property name="av\.filename">)[^<]+(</property>)',
+                rf'\g<1>{target_sidecar.resolve()}\g<2>',
+                content,
+                flags=re.DOTALL
+            )
+        else:
+            filter_nums = [int(n) for n in re.findall(r'<filter id="filter(\d+)"', content)]
+            new_id_num = max(filter_nums, default=16) + 1
+            filter_xml = f'''   <filter id="filter{new_id_num}">
+    <property name="mlt_service">avfilter.subtitles</property>
+    <property name="av.alpha">1</property>
+    <property name="internal_added">237</property>
+    <property name="av.filename">{target_sidecar.resolve()}</property>
+   </filter>
+  </tractor>'''
+            escaped_seq = re.escape(seq_uuid)
+            tractor_pat = rf'(<tractor id="{escaped_seq}"[^>]*>.*?)(\s*</tractor>)'
+            if re.search(tractor_pat, content, flags=re.DOTALL):
+                content = re.sub(tractor_pat, rf'\g<1>\n{filter_xml}', content, count=1, flags=re.DOTALL)
+            else:
+                content = re.sub(r'(\s*</tractor>)', f'\n{filter_xml}', content, count=1)
+
+        kdenlive_path.write_text(content, encoding="utf-8")
+        print(f"[OK] Podpięto napisy Karaoke pod projekt Kdenlive: {kdenlive_path.name}")
+
+    except Exception as e:
+        print(f"[Ostrzeżenie] Nie udało się podpiąć napisów pod projekt Kdenlive: {e}", file=sys.stderr)
 
 if __name__ == "__main__":
     cli_args = parse_args()

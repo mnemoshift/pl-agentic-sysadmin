@@ -24,6 +24,7 @@ def parse_args():
     parser.add_argument("--seq-uuid", default=DEFAULT_SEQ_UUID, help="UUID traktora sekwencji w Kdenlive")
     parser.add_argument("--ref-kdenlive", type=Path, default=None, help="Ścieżka do referencyjnego pliku .kdenlive")
     parser.add_argument("--ref-ass", type=Path, default=None, help="Ścieżka do referencyjnego pliku .ass sidecara")
+    parser.add_argument("--with-karaoke", action="store_true", help="Dołącz napisy karaoke (domyślnie wyłączone; generowane i podpinane w osobnym kroku)")
     return parser.parse_args()
 
 def get_audio_duration(audio_path: Path) -> float:
@@ -47,7 +48,7 @@ def format_ts_mlt(seconds: float) -> str:
     s = seconds % 60
     return f"{h:02d}:{m:02d}:{s:06.3f}"
 
-def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: Path, ref_ass_path: Path):
+def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: Path, ref_ass_path: Path, with_karaoke: bool = False):
     target_kdenlive = workspace / f"{name}.kdenlive"
     target_sidecar = workspace / f"{name}.kdenlive{seq_uuid}-1.ass"
 
@@ -77,7 +78,7 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
 
     content = ref_kdenlive.read_text(encoding="utf-8")
 
-    # Podmieniamy root projektu oraz ścieżki sidecara napisów
+    # Podmieniamy root projektu
     old_roots = [
         "/home/jarek/projects/ghostshift/mnemoshift-channel/episodes/EP002_agentic_sysadmin_desktop/01_youtube",
         str(workspace.resolve())
@@ -86,10 +87,6 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
 
     for r in old_roots:
         content = content.replace(f'root="{r}"', f'root="{new_root}"')
-
-    old_sub_prop = f"<property name=\"av.filename\">EP002_Short_Agentic_SysAdmin.kdenlive{seq_uuid}-1.ass</property>"
-    new_sub_prop = f"<property name=\"av.filename\">{target_sidecar.resolve()}</property>"
-    content = content.replace(old_sub_prop, new_sub_prop)
 
     # Dynamiczne dopasowanie ścieżki do pliku lektora (WAV)
     candidate_wavs = list(assets_dir.glob("*.wav")) + list((workspace / "input").glob("*.wav"))
@@ -169,30 +166,54 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
             img_rel = f"assets/{image_files[idx].name}"
             content = content.replace(default_ref, img_rel)
 
-    # Obsługa napisów Karaoke ASS
+    # Obsługa napisów Karaoke ASS (włączana tylko przy fladze --with-karaoke lub podaniu --ref-ass)
+    attach_subs = with_karaoke or bool(ref_ass_path)
     karaoke_file = workspace / "assets" / f"{name}_Karaoke.ass"
-    if ref_ass_path and ref_ass_path.exists():
-        shutil.copy(ref_ass_path, target_sidecar)
-        print(f"[OK] Skopiowano podany plik ASS: {ref_ass_path} -> {target_sidecar.name}")
-    elif karaoke_file.exists():
-        shutil.copy(karaoke_file, target_sidecar)
-        print(f"[OK] Podpięto wygenerowane napisy Karaoke: {karaoke_file.name}")
-    elif clean_wav and clean_wav.exists():
-        print(f"[Karaoke] Brak {karaoke_file.name}. Automatyczne generowanie Whisper Karaoke dla {clean_wav.name}...")
-        gen_script = repo_root / "scripts" / "media" / "generate_karaoke.py"
-        res = subprocess.run([
-            "uv", "run", str(gen_script),
-            "-a", str(clean_wav),
-            "-o", str(karaoke_file)
-        ], capture_output=True, text=True)
-        if res.returncode == 0 and karaoke_file.exists():
+
+    if attach_subs:
+        old_sub_prop = f"<property name=\"av.filename\">EP002_Short_Agentic_SysAdmin.kdenlive{seq_uuid}-1.ass</property>"
+        new_sub_prop = f"<property name=\"av.filename\">{target_sidecar.resolve()}</property>"
+        content = content.replace(old_sub_prop, new_sub_prop)
+
+        if ref_ass_path and ref_ass_path.exists():
+            shutil.copy(ref_ass_path, target_sidecar)
+            print(f"[OK] Skopiowano podany plik ASS: {ref_ass_path} -> {target_sidecar.name}")
+        elif karaoke_file.exists():
             shutil.copy(karaoke_file, target_sidecar)
-            print(f"[OK] Wygenerowano i podpięto napisy Karaoke: {target_sidecar.name}")
+            print(f"[OK] Podpięto wygenerowane napisy Karaoke: {karaoke_file.name}")
         else:
-            print(f"[Ostrzeżenie Karaoke]: Nie udało się wygenerować napisów:\n{res.stderr}", file=sys.stderr)
+            print(f"[Karaoke] Brak pliku {karaoke_file.name}. Uruchom generate_karaoke.py aby wygenerować napisy.", file=sys.stderr)
+    else:
+        # Domyślnie: czysty projekt Kdenlive BEZ napisów (napisy generowane i podpinane w Kroku 5)
+        for old_ass in workspace.glob(f"{name}.kdenlive*.ass"):
+            try:
+                old_ass.unlink()
+            except OSError:
+                pass
+
+        # Usunięcie filtru avfilter.subtitles z traktora
+        content = re.sub(
+            r'\s*<filter id="[^"]+">\s*<property name="mlt_service">avfilter\.subtitles</property>.*?</filter>',
+            '',
+            content,
+            flags=re.DOTALL
+        )
+        # Wyczyszczenie listy napisów w sequenceproperties
+        content = re.sub(
+            r'<property name="kdenlive:sequenceproperties\.subtitlesList">.*?</property>',
+            '<property name="kdenlive:sequenceproperties.subtitlesList">[]\n</property>',
+            content,
+            flags=re.DOTALL
+        )
+        content = re.sub(
+            r'<property name="kdenlive:sequenceproperties\.kdenlive:activeSubtitleIndex">\d+</property>',
+            '<property name="kdenlive:sequenceproperties.kdenlive:activeSubtitleIndex">-1</property>',
+            content
+        )
+        print("[Kdenlive] Zmontowano czystą oś czasu (ścieżki A1, V1, V2, V3) BEZ napisów karaoke.")
 
     target_kdenlive.write_text(content, encoding="utf-8")
-    print(f"[OK] Wygenerowano projekt Kdenlive: {target_kdenlive} (czas osi: {dur_str})")
+    print(f"[OK] Zapisano projekt Kdenlive: {target_kdenlive} (czas osi: {dur_str})")
 
 if __name__ == "__main__":
     args = parse_args()
@@ -201,5 +222,6 @@ if __name__ == "__main__":
         name=args.name,
         seq_uuid=args.seq_uuid,
         ref_kdenlive_path=args.ref_kdenlive,
-        ref_ass_path=args.ref_ass
+        ref_ass_path=args.ref_ass,
+        with_karaoke=args.with_karaoke
     )
