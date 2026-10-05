@@ -591,6 +591,7 @@ configure_zorin_studio_panel() {
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-position 'TOP' 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar multi-monitors true 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar stockgs-keep-top-panel false 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar stockgs-keep-dash true 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-size 28 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-margin 0 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar show-running-apps false 2>/dev/null || true
@@ -605,7 +606,7 @@ primary_elements = [
     {'element': 'leftBox', 'visible': True, 'position': 'stackedTL'},
     {'element': 'taskbar', 'visible': False, 'position': 'stackedTL'},
     {'element': 'dateMenu', 'visible': True, 'position': 'centerMonitor'},
-    {'element': 'centerBox', 'visible': False, 'position': 'stackedBR'},
+    {'element': 'centerBox', 'visible': True, 'position': 'stackedBR'},
     {'element': 'systemMenu', 'visible': True, 'position': 'stackedBR'},
     {'element': 'rightBox', 'visible': True, 'position': 'stackedBR'},
     {'element': 'desktopButton', 'visible': False, 'position': 'stackedBR'}
@@ -740,10 +741,21 @@ apply_studio() {
     local repo_dir
     repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-    # 1. Pakiety systemowe (conky-all, plank)
-    log_info "Weryfikacja pakietów systemowych..."
-    if ! command -v conky >/dev/null 2>&1 || ! command -v plank >/dev/null 2>&1; then
-        sudo apt update && sudo apt install -y conky-all plank
+    local session_type
+    session_type="$(detect_display_server)"
+
+    # 1. Pakiety systemowe (conky-all, plank dla X11)
+    if [ "$session_type" = "x11" ]; then
+        log_info "Weryfikacja pakietów systemowych dla sesji X11..."
+        if ! command -v conky >/dev/null 2>&1 || ! command -v plank >/dev/null 2>&1; then
+            if sudo -n true 2>/dev/null; then
+                sudo apt update && sudo apt install -y conky-all plank
+            else
+                log_warn "Conky lub Plank nie są zainstalowane. W sesji X11 zainstaluj: sudo apt install -y conky-all plank"
+            fi
+        fi
+    else
+        log_info "Wykryto sesję Wayland — profil Cyber Studio wykorzysta natywny dok Wayland zamiast Planka/Conky."
     fi
 
     # 2. Motyw Zorin Dark
@@ -756,23 +768,23 @@ apply_studio() {
     gsettings set org.gnome.desktop.wm.preferences button-layout 'close,minimize,maximize:' || true
 
     # 3. Kopiowanie motywu Planka MnemoShift-HUD i konfiguracja doku
-    local session_type
-    session_type="$(detect_display_server)"
     mkdir -p "$HOME/.local/share/plank/themes/MnemoShift-HUD"
     cp -r "$repo_dir/templates/plank/MnemoShift-HUD/"* "$HOME/.local/share/plank/themes/MnemoShift-HUD/" 2>/dev/null || true
     if [ "$session_type" = "wayland" ]; then
-        log_warn "Wykryto sesję Wayland — profil Cyber Studio wykorzysta natywny dok Wayland zamiast Planka."
+        log_info "Konfiguracja animowanego doku Wayland dla profilu Cyber Studio..."
         configure_wayland_dock
     else
         log_info "Instalacja motywu Planka MnemoShift-HUD..."
         configure_plank_dual_dock "MnemoShift-HUD"
     fi
 
-    # 4. Instalacja i konfiguracja Conky HUD na przydymionym szkle
-    log_info "Konfiguracja Conky HUD (przydymione szkło multi-monitor)..."
-    mkdir -p "$HOME/.config/conky"
-    cp "$repo_dir/templates/conky/mnemoshift_hud_dp4.conf" "$HOME/.config/conky/"
-    cp "$repo_dir/templates/conky/mnemoshift_hud_hdmi0.conf" "$HOME/.config/conky/"
+    # 4. Instalacja i konfiguracja Conky HUD na przydymionym szkle (tylko X11)
+    if [ "$session_type" = "x11" ]; then
+        log_info "Konfiguracja Conky HUD (przydymione szkło multi-monitor)..."
+        mkdir -p "$HOME/.config/conky"
+        cp "$repo_dir/templates/conky/mnemoshift_hud_dp4.conf" "$HOME/.config/conky/"
+        cp "$repo_dir/templates/conky/mnemoshift_hud_hdmi0.conf" "$HOME/.config/conky/"
+    fi
 
     # 5. Instalacja i włączenie rozszerzenia GNOME Shell MnemoShift Emission HUD
     log_info "Instalacja rozszerzenia GNOME Shell MnemoShift Emission HUD..."
@@ -780,6 +792,17 @@ apply_studio() {
     mkdir -p "$ext_dir"
     cp -r "$repo_dir/templates/gnome-shell/mnemoshift-emission-hud@ghostshift.eu/"* "$ext_dir/"
     gnome-extensions enable mnemoshift-emission-hud@ghostshift.eu 2>/dev/null || true
+    python3 -c "
+import ast, subprocess
+try:
+    raw = subprocess.check_output(['gsettings', 'get', 'org.gnome.shell', 'enabled-extensions'], text=True).strip()
+    exts = ast.literal_eval(raw)
+    if 'mnemoshift-emission-hud@ghostshift.eu' not in exts:
+        exts.append('mnemoshift-emission-hud@ghostshift.eu')
+        subprocess.run(['gsettings', 'set', 'org.gnome.shell', 'enabled-extensions', str(exts)], check=False)
+except Exception:
+    pass
+" 2>/dev/null || true
 
     # 6. Konfiguracja górnego paska zadań (Zorin Taskbar) - rozparowanie i telemetria
     configure_zorin_studio_panel
@@ -787,13 +810,17 @@ apply_studio() {
     # 7. Aplikacja tapet multi-monitor (spanned lub single)
     apply_studio_wallpapers "$repo_dir"
 
-    # 8. Start Conky multi-monitor
-    log_info "Uruchamianie Conky HUD..."
-    start_conky_multi
+    # 8. Start Conky multi-monitor (tylko X11)
+    if [ "$session_type" = "x11" ]; then
+        log_info "Uruchamianie Conky HUD..."
+        start_conky_multi
+    fi
 
-    # 9. Autostart Planka
-    mkdir -p "$HOME/.config/autostart"
-    cp /usr/share/applications/plank.desktop "$HOME/.config/autostart/" 2>/dev/null || true
+    # 9. Autostart Planka (tylko X11)
+    if [ "$session_type" = "x11" ]; then
+        mkdir -p "$HOME/.config/autostart"
+        cp /usr/share/applications/plank.desktop "$HOME/.config/autostart/" 2>/dev/null || true
+    fi
 
     log_ok "Profil Cyber Studio został pomyślnie wdrożony!"
 }
@@ -961,7 +988,7 @@ show_status() {
     echo -n "Rozszerzenie user-theme: "
     gsettings get org.gnome.shell.extensions.user-theme name 2>/dev/null || echo "N/A"
     echo -n "Emission HUD (GNOME):   "
-    if gnome-extensions list --enabled 2>/dev/null | grep -q "mnemoshift-emission-hud"; then
+    if gnome-extensions list --enabled 2>/dev/null | grep -q "mnemoshift-emission-hud" || gsettings get org.gnome.shell enabled-extensions 2>/dev/null | grep -q "mnemoshift-emission-hud"; then
         echo -e "\033[1;32mAKTYWNY (rozszerzenie GNOME Shell)\033[0m"
     else
         echo -e "\033[1;33mNIEAKTYWNY\033[0m"

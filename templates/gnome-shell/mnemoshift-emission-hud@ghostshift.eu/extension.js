@@ -54,17 +54,22 @@ export default class MnemoShiftEmissionHudExtension extends Extension {
     }
 
     _findSecondaryPanel() {
-        if (!global.zorinTaskbar?.panels) {
-            return null;
+        if (!global.zorinTaskbar?.panels || global.zorinTaskbar.panels.length === 0) {
+            return Main.panel || null;
         }
 
-        // The secondary panel is on HDMI-0 (non-primary, or width 1920)
+        // Jeśli jest tylko jeden monitor/panel (np. laptop), dołącz do tego panelu
+        if (global.zorinTaskbar.panels.length === 1) {
+            return global.zorinTaskbar.panels[0];
+        }
+
+        // W konfiguracji wielomonitorowej szukaj panelu emisyjnego (HDMI-0)
         for (const p of global.zorinTaskbar.panels) {
             if (!p.isPrimary || p.isStandalone || p.monitor?.width === 1920) {
                 return p;
             }
         }
-        return null;
+        return global.zorinTaskbar.panels[0] || null;
     }
 
     _setupHud() {
@@ -124,6 +129,9 @@ export default class MnemoShiftEmissionHudExtension extends Extension {
         } else if (panelObj.panel?._centerBox) {
             panelObj.panel._centerBox.add_child(this._widget);
             panelObj.panel._centerBox.visible = true;
+        } else if (panelObj._rightBox) {
+            panelObj._rightBox.insert_child_at_index(this._widget, 0);
+            panelObj._rightBox.visible = true;
         }
 
         // Initial telemetry poll
