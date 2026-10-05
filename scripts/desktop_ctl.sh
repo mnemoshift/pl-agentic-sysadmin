@@ -340,6 +340,20 @@ subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 
 
 configure_wayland_dock() {
     log_info "Konfiguracja animowanego doku Wayland (Ubuntu Dock / Dash to Dock)..."
+
+    local user_ext_dir="$HOME/.local/share/gnome-shell/extensions/ubuntu-dock@ubuntu.com"
+    local sys_ext_dir="/usr/share/gnome-shell/extensions/ubuntu-dock@ubuntu.com"
+
+    if [ ! -d "$user_ext_dir" ]; then
+        if [ -d "$sys_ext_dir" ]; then
+            log_info "Kopiowanie ubuntu-dock do przestrzeni użytkownika (~/.local/share/gnome-shell/extensions)..."
+            mkdir -p "$HOME/.local/share/gnome-shell/extensions"
+            cp -r "$sys_ext_dir" "$user_ext_dir"
+        else
+            log_warn "Brak rozszerzenia ubuntu-dock w systemie. Aby dok Wayland działał, zainstaluj pakiet: sudo apt install -y gnome-shell-extension-ubuntu-dock"
+        fi
+    fi
+
     gnome-extensions enable ubuntu-dock@ubuntu.com 2>/dev/null || true
 
     # Zapewnij obecność ikony podglądu aplikacji pod WhiteSur (zapobiega wyświetlaniu dużego znaku +)
@@ -350,8 +364,26 @@ configure_wayland_dock() {
         cp -f "$HOME/.local/share/icons/WhiteSur/actions/symbolic/view-app-grid-symbolic.svg" "$HOME/.local/share/icons/hicolor/scalable/actions/view-app-grid-zorin-symbolic.svg" 2>/dev/null || true
     fi
 
-    # Zapewnij ulubione aplikacje w powłoce GNOME (w tym Antigravity)
-    gsettings set org.gnome.shell favorite-apps "['antigravity.desktop', 'brave-browser.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Terminal.desktop']" 2>/dev/null || true
+    # Zapewnij obecność kluczowych aplikacji w ulubionych bez niszczenia istniejących
+    python3 -c "
+import ast, os, subprocess
+curr_str = subprocess.run(['gsettings', 'get', 'org.gnome.shell', 'favorite-apps'], capture_output=True, text=True).stdout.strip()
+try:
+    favs = ast.literal_eval(curr_str)
+    if not isinstance(favs, list):
+        favs = []
+except Exception:
+    favs = []
+
+defaults = ['antigravity.desktop', 'google-chrome.desktop', 'brave-browser.desktop', 'code.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Terminal.desktop']
+if not favs:
+    favs = [d for d in defaults if os.path.exists(f'/usr/share/applications/{d}') or os.path.exists(f'{os.path.expanduser(\"~\")}/.local/share/applications/{d}')]
+else:
+    if 'antigravity.desktop' not in favs and (os.path.exists('/usr/share/applications/antigravity.desktop') or os.path.exists(f'{os.path.expanduser(\"~\")}/.local/share/applications/antigravity.desktop')):
+        favs.append('antigravity.desktop')
+
+subprocess.run(['gsettings', 'set', 'org.gnome.shell', 'favorite-apps', str(favs)], check=False)
+" 2>/dev/null || true
 
     # Zapewnij łatanie docking.js pod kątem aktywnego wykrywania kursora nad oknami (TopChrome + slideoutSize = 2px)
     local user_docking="$HOME/.local/share/gnome-shell/extensions/ubuntu-dock@ubuntu.com/docking.js"
@@ -492,6 +524,11 @@ elements = [
 elem_dict = {k: elements for k in keys}
 subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions', json.dumps(elem_dict)], check=False)
 " 2>/dev/null || true
+
+    # Przeładuj rozszerzenie, aby Mutter załadował zaktualizowane parametry
+    gnome-extensions disable ubuntu-dock@ubuntu.com 2>/dev/null || true
+    sleep 0.2
+    gnome-extensions enable ubuntu-dock@ubuntu.com 2>/dev/null || true
 }
 
 # ------------------------------------------------------------------------------
@@ -853,6 +890,7 @@ subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 
     # 8. Wyłączenie doku Wayland oraz rozszerzenia GNOME Shell MnemoShift Emission HUD
     log_info "Wyłączanie rozszerzeń doku Wayland i MnemoShift Emission HUD..."
     gnome-extensions disable ubuntu-dock@ubuntu.com 2>/dev/null || true
+    gsettings reset-recursively org.gnome.shell.extensions.dash-to-dock 2>/dev/null || true
     gnome-extensions disable mnemoshift-emission-hud@ghostshift.eu 2>/dev/null || true
 
     # 9. Zatrzymanie Conky i demona tapet
@@ -920,7 +958,7 @@ show_status() {
     gsettings get org.gnome.desktop.interface icon-theme
     echo -n "Kursor myszy:           "
     gsettings get org.gnome.desktop.interface cursor-theme
-    echo -n "Rozszerzenie user-theme:"
+    echo -n "Rozszerzenie user-theme: "
     gsettings get org.gnome.shell.extensions.user-theme name 2>/dev/null || echo "N/A"
     echo -n "Emission HUD (GNOME):   "
     if gnome-extensions list --enabled 2>/dev/null | grep -q "mnemoshift-emission-hud"; then
@@ -934,7 +972,7 @@ show_status() {
     else
         echo -e "\033[1;33mNIEAKTYWNY\033[0m"
     fi
-    echo -n "Dok Wayland (Dash-to-Dock):"
+    echo -n "Dok Wayland (Dock):     "
     if gnome-extensions list --enabled 2>/dev/null | grep -q "ubuntu-dock"; then
         echo -e "\033[1;32mAKTYWNY (animowany dok dolny)\033[0m"
     else

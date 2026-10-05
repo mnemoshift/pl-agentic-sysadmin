@@ -106,7 +106,7 @@ else:
     lspci_gpus = run_cmd("lspci | grep -E 'VGA|3D|Display' | sed -E 's/^[0-9a-f:.]* (VGA compatible controller|3D controller|Display controller): //'")
     if lspci_gpus:
         gpu_name = " / ".join([g.strip() for g in lspci_gpus.splitlines() if g.strip()])
-    lspci_drivers = run_cmd("lspci -k | grep -EA2 'VGA|3D|Display' | grep 'Kernel driver in use:' | awk '{print $NF}'")
+    lspci_drivers = run_cmd("lspci -k | grep -EA3 'VGA|3D|Display' | grep 'Kernel driver in use:' | sed -E 's/.*:[[:space:]]*//'")
     if lspci_drivers:
         gpu_driver = " / ".join(list(dict.fromkeys([d.strip() for d in lspci_drivers.splitlines() if d.strip()])))
 

@@ -48,10 +48,11 @@ Prefer working directly from the command line? All agentic procedures are expose
 # Display all available commands and descriptions
 make help
 
-# 🖥️ Desktop Profile Management (Featured in EP002)
-make desktop-macos   # Deploy macOS broadcast profile (WhiteSur theme, left controls, Plank, CSD fix)
+# 🖥️ Desktop Profile Management (Dual-Engine: Wayland + X11)
+make desktop-macos   # Deploy macOS broadcast profile (WhiteSur theme, left controls, auto-detect Wayland/X11, CSD fix)
+make desktop-studio  # Deploy Cyber Studio profile (MnemoShift Cyber-Blueprint, Top Bar Emission HUD, Conky HUD)
 make desktop-reset   # Instant vanilla reset back to factory Zorin OS desktop (1 second)
-make desktop-status  # Audit window decorations, Zorin panel position, and Plank state
+make desktop-status  # Audit display server (Wayland/X11), window decorations, panel position, and dock state
 
 # 🔍 System Audit & Disaster Recovery
 make audit           # Audit CPU, RAM, GPU, audio daemons, cameras, and display outputs
@@ -121,6 +122,8 @@ Every installed tool, library, and system extension is continuously logged in `i
 
 Explore practical end-to-end sessions in `docs/walkthroughs/` comparing legacy terminal toil against modern Agentic workflows:
 - 🖥️ [**macOS-style Desktop on Zorin OS**](docs/walkthroughs/Desktop-a-la-MacOS.md) — GNOME desktop transformation, dual Plank docks, WhiteSur styling, and CSD headerbar fixes.
+- 🧭 [**Dual-Engine Desktop Architecture (X11 vs Wayland)**](docs/desktop/DUAL_ENGINE_GUIDE.md) — TopChrome dock engineering, 2px edge trigger, and Zoom & Hop (1.2x) hover animation on laptops and workstations.
+- ⚙️ [**Kdenlive and MCP Server Setup in User-Space**](docs/walkthroughs/Konfiguracja-Kdenlive-MCP.md) — rootless Flatpak installation, MLT melt CLI wrappers, XML generator fix, and Antigravity integration.
 - 🎬 [**Autonomous YouTube Short Editing in Kdenlive with Agentic AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) — zero-subscription, local alternative to CapCut Pro: audio audit & normalization (-14 LUFS), 9:16 timeline composition, and dynamic karaoke subtitles (Whisper + ASS).
 
 ---

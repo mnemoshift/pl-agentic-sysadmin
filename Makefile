@@ -10,7 +10,7 @@ help:
 	@echo "  make inventory       - Wykonuje inwentaryzację oprogramowania (APT, Flatpak, Repozytoria, Runtimes)"
 	@echo "  make all-audits      - Uruchamia pełny zestaw audytów (sprzęt + oprogramowanie)"
 	@echo "  make desktop-studio  - Wdraża profil Cyber Studio (MnemoShift Cyber-Blueprint, Top Bar Emission HUD, Conky, Plank HUD)"
-	@echo "  make desktop-macos   - Wdraża profil emisyjny macOS (WhiteSur, traffic lights po lewej, Plank, CSD)"
+	@echo "  make desktop-macos   - Wdraża profil emisyjny macOS (WhiteSur, kropki po lewej, autodetekcja Wayland/X11, CSD)"
 	@echo "  make desktop-reset   - Przywraca stan fabryczny pulpitu Zorin OS (kropki po prawej, pasek na dole)"
 	@echo "  make desktop-status  - Sprawdza aktywny stan konfiguracji pulpitu i doku"
 	@echo "  make session-status  - Wyświetla aktualny stan z memory/SESSION_STATE.md"
