@@ -50,13 +50,15 @@ pkg_dir = sys.argv[2]
 
 def run(cmd):
     try:
-        res = subprocess.run(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        env = dict(os.environ, LC_ALL="C")
+        res = subprocess.run(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
         return res.stdout.strip()
     except Exception:
         return ""
 
 now_iso = datetime.now().isoformat()
 now_human = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+hostname = run("hostname") or "Unknown"
 
 # Pakiety APT
 apt_manual_count = 0
@@ -83,17 +85,28 @@ if os.path.exists(os.path.join(pkg_dir, "flatpak.txt")):
             if len(parts) >= 1:
                 flatpaks.append(line.strip())
 
+def check_tool(cmd):
+    res = run(cmd)
+    if not res or "not found" in res.lower() or "brak" in res.lower():
+        return "Niedostępny"
+    return res
+
 # Narzędzia
 tools = {
-    "python3": run("python3 --version"),
-    "node": run("node -v") or "Niedostępny",
-    "npm": run("npm -v") or "Niedostępny",
-    "docker": run("docker --version") or "Niedostępny",
-    "docker_compose": run("docker compose version 2>/dev/null") or run("docker-compose --version") or "Niedostępny",
-    "git": run("git --version"),
-    "gcc": run("gcc --version | head -n 1") or "Niedostępny",
-    "nvidia_driver": run("nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null") or "Niedostępny",
-    "nvidia_container_toolkit": run("nvidia-ctk --version 2>&1 | head -n 1") or "Niedostępny"
+    "python3": check_tool("python3 --version"),
+    "uv": check_tool("uv --version"),
+    "node": check_tool("node -v"),
+    "npm": check_tool("npm -v"),
+    "docker": check_tool("docker --version"),
+    "docker_compose": check_tool("docker compose version 2>/dev/null") if check_tool("docker compose version 2>/dev/null") != "Niedostępny" else check_tool("docker-compose --version"),
+    "git": check_tool("git --version"),
+    "gcc": check_tool("gcc --version | head -n 1"),
+    "brave": check_tool("brave-browser --version"),
+    "google_chrome": check_tool("google-chrome --version"),
+    "code": check_tool("code --version | head -n 1"),
+    "rclone": check_tool("rclone --version | head -n 1"),
+    "nvidia_driver": check_tool("nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null"),
+    "nvidia_container_toolkit": check_tool("nvidia-ctk --version 2>&1 | head -n 1")
 }
 
 # Repozytoria z sources.list.d
@@ -141,25 +154,33 @@ def build_repos_list(rps):
         return "_Brak niestandardowych repozytoriów w sources.list.d._"
     return "\n".join([f"- `{r}`" for r in rps])
 
+def tool_status(val):
+    return "Niedostępny" if val == "Niedostępny" else "Zainstalowany"
+
 md_content = f"""# Inwentarz Oprogramowania Stacji Roboczej (software.md)
 *Wygenerowano automatycznie przez `make inventory` (`scripts/audit_software.sh`)*  
 **Data audytu**: {now_human} ({now_iso})  
-**Podstawa**: Raport wygenerowany na stacji `MnemoShift-Workstation-1`
+**Podstawa**: Raport wygenerowany na stacji `{hostname}`
 
 ---
 
 ## 1. Narzędzia Deweloperskie i Środowiska Uruchomieniowe
 | Narzędzie / Komponent | Zainstalowana Wersja | Status |
 | :--- | :--- | :--- |
-| **Python** | `{tools['python3']}` | Zainstalowany |
-| **Node.js** | `{tools['node']}` | Zainstalowany |
-| **NPM** | `{tools['npm']}` | Zainstalowany |
-| **Docker Engine** | `{tools['docker']}` | Zainstalowany |
-| **Docker Compose** | `{tools['docker_compose']}` | Zainstalowany |
-| **Git** | `{tools['git']}` | Zainstalowany |
-| **Kompilator C/C++ (GCC)** | `{tools['gcc']}` | Zainstalowany |
-| **Sterownik NVIDIA GPU** | `{tools['nvidia_driver']}` | Aktywny |
-| **NVIDIA Container Toolkit** | `{tools['nvidia_container_toolkit']}` | Zainstalowany |
+| **Python** | `{tools['python3']}` | {tool_status(tools['python3'])} |
+| **UV (Python Package Mgr)** | `{tools['uv']}` | {tool_status(tools['uv'])} |
+| **Git** | `{tools['git']}` | {tool_status(tools['git'])} |
+| **Brave Browser** | `{tools['brave']}` | {tool_status(tools['brave'])} |
+| **Google Chrome** | `{tools['google_chrome']}` | {tool_status(tools['google_chrome'])} |
+| **VS Code** | `{tools['code']}` | {tool_status(tools['code'])} |
+| **Node.js** | `{tools['node']}` | {tool_status(tools['node'])} |
+| **NPM** | `{tools['npm']}` | {tool_status(tools['npm'])} |
+| **Docker Engine** | `{tools['docker']}` | {tool_status(tools['docker'])} |
+| **Docker Compose** | `{tools['docker_compose']}` | {tool_status(tools['docker_compose'])} |
+| **Kompilator C/C++ (GCC)** | `{tools['gcc']}` | {tool_status(tools['gcc'])} |
+| **Rclone (Dysk w chmurze)** | `{tools['rclone']}` | {tool_status(tools['rclone'])} |
+| **Sterownik NVIDIA GPU** | `{tools['nvidia_driver']}` | {tool_status(tools['nvidia_driver'])} |
+| **NVIDIA Container Toolkit** | `{tools['nvidia_container_toolkit']}` | {tool_status(tools['nvidia_container_toolkit'])} |
 
 ---
 

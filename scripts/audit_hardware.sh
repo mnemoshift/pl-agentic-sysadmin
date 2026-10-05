@@ -24,7 +24,8 @@ from datetime import datetime
 
 def run_cmd(cmd):
     try:
-        res = subprocess.run(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        env = dict(os.environ, LC_ALL="C")
+        res = subprocess.run(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
         return res.stdout.strip()
     except Exception as e:
         return ""
@@ -101,6 +102,14 @@ if nvidia_raw:
         gpu_power_draw = f"{parts[8]} W"
         gpu_power_limit = f"{parts[9]} W"
         gpu_fan_speed = f"{parts[10]} %"
+else:
+    lspci_gpus = run_cmd("lspci | grep -E 'VGA|3D|Display' | sed -E 's/^[0-9a-f:.]* (VGA compatible controller|3D controller|Display controller): //'")
+    if lspci_gpus:
+        gpu_name = " / ".join([g.strip() for g in lspci_gpus.splitlines() if g.strip()])
+    lspci_drivers = run_cmd("lspci -k | grep -EA2 'VGA|3D|Display' | grep 'Kernel driver in use:' | awk '{print $NF}'")
+    if lspci_drivers:
+        gpu_driver = " / ".join(list(dict.fromkeys([d.strip() for d in lspci_drivers.splitlines() if d.strip()])))
+
 
 print("[5/7] Badanie pamięci masowej i dysków...")
 lsblk_json_raw = run_cmd("lsblk -J -e7 -o NAME,SIZE,TYPE,FSTYPE,MODEL,SERIAL,MOUNTPOINTS,ROTA")

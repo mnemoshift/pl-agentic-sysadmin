@@ -1,5 +1,12 @@
 ### Cel / Intencja
-> Oczekiwany efekt: Maksymalne podobieństwo do pulpitu MacOS - przezroczysty i animowany dok  na dole, górny smukły pasek statusu (28px) z wyśrodkowanym zegarem i menu Zorin z lewej strony, kropki okien (traffic lights) po lewej stronie, kursor macOS.
+> Oczekiwany efekt: Maksymalne podobieństwo do pulpitu MacOS - przezroczysty i animowany dok na dole, górny smukły pasek statusu (28px) z wyśrodkowanym zegarem i menu Zorin z lewej strony, kropki okien (traffic lights) po lewej stronie, kursor macOS.
+
+> [!NOTE]
+> **Architektura Dwutorowa (Dual-Engine: X11 vs Wayland):**  
+> Workstation Hub automatycznie wykrywa typ sesji graficznej przed konfiguracją:
+> - Na stacjach **X11** (np. stacja montażowa z kartą NVIDIA i wieloma monitorami) wdrażany jest dok **Plank**.
+> - Na laptopach i komputerach z **Waylandem** (gdzie Plank nie działa z powodu ograniczeń kompozytora Mutter) wdrażany jest zoptymalizowany dok **Ubuntu Dock w warstwie TopChrome z animacją Zoom & Hop pod kursorem**.  
+> Pełny przewodnik inżynieryjny: [docs/desktop/DUAL_ENGINE_GUIDE.md](../desktop/DUAL_ENGINE_GUIDE.md).
 ---
 ### Reset do stanu domyślnego po instalacji (Vanilla Reset #1)
 > W celach prezentacyjnych - powrót do ustawień domyślnych Zorina:

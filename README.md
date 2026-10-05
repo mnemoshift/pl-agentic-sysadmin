@@ -41,10 +41,11 @@ Jeśli wolisz wywoływać procedury bezpośrednio z konsoli:
 # Wyświetlenie wszystkich dostępnych komend
 make help
 
-# 🖥️ Zarządzanie profilem pulpitu (Nowość z EP002)
-make desktop-macos   # Wdrożenie profilu emisyjnego macOS (WhiteSur, kropki po lewej, Plank, CSD fix)
+# 🖥️ Zarządzanie profilem pulpitu (Dwutorowy Silnik: Wayland + X11)
+make desktop-macos   # Wdrożenie profilu emisyjnego macOS (WhiteSur, kropki po lewej, autodetekcja Wayland/X11, CSD fix)
+make desktop-studio  # Wdrożenie profilu Cyber Studio (MnemoShift Cyber-Blueprint, Top Bar Emission HUD, Conky HUD)
 make desktop-reset   # Natychmiastowy powrót do stanu fabrycznego Zorin OS (1 sekunda)
-make desktop-status  # Audyt dekoracji okien, pozycji paska Zorina i doku
+make desktop-status  # Audyt serwera wyświetlania (Wayland/X11), dekoracji okien, pozycji paska i doku
 
 # 🔍 Audyt sprzętu i oprogramowania
 make audit           # Audyt CPU, RAM, GPU, Audio, Kamery, Ekrany
@@ -116,6 +117,7 @@ Każda zainstalowana aplikacja, biblioteka czy usługa jest katalogowana w `inve
 
 W katalogu `docs/walkthroughs/` znajdziesz szczegółowe scenariusze sesji z agentem z porównaniem tradycyjnego klepania komend w terminalu vs podejścia agentowego:
 - 🖥️ [**Pulpit à la macOS na Zorin OS**](docs/walkthroughs/Desktop-a-la-MacOS.md) — transformacja środowiska graficznego GNOME, podwójny dok Plank, styl WhiteSur i naprawa belek CSD.
+- 🧭 [**Architektura Dwutorowa Pulpitu (X11 vs Wayland)**](docs/desktop/DUAL_ENGINE_GUIDE.md) — inżynieria doku TopChrome, wyzwalacz krawędziowy 2px oraz animacja unoszenia ikon (Zoom & Hop 1.2x) na laptopach i stacjach roboczych.
 - ⚙️ [**Konfiguracja Kdenlive i Serwera MCP w User-Space**](docs/walkthroughs/Konfiguracja-Kdenlive-MCP.md) — instalacja Flatpak bez roota, wrappery CLI silnika MLT melt, naprawa generatora XML i integracja z Antigravity.
 - 🎬 [**Autonomiczny Montaż Shorta w Kdenlive z Agentem AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) — bezpłatna, lokalna alternatywa dla CapCuta: audyt i normalizacja audio (-14 LUFS), kaskadowy montaż 9:16 i dynamiczne napisy karaoke (Whisper + ASS).
 

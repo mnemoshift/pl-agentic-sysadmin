@@ -71,7 +71,7 @@ check:
 	@test -f inventory/hardware.json && echo "  [✓] inventory/hardware.json obecny" || echo "  [✗] Brak inventory/hardware.json"
 	@test -f inventory/software.md && echo "  [✓] inventory/software.md obecny" || echo "  [✗] Brak inventory/software.md"
 	@test -f inventory/software.json && echo "  [✓] inventory/software.json obecny" || echo "  [✗] Brak inventory/software.json"
-	@test -f recovery/DISASTER_RECOVERY.md && echo "  [✓] recovery/DISASTER_RECOVERY.md obecny" || echo "  [✗] Brak recovery/DISASTER_RECOVERY.md"
+	@(test -f docs/recovery/DISASTER_RECOVERY.md || test -f recovery/DISASTER_RECOVERY.md) && echo "  [✓] docs/recovery/DISASTER_RECOVERY.md obecny" || echo "  [✗] Brak docs/recovery/DISASTER_RECOVERY.md"
 
 restore-dry-run:
 	@chmod +x scripts/restore_workstation.sh

@@ -23,6 +23,20 @@ log_err() {
     echo -e "\033[1;31m[ERROR]\033[0m $*"
 }
 
+detect_display_server() {
+    local session="${XDG_SESSION_TYPE:-}"
+    if [ -z "$session" ]; then
+        if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+            session="wayland"
+        elif [ -n "${DISPLAY:-}" ]; then
+            session="x11"
+        else
+            session="$(loginctl show-session "$(loginctl show-user "$(whoami)" -p Display --value 2>/dev/null)" -p Type --value 2>/dev/null || echo "wayland")"
+        fi
+    fi
+    echo "$session" | tr '[:upper:]' '[:lower:]'
+}
+
 # ------------------------------------------------------------------------------
 # 1. Konfiguracja aplikacji CSD (Client-Side Decoration: VS Code, Chrome)
 # ------------------------------------------------------------------------------
@@ -94,29 +108,53 @@ ensure_theme_repositories() {
     local base_dir="$HOME/repos/zorin-customization"
     mkdir -p "$base_dir"
 
-    # 1. WhiteSur GTK Theme
-    if [ ! -d "$base_dir/WhiteSur-gtk-theme" ]; then
-        log_info "Klonowanie WhiteSur-gtk-theme z GitHuba..."
-        git clone --depth 1 https://github.com/vinceliuice/WhiteSur-gtk-theme.git "$base_dir/WhiteSur-gtk-theme"
+    # Zapewnij obecność xmllint stub jeśli brak pakietu systemowego (zapobiega pytaniu install.sh o sudo)
+    if ! command -v xmllint &>/dev/null; then
+        mkdir -p "$HOME/.local/bin"
+        printf '#!/bin/sh\nexit 0\n' > "$HOME/.local/bin/xmllint"
+        chmod +x "$HOME/.local/bin/xmllint"
     fi
-    log_info "Instalacja/aktualizacja motywu WhiteSur GTK..."
-    (cd "$base_dir/WhiteSur-gtk-theme" && ./install.sh -m -t default -l -c light >/dev/null 2>&1 || true)
+
+    # 1. WhiteSur GTK Theme
+    if [ -d "$HOME/.themes/WhiteSur-Light" ] || [ -d "$HOME/.local/share/themes/WhiteSur-Light" ]; then
+        log_info "Motyw WhiteSur GTK jest już zainstalowany."
+    else
+        if ! command -v sassc &>/dev/null; then
+            log_err "Brak narzędzia 'sassc' w systemie! Do skompilowania motywu WhiteSur GTK wymagana jest instalacja: sudo apt install -y sassc libglib2.0-dev-bin"
+            return 1
+        fi
+
+        if [ ! -d "$base_dir/WhiteSur-gtk-theme" ]; then
+            log_info "Klonowanie WhiteSur-gtk-theme z GitHuba..."
+            git clone --depth 1 https://github.com/vinceliuice/WhiteSur-gtk-theme.git "$base_dir/WhiteSur-gtk-theme"
+        fi
+        log_info "Instalacja motywu WhiteSur GTK..."
+        (cd "$base_dir/WhiteSur-gtk-theme" && ./install.sh -m -t default -l -c light >/dev/null 2>&1 || true)
+    fi
 
     # 2. WhiteSur Icon Theme
-    if [ ! -d "$base_dir/WhiteSur-icon-theme" ]; then
-        log_info "Klonowanie WhiteSur-icon-theme z GitHuba..."
-        git clone --depth 1 https://github.com/vinceliuice/WhiteSur-icon-theme.git "$base_dir/WhiteSur-icon-theme"
+    if [ -d "$HOME/.local/share/icons/WhiteSur-light" ] || [ -d "$HOME/.icons/WhiteSur-light" ]; then
+        log_info "Motyw ikon WhiteSur jest już zainstalowany."
+    else
+        if [ ! -d "$base_dir/WhiteSur-icon-theme" ]; then
+            log_info "Klonowanie WhiteSur-icon-theme z GitHuba..."
+            git clone --depth 1 https://github.com/vinceliuice/WhiteSur-icon-theme.git "$base_dir/WhiteSur-icon-theme"
+        fi
+        log_info "Instalacja motywu ikon WhiteSur..."
+        (cd "$base_dir/WhiteSur-icon-theme" && ./install.sh >/dev/null 2>&1 || true)
     fi
-    log_info "Instalacja motywu ikon WhiteSur..."
-    (cd "$base_dir/WhiteSur-icon-theme" && ./install.sh >/dev/null 2>&1 || true)
 
     # 3. McMojave Cursors
-    if [ ! -d "$base_dir/McMojave-cursors" ]; then
-        log_info "Klonowanie McMojave-cursors z GitHuba..."
-        git clone --depth 1 https://github.com/vinceliuice/McMojave-cursors.git "$base_dir/McMojave-cursors"
+    if [ -d "$HOME/.local/share/icons/McMojave-cursors" ] || [ -d "$HOME/.icons/McMojave-cursors" ]; then
+        log_info "Kursor McMojave jest już zainstalowany."
+    else
+        if [ ! -d "$base_dir/McMojave-cursors" ]; then
+            log_info "Klonowanie McMojave-cursors z GitHuba..."
+            git clone --depth 1 https://github.com/vinceliuice/McMojave-cursors.git "$base_dir/McMojave-cursors"
+        fi
+        log_info "Instalacja kursorów McMojave..."
+        (cd "$base_dir/McMojave-cursors" && ./install.sh >/dev/null 2>&1 || true)
     fi
-    log_info "Instalacja kursorów McMojave..."
-    (cd "$base_dir/McMojave-cursors" && ./install.sh >/dev/null 2>&1 || true)
 }
 
 # ------------------------------------------------------------------------------
@@ -125,52 +163,68 @@ ensure_theme_repositories() {
 
 configure_plank_dual_dock() {
     local theme_name="${1:-Transparent}"
-    log_info "Konfiguracja podwójnego doku Plank (Dual-Dock: DP-4 + HDMI-0, motyw: $theme_name)..."
+    local mon_count
+    mon_count=$(xrandr --listmonitors 2>/dev/null | grep -c '^[ ]*[0-9]:' || echo 1)
 
-    # Włącz obsługę wielu doków w Plank
-    dconf write /net/launchpad/plank/enabled-docks "['dock1', 'dock2']"
+    if [ "$mon_count" -le 1 ]; then
+        log_info "Konfiguracja doku Plank (Pojedynczy ekran / laptop, motyw: $theme_name)..."
+        dconf write /net/launchpad/plank/enabled-docks "['dock1']"
+        dconf write /net/launchpad/plank/docks/dock1/monitor "''"
+        dconf write /net/launchpad/plank/docks/dock1/position "'bottom'"
+        dconf write /net/launchpad/plank/docks/dock1/alignment "'center'"
+        dconf write /net/launchpad/plank/docks/dock1/theme "'$theme_name'"
+        dconf write /net/launchpad/plank/docks/dock1/zoom-enabled "true"
+        dconf write /net/launchpad/plank/docks/dock1/zoom-percent "140"
+        dconf write /net/launchpad/plank/docks/dock1/icon-size "48"
+        dconf write /net/launchpad/plank/docks/dock1/hide-mode "'intelligent'"
+        dconf write /net/launchpad/plank/docks/dock1/show-dock-item "false"
+        mkdir -p "$HOME/.config/plank/dock1/launchers"
+    else
+        log_info "Konfiguracja podwójnego doku Plank (Dual-Dock: DP-4 + HDMI-0, motyw: $theme_name)..."
+        dconf write /net/launchpad/plank/enabled-docks "['dock1', 'dock2']"
 
-    # Dok 1 (Ekran główny Ultrawide / DP-4): wszystkie przypięte aplikacje
-    dconf write /net/launchpad/plank/docks/dock1/monitor "'DP-4'"
-    dconf write /net/launchpad/plank/docks/dock1/position "'bottom'"
-    dconf write /net/launchpad/plank/docks/dock1/alignment "'center'"
-    dconf write /net/launchpad/plank/docks/dock1/theme "'$theme_name'"
-    dconf write /net/launchpad/plank/docks/dock1/zoom-enabled "true"
-    dconf write /net/launchpad/plank/docks/dock1/show-dock-item "false"
+        dconf write /net/launchpad/plank/docks/dock1/monitor "'DP-4'"
+        dconf write /net/launchpad/plank/docks/dock1/position "'bottom'"
+        dconf write /net/launchpad/plank/docks/dock1/alignment "'center'"
+        dconf write /net/launchpad/plank/docks/dock1/theme "'$theme_name'"
+        dconf write /net/launchpad/plank/docks/dock1/zoom-enabled "true"
+        dconf write /net/launchpad/plank/docks/dock1/show-dock-item "false"
 
-    # Dok 2 (Ekran nagraniowy 16:9 / HDMI-0): tylko aktywne aplikacje + menu
-    dconf write /net/launchpad/plank/docks/dock2/monitor "'HDMI-0'"
-    dconf write /net/launchpad/plank/docks/dock2/position "'bottom'"
-    dconf write /net/launchpad/plank/docks/dock2/alignment "'center'"
-    dconf write /net/launchpad/plank/docks/dock2/theme "'$theme_name'"
-    dconf write /net/launchpad/plank/docks/dock2/zoom-enabled "true"
-    dconf write /net/launchpad/plank/docks/dock2/zoom-percent "150"
-    dconf write /net/launchpad/plank/docks/dock2/icon-size "48"
-    dconf write /net/launchpad/plank/docks/dock2/hide-mode "'intelligent'"
-    dconf write /net/launchpad/plank/docks/dock2/show-dock-item "false"
-    dconf write /net/launchpad/plank/docks/dock2/dock-items "['show-applications.dockitem', 'applications.dockitem']"
+        dconf write /net/launchpad/plank/docks/dock2/monitor "'HDMI-0'"
+        dconf write /net/launchpad/plank/docks/dock2/position "'bottom'"
+        dconf write /net/launchpad/plank/docks/dock2/alignment "'center'"
+        dconf write /net/launchpad/plank/docks/dock2/theme "'$theme_name'"
+        dconf write /net/launchpad/plank/docks/dock2/zoom-enabled "true"
+        dconf write /net/launchpad/plank/docks/dock2/zoom-percent "150"
+        dconf write /net/launchpad/plank/docks/dock2/icon-size "48"
+        dconf write /net/launchpad/plank/docks/dock2/hide-mode "'intelligent'"
+        dconf write /net/launchpad/plank/docks/dock2/show-dock-item "false"
+        dconf write /net/launchpad/plank/docks/dock2/dock-items "['show-applications.dockitem', 'applications.dockitem']"
+        mkdir -p "$HOME/.config/plank/dock2/launchers"
+    fi
 
-    # Katalogi konfiguracji doków
     mkdir -p "$HOME/.config/plank/dock1/launchers"
-    mkdir -p "$HOME/.config/plank/dock2/launchers"
 
-    # Zapewnij aktywatory menu w dock2
-    if [ ! -f "$HOME/.config/plank/dock2/launchers/applications.dockitem" ]; then
-        cat << 'EOF' > "$HOME/.config/plank/dock2/launchers/applications.dockitem"
+    # Zapewnij aktywatory menu w dock2 tylko dla konfiguracji wielomonitorowej
+    if [ "$mon_count" -gt 1 ]; then
+        mkdir -p "$HOME/.config/plank/dock2/launchers"
+        if [ ! -f "$HOME/.config/plank/dock2/launchers/applications.dockitem" ]; then
+            cat << 'EOF' > "$HOME/.config/plank/dock2/launchers/applications.dockitem"
 [PlankDockItemPreferences]
 Launcher=docklet://applications
 EOF
-    fi
+        fi
 
-    if [ -f "$HOME/.local/share/applications/show-applications.desktop" ]; then
-        cat << 'EOF' > "$HOME/.config/plank/dock2/launchers/show-applications.dockitem"
+        if [ -f "$HOME/.local/share/applications/show-applications.desktop" ]; then
+            cat << 'EOF' > "$HOME/.config/plank/dock2/launchers/show-applications.dockitem"
 [PlankDockItemPreferences]
 Launcher=file:///home/jarek/.local/share/applications/show-applications.desktop
 EOF
-    fi
+        fi
 
-    # Usuń z doku nagraniowego dock2 zbędne przypięte aplikacje (mają być tylko te aktualnie otwarte na HDMI-0)
-    rm -f "$HOME/.config/plank/dock2/launchers/"{antigravity,org.gnome.Terminal,org.gnome.Nautilus,google-chrome,code-url-handler,capcut}.dockitem 2>/dev/null || true
+        # Usuń z doku nagraniowego dock2 zbędne przypięte aplikacje (mają być tylko te aktualnie otwarte na HDMI-0)
+        rm -f "$HOME/.config/plank/dock2/launchers/"{antigravity,org.gnome.Terminal,org.gnome.Nautilus,google-chrome,code-url-handler,capcut}.dockitem 2>/dev/null || true
+    fi
 
     # Usuń uszkodzony/pusty element capcut z doku głównego dock1
     rm -f "$HOME/.config/plank/dock1/launchers/capcut.dockitem" 2>/dev/null || true
@@ -191,6 +245,7 @@ except Exception:
     mkdir -p "$HOME/.config/autostart"
     if [ -f /usr/share/applications/plank.desktop ]; then
         cp /usr/share/applications/plank.desktop "$HOME/.config/autostart/" 2>/dev/null || true
+        sed -i 's|^Exec=.*|Exec=sh -c '\''if [ "$XDG_SESSION_TYPE" = "x11" ]; then plank; fi'\''|' "$HOME/.config/autostart/plank.desktop"
     fi
 
     if systemctl --user list-unit-files plank.service 2>/dev/null | grep -q "plank.service"; then
@@ -199,7 +254,7 @@ except Exception:
         systemctl --user restart plank.service 2>/dev/null || systemctl --user start plank.service 2>/dev/null || true
     else
         killall plank 2>/dev/null || true
-        nohup plank >/dev/null 2>&1 &
+        nohup env XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 plank >/dev/null 2>&1 &
         sleep 0.5
     fi
 }
@@ -217,14 +272,15 @@ configure_zorin_top_panel() {
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-position 'TOP' 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar multi-monitors true 2>/dev/null || true
 
-    # Likwidacja drugiego pustego paska GNOME (stockgs-keep-top-panel=false)
+    # Likwidacja drugiego pustego paska GNOME (stockgs-keep-top-panel=false) i zachowanie dasha dla doku
     gsettings set org.gnome.shell.extensions.zorin-taskbar stockgs-keep-top-panel false 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar stockgs-keep-dash true 2>/dev/null || true
 
     # Smukła wysokość a la macOS (28px zamiast 48px) oraz brak marginesu
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-size 28 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar panel-margin 0 2>/dev/null || true
 
-    # Ukrycie aplikacji w pasku (aplikacje są w doku Plank na dole)
+    # W profilu macOS aplikacje są zawsze delegowane do dolnego doku (Wayland Dock na Waylandzie, Plank na X11)
     gsettings set org.gnome.shell.extensions.zorin-taskbar show-running-apps false 2>/dev/null || true
     gsettings set org.gnome.shell.extensions.zorin-taskbar show-favorites false 2>/dev/null || true
 
@@ -232,7 +288,174 @@ configure_zorin_top_panel() {
     # Lewa strona: leftBox (menu Zorin)
     # Środek: dateMenu (zegar i data w centrum ekranu - styl macOS)
     # Prawa strona: systemMenu (zasilanie, sieć, głośność) + rightBox (tacka)
-    # Wyłączone: taskbar (okna/apki), showAppsButton, activitiesButton, desktopButton
+    python3 -c "
+import os, json, subprocess
+show_apps = False
+
+keys = ['0', '1']
+try:
+    import dbus
+    bus = dbus.SessionBus()
+    proxy = bus.get_object('org.gnome.Mutter.DisplayConfig', '/org/gnome/Mutter/DisplayConfig')
+    iface = dbus.Interface(proxy, 'org.gnome.Mutter.DisplayConfig')
+    serial, monitors, logical_monitors, properties = iface.GetCurrentState()
+    for i, lm in enumerate(logical_monitors):
+        keys.append(str(i))
+        mon = lm[5][0]
+        connector, vendor, product, mon_serial = mon[0], mon[1], mon[2], mon[3]
+        if vendor and mon_serial:
+            keys.append(f'{vendor}-{mon_serial}')
+        if connector:
+            keys.append(str(connector))
+except Exception:
+    pass
+keys = list(set(keys))
+
+elements = [
+    {'element': 'showAppsButton', 'visible': False, 'position': 'stackedTL'},
+    {'element': 'activitiesButton', 'visible': False, 'position': 'stackedTL'},
+    {'element': 'leftBox', 'visible': True, 'position': 'stackedTL'},
+    {'element': 'taskbar', 'visible': show_apps, 'position': 'stackedTL'},
+    {'element': 'dateMenu', 'visible': True, 'position': 'centerMonitor'},
+    {'element': 'centerBox', 'visible': False, 'position': 'stackedBR'},
+    {'element': 'systemMenu', 'visible': True, 'position': 'stackedBR'},
+    {'element': 'rightBox', 'visible': True, 'position': 'stackedBR'},
+    {'element': 'desktopButton', 'visible': False, 'position': 'stackedBR'}
+]
+
+pos_dict = {k: 'TOP' for k in keys}
+size_dict = {k: 28 for k in keys}
+elem_dict = {k: elements for k in keys}
+
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-positions', json.dumps(pos_dict)], check=False)
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-sizes', json.dumps(size_dict)], check=False)
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions', json.dumps(elem_dict)], check=False)
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions-monitors-sync', 'true'], check=False)
+" 2>/dev/null || true
+}
+
+# ------------------------------------------------------------------------------
+# 4b. Konfiguracja natywnego doku Wayland (Ubuntu Dock / Dash to Dock)
+# ------------------------------------------------------------------------------
+
+configure_wayland_dock() {
+    log_info "Konfiguracja animowanego doku Wayland (Ubuntu Dock / Dash to Dock)..."
+    gnome-extensions enable ubuntu-dock@ubuntu.com 2>/dev/null || true
+
+    # Zapewnij obecność ikony podglądu aplikacji pod WhiteSur (zapobiega wyświetlaniu dużego znaku +)
+    mkdir -p "$HOME/.local/share/icons/WhiteSur/actions/symbolic" "$HOME/.local/share/icons/WhiteSur-light/actions/symbolic" "$HOME/.local/share/icons/hicolor/scalable/actions"
+    if [ -f "$HOME/.local/share/icons/WhiteSur/actions/symbolic/view-app-grid-symbolic.svg" ]; then
+        cp -f "$HOME/.local/share/icons/WhiteSur/actions/symbolic/view-app-grid-symbolic.svg" "$HOME/.local/share/icons/WhiteSur/actions/symbolic/view-app-grid-zorin-symbolic.svg" 2>/dev/null || true
+        cp -f "$HOME/.local/share/icons/WhiteSur/actions/symbolic/view-app-grid-symbolic.svg" "$HOME/.local/share/icons/WhiteSur-light/actions/symbolic/view-app-grid-zorin-symbolic.svg" 2>/dev/null || true
+        cp -f "$HOME/.local/share/icons/WhiteSur/actions/symbolic/view-app-grid-symbolic.svg" "$HOME/.local/share/icons/hicolor/scalable/actions/view-app-grid-zorin-symbolic.svg" 2>/dev/null || true
+    fi
+
+    # Zapewnij ulubione aplikacje w powłoce GNOME (w tym Antigravity)
+    gsettings set org.gnome.shell favorite-apps "['antigravity.desktop', 'brave-browser.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Terminal.desktop']" 2>/dev/null || true
+
+    # Zapewnij łatanie docking.js pod kątem aktywnego wykrywania kursora nad oknami (TopChrome + slideoutSize = 2px)
+    local user_docking="$HOME/.local/share/gnome-shell/extensions/ubuntu-dock@ubuntu.com/docking.js"
+    if [ -f "$user_docking" ]; then
+        python3 -c "
+docking_file = '$user_docking'
+with open(docking_file, 'r') as f:
+    content = f.read()
+content = content.replace('this._slideoutSize = 0;', 'this._slideoutSize = 2;')
+content = content.replace('Main.layoutManager.addChrome(this);', 'Main.layoutManager.addTopChrome(this, { trackFullscreen: true });')
+if 'currentUserTime !== this._dockDwellUserTime' in content:
+    content = content.replace(
+        'if (currentUserTime !== this._dockDwellUserTime)\n            return GLib.SOURCE_REMOVE;',
+        '// User interaction check bypassed for responsive dock'
+    )
+with open(docking_file, 'w') as f:
+    f.write(content)
+" 2>/dev/null || true
+    fi
+
+    # Zapewnij animację zoom/hop ikony pod kursorem (styl Plank / macOS)
+    local user_appicons="$HOME/.local/share/gnome-shell/extensions/ubuntu-dock@ubuntu.com/appIcons.js"
+    if [ -f "$user_appicons" ]; then
+        python3 -c "
+appicons_file = '$user_appicons'
+with open(appicons_file, 'r') as f:
+    content = f.read()
+if '_applyHoverHopAnimation' not in content:
+    func_code = '''function _applyHoverHopAnimation(button, getIconActor) {
+    if (!button)
+        return;
+    button.connect('notify::hover', () => {
+        const rawActor = typeof getIconActor === 'function' ? getIconActor() : getIconActor;
+        const actor = rawActor?._iconBin || rawActor;
+        if (!actor)
+            return;
+        actor.remove_all_transitions();
+        actor.set_pivot_point(0.5, 0.5);
+        if (button.hover) {
+            const pos = Utils.getPosition();
+            let transX = 0;
+            let transY = 0;
+            if (pos === St.Side.BOTTOM)
+                transY = -6;
+            else if (pos === St.Side.TOP)
+                transY = 6;
+            else if (pos === St.Side.LEFT)
+                transX = 6;
+            else if (pos === St.Side.RIGHT)
+                transX = -6;
+
+            actor.ease({
+                scale_x: 1.2,
+                scale_y: 1.2,
+                translation_x: transX,
+                translation_y: transY,
+                duration: 120,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            });
+        } else {
+            actor.ease({
+                scale_x: 1.0,
+                scale_y: 1.0,
+                translation_x: 0,
+                translation_y: 0,
+                duration: 120,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            });
+        }
+    });
+}
+'''
+    content = content.replace('const DockAbstractAppIcon = GObject.registerClass({', func_code + '\nconst DockAbstractAppIcon = GObject.registerClass({')
+    content = content.replace('this._indicator = new AppIconIndicators.AppIconIndicator(this);', 'this._indicator = new AppIconIndicators.AppIconIndicator(this);\n        _applyHoverHopAnimation(this, () => this.icon);')
+    content = content.replace('this._menuTimeoutId = 0;\n    }', 'this._menuTimeoutId = 0;\n        _applyHoverHopAnimation(this.toggleButton, () => this.icon);\n    }')
+    with open(appicons_file, 'w') as f:
+        f.write(content)
+" 2>/dev/null || true
+    fi
+
+    gsettings set org.gnome.shell.extensions.dash-to-dock dock-position 'BOTTOM' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock extend-height false 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock dock-fixed false 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock autohide true 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock intellihide true 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock intellihide-mode 'ALL_WINDOWS' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock require-pressure-to-show false 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock show-delay 0.05 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock hide-delay 0.15 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock dash-max-icon-size 48 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock custom-theme-shrink true 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock transparency-mode 'FIXED' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock background-opacity 0.25 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock running-indicator-style 'DOTS' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock show-favorites true 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock show-running true 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock show-show-apps-button true 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock show-apps-at-top true 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock show-trash false 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.dash-to-dock show-mounts false 2>/dev/null || true
+
+    # Ukrycie aplikacji w górnym pasku, gdy aktywny jest dolny dok
+    gsettings set org.gnome.shell.extensions.zorin-taskbar show-running-apps false 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar show-favorites false 2>/dev/null || true
     python3 -c "
 import json, subprocess
 keys = ['0', '1']
@@ -266,14 +489,8 @@ elements = [
     {'element': 'desktopButton', 'visible': False, 'position': 'stackedBR'}
 ]
 
-pos_dict = {k: 'TOP' for k in keys}
-size_dict = {k: 28 for k in keys}
 elem_dict = {k: elements for k in keys}
-
-subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-positions', json.dumps(pos_dict)], check=False)
-subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-sizes', json.dumps(size_dict)], check=False)
 subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions', json.dumps(elem_dict)], check=False)
-subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions-monitors-sync', 'true'], check=False)
 " 2>/dev/null || true
 }
 
@@ -305,13 +522,22 @@ apply_macos() {
     # 4. Konfiguracja smukłego paska Zorin na górze ekranu (macOS menu bar)
     configure_zorin_top_panel
 
-    # 5. Uruchomienie i konfiguracja podwójnego doku Plank na dole
-    configure_plank_dual_dock
+    # 5. Konfiguracja dolnego doku (Wayland: Ubuntu Dock / Dash to Dock, X11: Plank)
+    local session_type
+    session_type="$(detect_display_server)"
+    if [ "$session_type" = "wayland" ]; then
+        log_info "Wykryto serwer wyświetlania Wayland — konfiguracja doku Wayland (TopChrome + Hover Zoom/Hop)..."
+        configure_wayland_dock
+    else
+        log_info "Wykryto serwer wyświetlania X11 — konfiguracja natywnego doku Plank..."
+        configure_plank_dual_dock
+    fi
 
     # 6. Unifikacja aplikacji CSD (VS Code & Google Chrome)
     log_info "Wymuszanie natywnej belki okna w VS Code i Google Chrome..."
     configure_vscode_csd "native"
     configure_chrome_csd "true"
+
 
     log_ok "Profil macOS został pomyślnie zaaplikowany."
 }
@@ -492,11 +718,18 @@ apply_studio() {
     gsettings set org.gnome.shell.extensions.user-theme name 'ZorinBlue-Dark' 2>/dev/null || true
     gsettings set org.gnome.desktop.wm.preferences button-layout 'close,minimize,maximize:' || true
 
-    # 3. Kopiowanie i aktywacja motywu Planka MnemoShift-HUD
-    log_info "Instalacja motywu Planka MnemoShift-HUD..."
+    # 3. Kopiowanie motywu Planka MnemoShift-HUD i konfiguracja doku
+    local session_type
+    session_type="$(detect_display_server)"
     mkdir -p "$HOME/.local/share/plank/themes/MnemoShift-HUD"
-    cp -r "$repo_dir/templates/plank/MnemoShift-HUD/"* "$HOME/.local/share/plank/themes/MnemoShift-HUD/"
-    configure_plank_dual_dock "MnemoShift-HUD"
+    cp -r "$repo_dir/templates/plank/MnemoShift-HUD/"* "$HOME/.local/share/plank/themes/MnemoShift-HUD/" 2>/dev/null || true
+    if [ "$session_type" = "wayland" ]; then
+        log_warn "Wykryto sesję Wayland — profil Cyber Studio wykorzysta natywny dok Wayland zamiast Planka."
+        configure_wayland_dock
+    else
+        log_info "Instalacja motywu Planka MnemoShift-HUD..."
+        configure_plank_dual_dock "MnemoShift-HUD"
+    fi
 
     # 4. Instalacja i konfiguracja Conky HUD na przydymionym szkle
     log_info "Konfiguracja Conky HUD (przydymione szkło multi-monitor)..."
@@ -617,8 +850,9 @@ subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 
     configure_vscode_csd "custom"
     configure_chrome_csd "false"
 
-    # 8. Wyłączenie rozszerzenia GNOME Shell MnemoShift Emission HUD
-    log_info "Wyłączanie rozszerzenia MnemoShift Emission HUD..."
+    # 8. Wyłączenie doku Wayland oraz rozszerzenia GNOME Shell MnemoShift Emission HUD
+    log_info "Wyłączanie rozszerzeń doku Wayland i MnemoShift Emission HUD..."
+    gnome-extensions disable ubuntu-dock@ubuntu.com 2>/dev/null || true
     gnome-extensions disable mnemoshift-emission-hud@ghostshift.eu 2>/dev/null || true
 
     # 9. Zatrzymanie Conky i demona tapet
@@ -648,6 +882,14 @@ show_status() {
     echo "=========================================================="
     echo "  WORKSTATION HUB: STAN KONFIGURACJI PULPITU"
     echo "=========================================================="
+    local s_type
+    s_type="$(detect_display_server)"
+    echo -n "Serwer wyświetlania:    "
+    if [ "$s_type" = "wayland" ]; then
+        echo -e "\033[1;36mWayland (natywny dok: Ubuntu Dock / Dash to Dock)\033[0m"
+    else
+        echo -e "\033[1;34mX11 / Xorg (natywny dok: Plank)\033[0m"
+    fi
     echo -n "Układ przycisków okien: "
     gsettings get org.gnome.desktop.wm.preferences button-layout
     echo -n "Pozycja paska Zorina:   "
@@ -660,7 +902,7 @@ show_status() {
     local show_apps
     show_apps=$(gsettings get org.gnome.shell.extensions.zorin-taskbar show-running-apps 2>/dev/null || echo "true")
     if [ "$show_apps" = "false" ]; then
-        echo -e "\033[1;32mUkryte (przeniesione do doku Plank)\033[0m"
+        echo -e "\033[1;32mUkryte (przeniesione do dolnego doku)\033[0m"
     else
         echo -e "\033[1;33mWidoczne (domyślny taskbar)\033[0m"
     fi
@@ -689,6 +931,12 @@ show_status() {
     echo -n "Conky HUD:              "
     if pgrep -x "conky" >/dev/null; then
         echo -e "\033[1;32mAKTYWNY ($(pgrep -c -x conky) instancji)\033[0m"
+    else
+        echo -e "\033[1;33mNIEAKTYWNY\033[0m"
+    fi
+    echo -n "Dok Wayland (Dash-to-Dock):"
+    if gnome-extensions list --enabled 2>/dev/null | grep -q "ubuntu-dock"; then
+        echo -e "\033[1;32mAKTYWNY (animowany dok dolny)\033[0m"
     else
         echo -e "\033[1;33mNIEAKTYWNY\033[0m"
     fi

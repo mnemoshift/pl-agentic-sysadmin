@@ -1,35 +1,71 @@
 ---
 name: desktop-manager
-description: Zarządzanie profilami pulpitu stacji roboczej (profil Cyber Studio z HUD i telemetrią emisyjną, styl macOS WhiteSur, reset do vanilla Zorin, unifikacja kontrolek okien CSD w VS Code/Chrome oraz dok Plank). Używaj, gdy użytkownik prosi o zmianę wyglądu pulpitu, konfigurację studia nagrań, usunięcie zegara z paska emisyjnego, telemetrię GPU/CPU, reset ustawień lub synchronizację belek okien.
+description: Zarządzanie profilami pulpitu stacji roboczej (dwutorowy silnik X11 / Wayland, profil Cyber Studio z HUD i telemetrią emisyjną, styl macOS WhiteSur z dokiem TopChrome i animacją zoom/hop, reset do vanilla Zorin, unifikacja kontrolek okien CSD w VS Code/Chrome). Używaj, gdy użytkownik prosi o zmianę wyglądu pulpitu, konfigurację studia nagrań, dostosowanie doku pod Waylandem lub X11, telemetrię GPU/CPU, reset ustawień lub synchronizację belek okien.
 ---
 
 # Desktop Manager Skill (Workstation Hub Core Skill)
 
-Ten skill dostarcza zautomatyzowane, weryfikowalne procedury zarządzania środowiskiem graficznym stacji roboczej (ze szczególnym uwzględnieniem Zorin OS / GNOME / X11), profilu emisyjnego wideo (Cyber Studio & Emission HUD), rozwiązywania problemów z Client-Side Decorations (CSD) oraz deterministycznego resetu do stanu domyślnego.
+Ten skill dostarcza zautomatyzowane, weryfikowalne procedury zarządzania środowiskiem graficznym stacji roboczej w oparciu o **dwutorową architekturę serwera wyświetlania (X11 vs Wayland)**, profile produkcyjne (Cyber Studio & macOS WhiteSur), rozwiązywanie problemów z Client-Side Decorations (CSD) oraz deterministyczny reset do stanu fabrycznego Zorin OS.
 
 ---
 
-## 1. Dostępne Profile i Polecenia Operacyjne
+## 1. Architektura Dwutorowa: Kategorie Sprzętowe i Środowiskowe
 
-Skill wykorzystuje zintegrowany kontroler pulpitu `scripts/desktop_ctl.sh` dostępny przez `Makefile`:
+Workstation Hub automatycznie audytuje środowisko przed modyfikacją pulpitu (`detect_display_server`) i kieruje wykonanie do odpowiedniego silnika:
+
+| Kategoria Środowiska | Serwer Wyświetlania | Architektura Doku | Telemetria / Widgety | Przeznaczenie |
+| :--- | :--- | :--- | :--- | :--- |
+| **Kategoria 1: Workstation X11** | **X11 / Xorg** (`XDG_SESSION_TYPE=x11`) | **Plank Dual-Dock** (`plank`) — motyw `MnemoShift-HUD` lub `Transparent`, autostart X11 | **Conky HUD** (przydymione szkło) + **MnemoShift Emission HUD** | Ciężkie stacje montażowe z dedykowanym GPU NVIDIA (RTX), wieloma monitorami (21:9 + 16:9) |
+| **Kategoria 2: Laptop / PC Wayland** | **Wayland** (`XDG_SESSION_TYPE=wayland`) | **Ubuntu Dock (Dash-to-Dock)** w warstwie **TopChrome** z animacją **Zoom & Hop** | Pasek systemowy Zorin Taskbar TOP (28px) z wyśrodkowanym zegarem | Laptopy i komputery z grafiką Intel/AMD (iGPU) lub hybrydową, nowoczesne instalacje Zorin OS 18 / Ubuntu 24.04 |
+
+---
+
+## 2. Inżynieria Doku pod Waylandem (Kategoria 2)
+
+Protokół Wayland w kompozytorze GNOME Shell (Mutter) uniemożliwia zewnętrznym aplikacjom X11 (jak Plank) bezpośrednie zarządzanie oknami, pozycją ekranową oraz barierami wskaźnika myszy. Dlatego dla sesji Wayland wdrożono wyspecjalizowany, natywny silnik doku:
+
+1. **Warstwa `TopChrome` zamiast `addChrome`:**
+   - Domyślny Ubuntu Dock rejestruje się przez `Main.layoutManager.addChrome(this)`, co umieszcza go w drzewie sceny Cluttera **poniżej grupy okien** (`global.top_window_group`). Gdy okno nachodzi na dół ekranu, zasłania dok i przechwytuje zdarzenia myszy.
+   - Nasza procedura rejestruje dok przez `Main.layoutManager.addTopChrome(this, { trackFullscreen: true })`, co wynosi dok na **sam wierzch ponad wszystkie nachodzące okna**.
+2. **Aktywny Wyzwalacz Dolnej Krawędzi (Edge Trigger):**
+   - Rezerwacja 2-pikselowego paska czułości (`_slideoutSize = 2`) w warstwie TopChrome na dnie ekranu.
+   - Usunięcie blokującego warunku `user_time` z `_dockDwellTimeout`, dzięki czemu zjechanie kursorem do dolnej krawędzi bezwzględnie i natychmiastowo wysuwa dok na wierzch nad aktywne okno.
+3. **Efekt Zoom & Hop pod Kursorem (Styl Plank / macOS):**
+   - Na zdarzeniu `notify::hover` w `appIcons.js` ikona pod kursorem powiększa się o 20% (`scale 1.2`) i unosi w górę o 6px (`translation_y: -6`) z płynnym wygładzaniem kwadratowym (`Clutter.AnimationMode.EASE_OUT_QUAD`, 120ms).
+   - Po zjechaniu myszą ikona miękko powraca do bazowego rozmiaru (`scale 1.0, translation_y 0`).
+   - Wskaźniki uruchomionych aplikacji (kropki DOTS) pozostają stabilnie na dole paska.
+4. **Spójność Wektorowa i Pasek WhiteSur:**
+   - Podmiana symbolicznej ikony siatki programów (`view-app-grid-zorin-symbolic.svg`) w motywie WhiteSur, zapobiegająca wyświetlaniu dużego znaku `+`.
+   - Przycisk programów umieszczony po lewej stronie doku (`show-apps-at-top true`).
+   - Przypięte ulubione w doku: Antigravity IDE, Brave, Nautilus, Terminal.
+
+> [!IMPORTANT]
+> **Wymóg przeładowania ES Modules w Waylandzie:**  
+> Silnik GJS w GNOME Shell 46 keszuje załadowane moduły JavaScript w pamięci procesu kompozytora. Każda aktualizacja kodu rozszerzeń doku wymaga jednorazowego przelogowania użytkownika (wyloguj/zaloguj), aby kompozytor wczytał nowy kod z dysku.
+
+---
+
+## 3. Dostępne Profile i Polecenia Operacyjne
+
+Zintegrowany interfejs `Makefile` oraz skrypt `scripts/desktop_ctl.sh` automatycznie adaptują się do wykrytego serwera wyświetlania:
 
 ```bash
+# Wdrożenie profilu emisyjnego macOS (WhiteSur, kropki po lewej, taskbar góra 28px, dolny dok Wayland/Plank, CSD fix)
+make desktop-macos
+# lub bezpośrednio:
+./scripts/desktop_ctl.sh apply-macos
+
 # Wdrożenie profilu Cyber Studio (MnemoShift Cyber-Blueprint, Top Bar Emission HUD, Conky HUD, Plank HUD)
 make desktop-studio
 # lub bezpośrednio:
 ./scripts/desktop_ctl.sh apply-studio
 
-# Wdrożenie profilu emisyjnego macOS (WhiteSur, kropki po lewej, taskbar góra, Plank dół, CSD fix)
-make desktop-macos
-# lub bezpośrednio:
-./scripts/desktop_ctl.sh apply-macos
-
-# Błyskawiczny powrót do domyślnego stanu Zorin OS (kropki po prawej, pasek dół, wyłączenie Planka, Conky i rozszerzeń)
+# Błyskawiczny powrót do domyślnego stanu Zorin OS (wyłączenie doków, Conky i rozszerzeń)
 make desktop-reset
 # lub bezpośrednio:
 ./scripts/desktop_ctl.sh reset
 
-# Audyt bieżącego stanu dekoracji, motywów, procesów doku i telemetrii
+# Audyt bieżącego stanu dekoracji, motywów, serwera wyświetlania i procesów doku
 make desktop-status
 # lub bezpośrednio:
 ./scripts/desktop_ctl.sh status
@@ -37,35 +73,9 @@ make desktop-status
 
 ---
 
-## 2. Architektura Profilu Cyber Studio (MnemoShift Studio HUD)
+## 4. Architektura Ramek Okien: SSD vs CSD
 
-Profil Cyber Studio (`make desktop-studio`) rozwiązuje kluczowe wyzwania produkcyjne stacji nagraniowej:
-
-1. **Eliminacja Błędów Ciągłości Montażowej (Anti-Continuity Error):**
-   - Na monitorze emisyjnym (`HDMI-0`, 16:9) zegar i data są całkowicie ukryte w `zorin-taskbar` (`panel-element-positions-monitors-sync = false`).
-   - Zapobiega to dekoncentracji widza, gdy kolejne ujęcia (takes) screencastu były nagrywane o różnych godzinach.
-   - Monitor główny roboczy (`DP-4`, 21:9 Ultra-Wide) zachowuje standardowy zegar i kalendarz.
-
-2. **Natywne Rozszerzenie GNOME Shell — MnemoShift Emission HUD:**
-   - W wolnym slocie środkowym paska emisyjnego instalowane jest rozszerzenie `mnemoshift-emission-hud@ghostshift.eu`.
-   - Zapewnia asynchroniczny (non-blocking) odczyt w czasie rzeczywistym: `CPU %`, `RAM GiB`, `GPU CUDA %` oraz `VRAM GiB` akceleratora RTX 4060 Ti 16GB.
-
-3. **Widget Telemetryczny Conky HUD na Przydymionym Szkle:**
-   - Poprzednio tekst zlewał się ze skomplikowaną siatką CAD tapety.
-   - Zastosowano panel ARGB (`#0B0E14`, ~86% krycia) z laserową obwódką cyan (`#29F0F7`).
-   - Obsługa wielu monitorów (`mnemoshift_hud_dp4.conf` i `mnemoshift_hud_hdmi0.conf`).
-
-4. **Kapsułkowy Dok Plank (Pill Dock):**
-   - Motyw `MnemoShift-HUD` z obwódką cyan (`#29F0F7`), miękkim zaokrągleniem (`TopRoundness=16`, `BottomRoundness=16`) i neonową kropką aktywności.
-
-5. **Spanned / Multi-Monitor Wallpaper Dispatcher:**
-   - Automatyczny wybór: obraz kompozytowy 5360×1440 w trybie spanned przy dwóch aktywnych monitorach lub wykadrowana tapeta przy jednym ekranie.
-
----
-
-## 3. Architektura Ramek Okien: SSD vs CSD
-
-Środowisko graficzne Linuksa dzieli okna na dwie kategorie:
+Środowisko graficzne dzieli aplikacje na dwie kategorie:
 
 1. **Server-Side Decorations (SSD) — Natywne okna systemowe (Mutter):**
    * Dotyczy: Nautilus, Terminal, Ustawienia, aplikacje GTK4/libadwaita.
@@ -74,25 +84,27 @@ Profil Cyber Studio (`make desktop-studio`) rozwiązuje kluczowe wyzwania produk
 
 2. **Client-Side Decorations (CSD) — Aplikacje Electron i Chromium:**
    * Dotyczy: **Visual Studio Code**, **Google Chrome**, **Brave**.
-   * Aplikacje te domyślnie ignorują ustawienia menedżera okien Mutter i same rysują nagłówek z przyciskami po prawej stronie.
+   * Domyślnie ignorują ustawienia menedżera okien Mutter i same rysują nagłówek z przyciskami po prawej stronie.
    * **Rozwiązanie w ramach skilla:**
      * **VS Code:** Wymuszenie `"window.titleBarStyle": "native"` w `~/.config/Code/User/settings.json`.
-     * **Google Chrome:** Ustawienie `"custom_chrome_frame": false` w plikach `~/.config/google-chrome/*/Preferences`.
-     * Wymuszenie to oddaje dekorację okna menedżerowi Mutter, co zapewnia 100% spójności wizualnej (traffic lights po lewej stronie w całym systemie).
+     * **Google Chrome:** Ustawienie `"custom_chrome_frame": false` w `~/.config/google-chrome/*/Preferences`.
+     * Zapewnia to pełną spójność traffic lights po lewej stronie w całym systemie.
 
 > [!NOTE]
-> **Antigravity IDE:** Posiada sztywno zadeklarowany tryb bezramkowy (`titleBarStyle: 'hidden'`) z wykorzystaniem Chromium Window Controls Overlay. Zgodnie z wytycznymi architektonicznymi pozostawiamy Antigravity w nowoczesnym układzie frameless bez modyfikowania plików `.asar`.
+> **Antigravity IDE:** Posiada deklarację trybu bezramkowego (`titleBarStyle: 'hidden'`) z wykorzystaniem Chromium Window Controls Overlay. Zgodnie z wytycznymi architektonicznymi pozostawiamy Antigravity w nowoczesnym układzie frameless bez modyfikowania plików `.asar`.
 
 ---
 
-## 4. Protokół Wykonawczy dla Agenta
+## 5. Protokół Wykonawczy dla Agenta
 
 Gdy użytkownik zleca Ci konfigurację pulpitu lub jego reset:
 1. **Audyt wstępny (Pre-flight):**
-   Wywołaj `make desktop-status` i sprawdź aktualne motywy, status doku, Conky oraz rozszerzenia GNOME.
+   Wywołaj `make desktop-status` i zbadaj:
+   * Wykryty serwer wyświetlania (`Wayland` vs `X11`),
+   * Aktywne rozszerzenia, motywy i procesy doku.
 2. **Wykonanie atomowe:**
-   Wywołaj odpowiedni cel `make desktop-studio`, `make desktop-macos` lub `make desktop-reset`.
+   Wywołaj odpowiedni cel (`make desktop-macos`, `make desktop-studio` lub `make desktop-reset`).
 3. **Weryfikacja końcowa (Post-flight):**
-   Upewnij się, że procesy doku (`pgrep -x plank`), Conky (`pgrep -x conky`) oraz klucze `button-layout` są w stanie oczekiwanym.
+   Sprawdź kod powrotu i upewnij się poleceniem `make desktop-status`, że stan jest spójny z wykrytą sesją.
 4. **Zapis do pamięci:**
-   Zanotuj wykonanie operacji w `memory/JOURNAL.md` z podaniem daty i dowodu.
+   Zanotuj wykonanie operacji w `memory/JOURNAL.md` z podaniem dowodu i zaktualizuj `memory/SESSION_STATE.md`.
