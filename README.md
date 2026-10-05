@@ -52,6 +52,12 @@ make audit           # Audyt CPU, RAM, GPU, Audio, Kamery, Ekrany
 make inventory       # Living Inventory pakietów APT, Flatpak i repozytoriów
 make restore-dry-run # Bezpieczna symulacja Disaster Recovery
 
+# 🗣️ Czytnik Tekstu TTS (Select & Listen: Edge Neural TTS)
+make tts-status      # Sprawdzenie stanu czytnika, venv i skrótów klawiszowych
+make tts-install     # Autonomiczna instalacja, środowisko venv i skrót <Super>+R
+make tts-config      # Graficzny wybór głosu (Marek, Zofia itp.) i tempa mowy
+make tts-test        # Odsłuch testowy jakości głosu
+
 # 🎬 Automatyzacja Mediów i Wideo (Nowość z EP003 - Kdenlive MCP & Whisper)
 make media-check-mcp # Audyt instalacji Kdenlive i serwera MCP
 make media-setup-mcp # Autonomiczna instalacja Kdenlive i serwera MCP w user-space
@@ -120,6 +126,7 @@ W katalogu `docs/walkthroughs/` znajdziesz szczegółowe scenariusze sesji z age
 - 🧭 [**Architektura Dwutorowa Pulpitu (X11 vs Wayland)**](docs/desktop/DUAL_ENGINE_GUIDE.md) — inżynieria doku TopChrome, wyzwalacz krawędziowy 2px oraz animacja unoszenia ikon (Zoom & Hop 1.2x) na laptopach i stacjach roboczych.
 - ⚙️ [**Konfiguracja Kdenlive i Serwera MCP w User-Space**](docs/walkthroughs/Konfiguracja-Kdenlive-MCP.md) — instalacja Flatpak bez roota, wrappery CLI silnika MLT melt, naprawa generatora XML i integracja z Antigravity.
 - 🎬 [**Autonomiczny Montaż Shorta w Kdenlive z Agentem AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) — bezpłatna, lokalna alternatywa dla CapCuta: audyt i normalizacja audio (-14 LUFS), kaskadowy montaż 9:16 i dynamiczne napisy karaoke (Whisper + ASS).
+- 🗣️ [**Czytnik Tekstu TTS 'Select & Listen'**](docs/walkthroughs/Czytnik-Glosowy-TTS.md) — neuronowy lektor Microsoft Edge TTS w przestrzeni użytkownika, potok streamingowy do mpv (<250ms), filtr Markdown i globalny skrót `<Super>+R`.
 
 ---
 

@@ -59,6 +59,12 @@ make audit           # Audit CPU, RAM, GPU, audio daemons, cameras, and display 
 make inventory       # Living inventory of installed APT packages, Flatpaks, and repositories
 make restore-dry-run # Safe dry-run simulation of workstation disaster recovery
 
+# 🗣️ Neural TTS Reader (Select & Listen: Edge Neural TTS)
+make tts-status      # Check TTS reader status, venv, and keyboard shortcuts
+make tts-install     # Autonomous user-space installation, venv setup, and <Super>+R hotkey
+make tts-config      # Graphical voice selector (Marek, Zofia, etc.) and speech rate adjustment
+make tts-test        # Play a sample sentence to test voice quality
+
 # 🎬 Media & Video Automation (New in EP003 - Kdenlive & Whisper)
 make media-clean-audio INPUT=work/EP002_Short/input/raw_voiceover.mp4 OUTPUT=work/EP002_Short/assets/clean.wav EXCLUDE=28.9-32.6
 make media-karaoke AUDIO=work/EP002_Short/assets/clean.wav OUTPUT=work/EP002_Short/assets/subtitles.ass FAST=1
@@ -125,6 +131,7 @@ Explore practical end-to-end sessions in `docs/walkthroughs/` comparing legacy t
 - 🧭 [**Dual-Engine Desktop Architecture (X11 vs Wayland)**](docs/desktop/DUAL_ENGINE_GUIDE.md) — TopChrome dock engineering, 2px edge trigger, and Zoom & Hop (1.2x) hover animation on laptops and workstations.
 - ⚙️ [**Kdenlive and MCP Server Setup in User-Space**](docs/walkthroughs/Konfiguracja-Kdenlive-MCP.md) — rootless Flatpak installation, MLT melt CLI wrappers, XML generator fix, and Antigravity integration.
 - 🎬 [**Autonomous YouTube Short Editing in Kdenlive with Agentic AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) — zero-subscription, local alternative to CapCut Pro: audio audit & normalization (-14 LUFS), 9:16 timeline composition, and dynamic karaoke subtitles (Whisper + ASS).
+- 🗣️ [**'Select & Listen' Neural TTS Reader**](docs/walkthroughs/Czytnik-Glosowy-TTS.md) — rootless user-space Microsoft Edge Neural TTS, low-latency streaming pipeline to mpv (<250ms), Markdown sanitizer, and global `<Super>+R` shortcut.
 
 ---
 

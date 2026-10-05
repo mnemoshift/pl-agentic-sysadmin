@@ -1,4 +1,4 @@
-.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-studio desktop-cyber-hud desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short media-clean-work media-prepare-demo gdrive-status gdrive-install gdrive-auth gdrive-list gdrive-folders gdrive-add gdrive-remove gdrive-sync gdrive-timer-enable gdrive-timer-disable gdrive-mount gdrive-unmount
+.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-studio desktop-cyber-hud desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short media-clean-work media-prepare-demo gdrive-status gdrive-install gdrive-auth gdrive-list gdrive-folders gdrive-add gdrive-remove gdrive-sync gdrive-timer-enable gdrive-timer-disable gdrive-mount gdrive-unmount tts-status tts-install tts-config tts-test tts-uninstall
 
 # Domyślny cel
 help:
@@ -17,6 +17,12 @@ help:
 	@echo "  make session-log MSG=\"...\" - Dopisuje wpis ze znacznikiem czasu do memory/JOURNAL.md"
 	@echo "  make check           - Sprawdza integralność plików pamięci i inwentarza"
 	@echo "  make restore-dry-run - Symuluje procedurę odtworzenia Disaster Recovery bez wprowadzania zmian"
+	@echo "  --- Czytnik Tekstu TTS (Select & Listen: Edge Neural TTS) ---"
+	@echo "  make tts-status      - Sprawdza stan czytnika GhostShift TTS, venv i skrótów klawiszowych"
+	@echo "  make tts-install     - Instaluje zależności, środowisko venv, launcher i skróty <Super>+R"
+	@echo "  make tts-config      - Otwiera okno wyboru głosu lektora i prędkości (Zenity GUI)"
+	@echo "  make tts-test        - Odtwarza próbkę głosu neuronowego"
+	@echo "  make tts-uninstall   - Usuwa integrację i skróty klawiszowe czytnika"
 	@echo "  --- Narzędzia Wideo & Audio (Kdenlive & Studio) ---"
 	@echo "  make media-check-mcp - Sprawdza stan Kdenlive, wrapperów CLI i serwera MCP"
 	@echo "  make media-setup-mcp - Instaluje Kdenlive (Flatpak user) i konfiguruje serwer MCP"
@@ -207,3 +213,26 @@ gdrive-mount:
 gdrive-unmount:
 	@chmod +x scripts/gdrive_ctl.sh
 	@./scripts/gdrive_ctl.sh unmount "$(MOUNTPOINT)"
+
+# --- Czytnik Tekstu TTS (Select & Listen: Edge Neural TTS) ---
+
+tts-status:
+	@chmod +x scripts/tts_ctl.sh
+	@./scripts/tts_ctl.sh status
+
+tts-install:
+	@chmod +x scripts/tts_ctl.sh
+	@./scripts/tts_ctl.sh install
+
+tts-config:
+	@chmod +x scripts/tts_ctl.sh
+	@./scripts/tts_ctl.sh config
+
+tts-test:
+	@chmod +x scripts/tts_ctl.sh
+	@./scripts/tts_ctl.sh test
+
+tts-uninstall:
+	@chmod +x scripts/tts_ctl.sh
+	@./scripts/tts_ctl.sh uninstall
+

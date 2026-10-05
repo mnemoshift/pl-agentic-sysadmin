@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Konfigurator Głosu TTS (GhostShift)
+GenericName=Text-To-Speech Voice Config
+Comment=Wybór neuronowego głosu i tempa czytania dla GhostShift TTS
+Exec=ghostshift-tts config
+Icon=audio-speakers
+Terminal=false
+Categories=AudioVideo;Audio;Utility;Settings;
+StartupNotify=true
