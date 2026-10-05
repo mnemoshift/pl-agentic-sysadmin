@@ -1,0 +1,41 @@
+# MnemoShift-HUD Plank Theme
+# Cyber-Blueprint / Tactical HUD Pill Dock
+[PlankTheme]
+# The roundness of the top and bottom corners (smooth pill)
+TopRoundness=16
+BottomRoundness=16
+# The thickness (in pixels) of lines drawn
+LineWidth=1
+# The color (RGBA) of the outer stroke: Laser Cyan (#29F0F7)
+OuterStrokeColor=41;;240;;247;;255
+# The fill colors: Deep Void Obsidian / Smoked Glass (#0B0E14 -> #12161D)
+FillStartColor=11;;14;;20;;235
+FillEndColor=18;;22;;29;;245
+# The color of the inner stroke: Subtle Steel Border (#2A3644)
+InnerStrokeColor=42;;54;;68;;180
+
+[PlankDockTheme]
+# Padding around the dock (comfortable margin around icons)
+HorizPadding=8
+TopPadding=8
+BottomPadding=6
+ItemPadding=4
+IndicatorSize=6
+IconShadowSize=0
+UrgentBounceHeight=1.5
+LaunchBounceHeight=0.5
+FadeOpacity=1
+ClickTime=250
+UrgentBounceTime=500
+LaunchBounceTime=500
+ActiveTime=250
+SlideTime=250
+FadeTime=200
+HideTime=200
+GlowSize=25
+GlowTime=8000
+GlowPulseTime=1800
+UrgentHueShift=150
+ItemMoveTime=350
+CascadeHide=true
+BadgeColor=229;;169;;88;;255

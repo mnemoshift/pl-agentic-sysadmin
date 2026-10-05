@@ -1,0 +1,14 @@
+{
+  "remote_name": "gdrive",
+  "local_base_dir": "~/GoogleDrive",
+  "sync_folders": [
+    {
+      "remote_path": "KeePass",
+      "local_path": "KeePass",
+      "mode": "bisync",
+      "enabled": true,
+      "description": "Bazy haseł KeePassXC (lokalna kopia NVMe, natywny dostęp offline)"
+    }
+  ],
+  "timer_interval": "15m"
+}

@@ -124,7 +124,8 @@ ensure_theme_repositories() {
 # ------------------------------------------------------------------------------
 
 configure_plank_dual_dock() {
-    log_info "Konfiguracja podwójnego doku Plank (Dual-Dock: DP-4 + HDMI-0)..."
+    local theme_name="${1:-Transparent}"
+    log_info "Konfiguracja podwójnego doku Plank (Dual-Dock: DP-4 + HDMI-0, motyw: $theme_name)..."
 
     # Włącz obsługę wielu doków w Plank
     dconf write /net/launchpad/plank/enabled-docks "['dock1', 'dock2']"
@@ -133,7 +134,7 @@ configure_plank_dual_dock() {
     dconf write /net/launchpad/plank/docks/dock1/monitor "'DP-4'"
     dconf write /net/launchpad/plank/docks/dock1/position "'bottom'"
     dconf write /net/launchpad/plank/docks/dock1/alignment "'center'"
-    dconf write /net/launchpad/plank/docks/dock1/theme "'Transparent'"
+    dconf write /net/launchpad/plank/docks/dock1/theme "'$theme_name'"
     dconf write /net/launchpad/plank/docks/dock1/zoom-enabled "true"
     dconf write /net/launchpad/plank/docks/dock1/show-dock-item "false"
 
@@ -141,7 +142,7 @@ configure_plank_dual_dock() {
     dconf write /net/launchpad/plank/docks/dock2/monitor "'HDMI-0'"
     dconf write /net/launchpad/plank/docks/dock2/position "'bottom'"
     dconf write /net/launchpad/plank/docks/dock2/alignment "'center'"
-    dconf write /net/launchpad/plank/docks/dock2/theme "'Transparent'"
+    dconf write /net/launchpad/plank/docks/dock2/theme "'$theme_name'"
     dconf write /net/launchpad/plank/docks/dock2/zoom-enabled "true"
     dconf write /net/launchpad/plank/docks/dock2/zoom-percent "150"
     dconf write /net/launchpad/plank/docks/dock2/icon-size "48"
@@ -316,7 +317,219 @@ apply_macos() {
 }
 
 # ------------------------------------------------------------------------------
-# 6. Przywracanie stanu domyślnego (reset / vanilla Zorin)
+# 6. Konfiguracja górnego paska Zorin OS dla profilu Cyber Studio (Emission HUD)
+# ------------------------------------------------------------------------------
+
+configure_zorin_studio_panel() {
+    log_info "Konfiguracja asymetrycznego paska Zorin OS (brak zegara na monitorze emisyjnym, wyśrodkowany HUD)..."
+    gnome-extensions enable zorin-taskbar@zorinos.com 2>/dev/null || true
+    gnome-extensions enable zorin-menu@zorinos.com 2>/dev/null || true
+
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-position 'TOP' 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar multi-monitors true 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar stockgs-keep-top-panel false 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-size 28 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar panel-margin 0 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar show-running-apps false 2>/dev/null || true
+    gsettings set org.gnome.shell.extensions.zorin-taskbar show-favorites false 2>/dev/null || true
+
+    python3 -c "
+import json, subprocess
+
+primary_elements = [
+    {'element': 'showAppsButton', 'visible': False, 'position': 'stackedTL'},
+    {'element': 'activitiesButton', 'visible': False, 'position': 'stackedTL'},
+    {'element': 'leftBox', 'visible': True, 'position': 'stackedTL'},
+    {'element': 'taskbar', 'visible': False, 'position': 'stackedTL'},
+    {'element': 'dateMenu', 'visible': True, 'position': 'centerMonitor'},
+    {'element': 'centerBox', 'visible': False, 'position': 'stackedBR'},
+    {'element': 'systemMenu', 'visible': True, 'position': 'stackedBR'},
+    {'element': 'rightBox', 'visible': True, 'position': 'stackedBR'},
+    {'element': 'desktopButton', 'visible': False, 'position': 'stackedBR'}
+]
+
+emission_elements = [
+    {'element': 'showAppsButton', 'visible': False, 'position': 'stackedTL'},
+    {'element': 'activitiesButton', 'visible': False, 'position': 'stackedTL'},
+    {'element': 'leftBox', 'visible': True, 'position': 'stackedTL'},
+    {'element': 'taskbar', 'visible': False, 'position': 'stackedTL'},
+    {'element': 'dateMenu', 'visible': False, 'position': 'centerMonitor'},
+    {'element': 'centerBox', 'visible': True, 'position': 'centerMonitor'},
+    {'element': 'systemMenu', 'visible': True, 'position': 'stackedBR'},
+    {'element': 'rightBox', 'visible': True, 'position': 'stackedBR'},
+    {'element': 'desktopButton', 'visible': False, 'position': 'stackedBR'}
+]
+
+elem_dict = {
+    '0': primary_elements,
+    '1': emission_elements,
+    'DP-4': primary_elements,
+    'HDMI-0': emission_elements,
+    'XMI-0x00000000': primary_elements,
+    'SAM-0x5a5a3848': emission_elements
+}
+
+try:
+    import dbus
+    bus = dbus.SessionBus()
+    proxy = bus.get_object('org.gnome.Mutter.DisplayConfig', '/org/gnome/Mutter/DisplayConfig')
+    iface = dbus.Interface(proxy, 'org.gnome.Mutter.DisplayConfig')
+    serial, monitors, logical_monitors, properties = iface.GetCurrentState()
+    for i, lm in enumerate(logical_monitors):
+        mon = lm[5][0]
+        connector, vendor, product, mon_serial = mon[0], mon[1], mon[2], mon[3]
+        key = f'{vendor}-{mon_serial}' if vendor and mon_serial else str(connector)
+        if 'HDMI' in str(connector) or 'SAM' in key:
+            elem_dict[key] = emission_elements
+            elem_dict[str(i)] = emission_elements
+            elem_dict[str(connector)] = emission_elements
+        else:
+            elem_dict[key] = primary_elements
+            elem_dict[str(i)] = primary_elements
+            elem_dict[str(connector)] = primary_elements
+except Exception:
+    pass
+
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions-monitors-sync', 'false'], check=False)
+subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 'panel-element-positions', json.dumps(elem_dict)], check=False)
+" 2>/dev/null || true
+}
+
+# ------------------------------------------------------------------------------
+# 7. Aplikacja tapet MnemoShift Cyber-Blueprint
+# ------------------------------------------------------------------------------
+
+apply_studio_wallpapers() {
+    local repo_dir="$1"
+    local wp_dir="$repo_dir/assets/wallpapers"
+    local spanned_master="$wp_dir/dual_monitor_spanned_cockpit_blueprint.jpg"
+    local wp1_ultrawide="$wp_dir/ultrawide_crop/01-sovereign-cockpit-deck.jpg"
+    local wp3_1080p="$wp_dir/1080p/03-tactical-hud-blueprint.jpg"
+
+    local connected
+    connected=$(xrandr --query 2>/dev/null | grep -E " connected" | awk '{print $1}')
+    local has_dp4=false
+    local has_hdmi0=false
+
+    if echo "$connected" | grep -q "DP-4"; then
+        has_dp4=true
+    fi
+    if echo "$connected" | grep -q "HDMI-0"; then
+        has_hdmi0=true
+    fi
+
+    if [ "$has_dp4" = true ] && [ "$has_hdmi0" = true ] && [ -f "$spanned_master" ]; then
+        log_info "Aktywacja tapety w trybie spanned (5360x1440: DP-4 Cockpit + HDMI-0 Blueprint)..."
+        gsettings set org.gnome.desktop.background picture-options 'spanned'
+        gsettings set org.gnome.desktop.background picture-uri "file://$spanned_master"
+        gsettings set org.gnome.desktop.background picture-uri-dark "file://$spanned_master"
+    elif [ "$has_dp4" = true ] && [ -f "$wp1_ultrawide" ]; then
+        log_info "Aktywacja tapety Ultrawide (DP-4: Cockpit)..."
+        gsettings set org.gnome.desktop.background picture-options 'zoom'
+        gsettings set org.gnome.desktop.background picture-uri "file://$wp1_ultrawide"
+        gsettings set org.gnome.desktop.background picture-uri-dark "file://$wp1_ultrawide"
+    elif [ -f "$wp3_1080p" ]; then
+        log_info "Aktywacja tapety 1080p (HDMI-0: Blueprint)..."
+        gsettings set org.gnome.desktop.background picture-options 'zoom'
+        gsettings set org.gnome.desktop.background picture-uri "file://$wp3_1080p"
+        gsettings set org.gnome.desktop.background picture-uri-dark "file://$wp3_1080p"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 8. Uruchamianie Conky HUD (Multi-Monitor Smoked Glass)
+# ------------------------------------------------------------------------------
+
+start_conky_multi() {
+    killall conky 2>/dev/null || true
+    sleep 0.5
+    local config_dp4="$HOME/.config/conky/mnemoshift_hud_dp4.conf"
+    local config_hdmi0="$HOME/.config/conky/mnemoshift_hud_hdmi0.conf"
+
+    local displays
+    displays=$(xrandr --query 2>/dev/null | grep -E " connected" | awk '{print $1}')
+    local has_dp4=false
+    local has_hdmi0=false
+
+    if echo "$displays" | grep -q "DP-4"; then
+        has_dp4=true
+    fi
+    if echo "$displays" | grep -q "HDMI-0"; then
+        has_hdmi0=true
+    fi
+
+    if [ "$has_dp4" = true ] && [ "$has_hdmi0" = true ]; then
+        /usr/bin/conky -c "$config_dp4" -m 0 -d 2>/dev/null || true
+        /usr/bin/conky -c "$config_hdmi0" -m 1 -d 2>/dev/null || true
+    elif [ "$has_dp4" = true ]; then
+        /usr/bin/conky -c "$config_dp4" -m 0 -d 2>/dev/null || true
+    else
+        /usr/bin/conky -c "$config_hdmi0" -m 0 -d 2>/dev/null || true
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 9. Wdrażanie profilu Cyber Studio (apply-studio)
+# ------------------------------------------------------------------------------
+
+apply_studio() {
+    log_info "Wdrażanie profilu Cyber Studio (MnemoShift Cyber-Blueprint & Emission HUD)..."
+    local repo_dir
+    repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+    # 1. Pakiety systemowe (conky-all, plank)
+    log_info "Weryfikacja pakietów systemowych..."
+    if ! command -v conky >/dev/null 2>&1 || ! command -v plank >/dev/null 2>&1; then
+        sudo apt update && sudo apt install -y conky-all plank
+    fi
+
+    # 2. Motyw Zorin Dark
+    log_info "Konfiguracja motywu ciemnego Zorin..."
+    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' || true
+    gsettings set org.gnome.desktop.interface gtk-theme 'ZorinBlue-Dark' || true
+    gsettings set org.gnome.desktop.interface icon-theme 'ZorinBlue-Dark' || true
+    gsettings set org.gnome.desktop.interface cursor-theme 'Zorin' || true
+    gsettings set org.gnome.shell.extensions.user-theme name 'ZorinBlue-Dark' 2>/dev/null || true
+    gsettings set org.gnome.desktop.wm.preferences button-layout 'close,minimize,maximize:' || true
+
+    # 3. Kopiowanie i aktywacja motywu Planka MnemoShift-HUD
+    log_info "Instalacja motywu Planka MnemoShift-HUD..."
+    mkdir -p "$HOME/.local/share/plank/themes/MnemoShift-HUD"
+    cp -r "$repo_dir/templates/plank/MnemoShift-HUD/"* "$HOME/.local/share/plank/themes/MnemoShift-HUD/"
+    configure_plank_dual_dock "MnemoShift-HUD"
+
+    # 4. Instalacja i konfiguracja Conky HUD na przydymionym szkle
+    log_info "Konfiguracja Conky HUD (przydymione szkło multi-monitor)..."
+    mkdir -p "$HOME/.config/conky"
+    cp "$repo_dir/templates/conky/mnemoshift_hud_dp4.conf" "$HOME/.config/conky/"
+    cp "$repo_dir/templates/conky/mnemoshift_hud_hdmi0.conf" "$HOME/.config/conky/"
+
+    # 5. Instalacja i włączenie rozszerzenia GNOME Shell MnemoShift Emission HUD
+    log_info "Instalacja rozszerzenia GNOME Shell MnemoShift Emission HUD..."
+    local ext_dir="$HOME/.local/share/gnome-shell/extensions/mnemoshift-emission-hud@ghostshift.eu"
+    mkdir -p "$ext_dir"
+    cp -r "$repo_dir/templates/gnome-shell/mnemoshift-emission-hud@ghostshift.eu/"* "$ext_dir/"
+    gnome-extensions enable mnemoshift-emission-hud@ghostshift.eu 2>/dev/null || true
+
+    # 6. Konfiguracja górnego paska zadań (Zorin Taskbar) - rozparowanie i telemetria
+    configure_zorin_studio_panel
+
+    # 7. Aplikacja tapet multi-monitor (spanned lub single)
+    apply_studio_wallpapers "$repo_dir"
+
+    # 8. Start Conky multi-monitor
+    log_info "Uruchamianie Conky HUD..."
+    start_conky_multi
+
+    # 9. Autostart Planka
+    mkdir -p "$HOME/.config/autostart"
+    cp /usr/share/applications/plank.desktop "$HOME/.config/autostart/" 2>/dev/null || true
+
+    log_ok "Profil Cyber Studio został pomyślnie wdrożony!"
+}
+
+# ------------------------------------------------------------------------------
+# 10. Przywracanie stanu domyślnego (reset / vanilla Zorin)
 # ------------------------------------------------------------------------------
 
 reset_defaults() {
@@ -404,11 +617,31 @@ subprocess.run(['gsettings', 'set', 'org.gnome.shell.extensions.zorin-taskbar', 
     configure_vscode_csd "custom"
     configure_chrome_csd "false"
 
+    # 8. Wyłączenie rozszerzenia GNOME Shell MnemoShift Emission HUD
+    log_info "Wyłączanie rozszerzenia MnemoShift Emission HUD..."
+    gnome-extensions disable mnemoshift-emission-hud@ghostshift.eu 2>/dev/null || true
+
+    # 9. Zatrzymanie Conky i demona tapet
+    log_info "Zatrzymywanie Conky i demona tapet..."
+    killall conky 2>/dev/null || true
+    systemctl --user stop conky.service 2>/dev/null || true
+    systemctl --user disable conky.service 2>/dev/null || true
+    systemctl --user stop mnemoshift-wallpaper.service 2>/dev/null || true
+    systemctl --user disable mnemoshift-wallpaper.service 2>/dev/null || true
+    pkill -f wallpaper_daemon.sh 2>/dev/null || true
+
+    # 10. Przywrócenie domyślnej tapety Zorin OS
+    log_info "Przywracanie domyślnej tapety Zorin OS..."
+    gsettings reset org.gnome.desktop.background picture-uri 2>/dev/null || true
+    gsettings reset org.gnome.desktop.background picture-uri-dark 2>/dev/null || true
+    gsettings reset org.gnome.desktop.background picture-options 2>/dev/null || true
+    gsettings set org.gnome.desktop.interface color-scheme 'default' 2>/dev/null || true
+
     log_ok "Pulpit został zresetowany do stanu fabrycznego Zorin OS."
 }
 
 # ------------------------------------------------------------------------------
-# 4. Podgląd bieżącego stanu (status)
+# 11. Podgląd bieżącego stanu (status)
 # ------------------------------------------------------------------------------
 
 show_status() {
@@ -435,7 +668,7 @@ show_status() {
     local elem_pos
     elem_pos=$(gsettings get org.gnome.shell.extensions.zorin-taskbar panel-element-positions 2>/dev/null || echo "")
     if [[ "$elem_pos" == *"centerMonitor"* ]]; then
-        echo -e "\033[1;32mWyśrodkowany (macOS / GNOME)\033[0m"
+        echo -e "\033[1;32mWyśrodkowany (macOS / Studio)\033[0m"
     else
         echo -e "\033[1;33mDomyślny (po prawej)\033[0m"
     fi
@@ -447,6 +680,18 @@ show_status() {
     gsettings get org.gnome.desktop.interface cursor-theme
     echo -n "Rozszerzenie user-theme:"
     gsettings get org.gnome.shell.extensions.user-theme name 2>/dev/null || echo "N/A"
+    echo -n "Emission HUD (GNOME):   "
+    if gnome-extensions list --enabled 2>/dev/null | grep -q "mnemoshift-emission-hud"; then
+        echo -e "\033[1;32mAKTYWNY (rozszerzenie GNOME Shell)\033[0m"
+    else
+        echo -e "\033[1;33mNIEAKTYWNY\033[0m"
+    fi
+    echo -n "Conky HUD:              "
+    if pgrep -x "conky" >/dev/null; then
+        echo -e "\033[1;32mAKTYWNY ($(pgrep -c -x conky) instancji)\033[0m"
+    else
+        echo -e "\033[1;33mNIEAKTYWNY\033[0m"
+    fi
     echo -n "Dok Plank aktywny:      "
     if pgrep -x "plank" >/dev/null; then
         echo -e "\033[1;32mTAK (PID $(pgrep -x plank))\033[0m"
@@ -472,29 +717,23 @@ show_status() {
     if [[ "$enabled_docks" == *"dock1"* ]]; then
         local m1
         m1=$(dconf read /net/launchpad/plank/docks/dock1/monitor 2>/dev/null || echo "domyślny")
+        local th1
+        th1=$(dconf read /net/launchpad/plank/docks/dock1/theme 2>/dev/null || echo "Transparent")
         local count1
         count1=$(ls -1 "$HOME/.config/plank/dock1/launchers" 2>/dev/null | wc -l)
-        echo "  -> dock1 (Monitor: $m1, przypiętych: $count1)"
+        echo "  -> dock1 (Monitor: $m1, motyw: $th1, przypiętych: $count1)"
     fi
     if [[ "$enabled_docks" == *"dock2"* ]]; then
         local m2
         m2=$(dconf read /net/launchpad/plank/docks/dock2/monitor 2>/dev/null || echo "domyślny")
+        local th2
+        th2=$(dconf read /net/launchpad/plank/docks/dock2/theme 2>/dev/null || echo "Transparent")
         local count2
         count2=$(ls -1 "$HOME/.config/plank/dock2/launchers" 2>/dev/null | wc -l)
-        echo "  -> dock2 (Monitor: $m2, aktywatorów: $count2 — tylko otwarte okna + menu)"
+        echo "  -> dock2 (Monitor: $m2, motyw: $th2, aktywatorów: $count2)"
     fi
-    echo -n "Style GTK4 / libadwaita:"
-    if [ -f "$HOME/.config/gtk-4.0/gtk.css" ]; then
-        echo -e "\033[1;35mWhiteSur Overrides Obecne\033[0m"
-    else
-        echo -e "\033[1;32mCzysty stan domyślny\033[0m"
-    fi
-    echo -n "Motywy w ~/.themes:     "
-    if [ -d "$HOME/.themes/WhiteSur-Light" ]; then
-        echo -e "\033[1;35mWhiteSur zainstalowany\033[0m"
-    else
-        echo -e "\033[1;32mCzysty stan domyślny\033[0m"
-    fi
+    echo -n "Tapeta systemowa:       "
+    gsettings get org.gnome.desktop.background picture-uri 2>/dev/null || echo "N/A"
     echo "=========================================================="
 }
 
@@ -506,6 +745,9 @@ case "${1:-status}" in
     apply-macos)
         apply_macos
         ;;
+    apply-studio|apply-cyber-hud)
+        apply_studio
+        ;;
     reset)
         reset_defaults
         ;;
@@ -513,7 +755,7 @@ case "${1:-status}" in
         show_status
         ;;
     *)
-        echo "Użycie: $0 {apply-macos|reset|status}"
+        echo "Użycie: $0 {apply-macos|apply-studio|reset|status}"
         exit 1
         ;;
 esac

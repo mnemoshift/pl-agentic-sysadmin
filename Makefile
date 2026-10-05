@@ -1,4 +1,4 @@
-.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short media-clean-work media-prepare-demo
+.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-studio desktop-cyber-hud desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short media-clean-work media-prepare-demo gdrive-status gdrive-install gdrive-auth gdrive-list gdrive-folders gdrive-add gdrive-remove gdrive-sync gdrive-timer-enable gdrive-timer-disable gdrive-mount gdrive-unmount
 
 # Domyślny cel
 help:
@@ -9,6 +9,7 @@ help:
 	@echo "  make audit           - Wykonuje audyt fizycznego sprzętu (CPU, RAM, Storage, GPU, Audio, Kamery)"
 	@echo "  make inventory       - Wykonuje inwentaryzację oprogramowania (APT, Flatpak, Repozytoria, Runtimes)"
 	@echo "  make all-audits      - Uruchamia pełny zestaw audytów (sprzęt + oprogramowanie)"
+	@echo "  make desktop-studio  - Wdraża profil Cyber Studio (MnemoShift Cyber-Blueprint, Top Bar Emission HUD, Conky, Plank HUD)"
 	@echo "  make desktop-macos   - Wdraża profil emisyjny macOS (WhiteSur, traffic lights po lewej, Plank, CSD)"
 	@echo "  make desktop-reset   - Przywraca stan fabryczny pulpitu Zorin OS (kropki po prawej, pasek na dole)"
 	@echo "  make desktop-status  - Sprawdza aktywny stan konfiguracji pulpitu i doku"
@@ -24,6 +25,19 @@ help:
 	@echo "  make media-build-short WORKSPACE=... [NAME=EP002_Short]"
 	@echo "  make media-clean-work - Czyści wygenerowane artefakty (assets, .kdenlive), zachowując input/"
 	@echo "  make media-prepare-demo - Inicjalizuje/odnawia pliki wejściowe w work/EP002_Short/input/"
+	@echo "  --- Google Drive Selektywna Synchronizacja (rclone) ---"
+	@echo "  make gdrive-status   - Sprawdza stan rclone, połączenie z Google Drive i timer tła"
+	@echo "  make gdrive-install  - Instaluje rclone w przestrzeni użytkownika (~/.local/bin/rclone)"
+	@echo "  make gdrive-auth     - Konfiguruje autoryzację zdalnego dysku Google Drive (rclone config)"
+	@echo "  make gdrive-list [PATH=...] - Wyświetla katalogi na Google Drive"
+	@echo "  make gdrive-folders  - Wyświetla tabelę zdefiniowanych folderów synchronizacji"
+	@echo "  make gdrive-add REMOTE=... [LOCAL=...] [MODE=bisync] [DESC=...] - Dodaje folder do synchronizacji"
+	@echo "  make gdrive-remove REMOTE=... - Usuwa folder z listy synchronizacji"
+	@echo "  make gdrive-sync [FOLDER=...] [DRY_RUN=1] [RESYNC=1] - Wykonuje synchronizację folderów"
+	@echo "  make gdrive-timer-enable [INTERVAL=15m] - Włącza automatyczną synchronizację w systemd"
+	@echo "  make gdrive-timer-disable - Wyłącza automatyczną synchronizację w systemd"
+	@echo "  make gdrive-mount [REMOTE_PATH=...] [MOUNTPOINT=...] - Montuje dysk VFS z lokalnym cache"
+	@echo "  make gdrive-unmount [MOUNTPOINT=...] - Odmontowuje dysk VFS"
 	@echo "=========================================================="
 
 audit:
@@ -66,6 +80,12 @@ restore-dry-run:
 desktop-macos:
 	@chmod +x scripts/desktop_ctl.sh
 	@./scripts/desktop_ctl.sh apply-macos
+
+desktop-studio:
+	@chmod +x scripts/desktop_ctl.sh
+	@./scripts/desktop_ctl.sh apply-studio
+
+desktop-cyber-hud: desktop-studio
 
 desktop-reset:
 	@chmod +x scripts/desktop_ctl.sh
@@ -128,4 +148,62 @@ media-prepare-demo:
 	@chmod +x scripts/media/prepare_demo.sh
 	@./scripts/media/prepare_demo.sh
 
+# --- Google Drive Selektywna Synchronizacja (rclone) ---
 
+gdrive-status:
+	@chmod +x scripts/gdrive_ctl.sh
+	@./scripts/gdrive_ctl.sh status
+
+gdrive-install:
+	@chmod +x scripts/gdrive_ctl.sh
+	@./scripts/gdrive_ctl.sh install
+
+gdrive-auth:
+	@chmod +x scripts/gdrive_ctl.sh
+	@./scripts/gdrive_ctl.sh auth
+
+gdrive-list:
+	@chmod +x scripts/gdrive_ctl.sh
+	@./scripts/gdrive_ctl.sh list-remote "$(PATH)"
+
+gdrive-folders:
+	@chmod +x scripts/gdrive_ctl.sh
+	@./scripts/gdrive_ctl.sh list-folders
+
+gdrive-add:
+	@if [ -z "$(REMOTE)" ]; then \
+		echo "[BŁĄD] Wymagany parametr REMOTE. Przykład:"; \
+		echo "  make gdrive-add REMOTE=KeePass [LOCAL=KeePass] [MODE=bisync] [DESC=\"Baza haseł\"]"; \
+		exit 1; \
+	fi
+	@chmod +x scripts/gdrive_ctl.sh
+	@./scripts/gdrive_ctl.sh add-folder "$(REMOTE)" "$(LOCAL)" "$(or $(MODE),bisync)" "$(DESC)"
+
+gdrive-remove:
+	@if [ -z "$(REMOTE)" ]; then \
+		echo "[BŁĄD] Wymagany parametr REMOTE. Przykład:"; \
+		echo "  make gdrive-remove REMOTE=KeePass"; \
+		exit 1; \
+	fi
+	@chmod +x scripts/gdrive_ctl.sh
+	@./scripts/gdrive_ctl.sh remove-folder "$(REMOTE)"
+
+gdrive-sync:
+	@chmod +x scripts/gdrive_ctl.sh
+	@DRY_RUN="$(DRY_RUN)" RESYNC="$(RESYNC)" ./scripts/gdrive_ctl.sh sync "$(FOLDER)"
+
+gdrive-timer-enable:
+	@chmod +x scripts/gdrive_ctl.sh
+	@./scripts/gdrive_ctl.sh timer-enable "$(INTERVAL)"
+
+gdrive-timer-disable:
+	@chmod +x scripts/gdrive_ctl.sh
+	@./scripts/gdrive_ctl.sh timer-disable
+
+gdrive-mount:
+	@chmod +x scripts/gdrive_ctl.sh
+	@./scripts/gdrive_ctl.sh mount "$(REMOTE_PATH)" "$(MOUNTPOINT)"
+
+gdrive-unmount:
+	@chmod +x scripts/gdrive_ctl.sh
+	@./scripts/gdrive_ctl.sh unmount "$(MOUNTPOINT)"

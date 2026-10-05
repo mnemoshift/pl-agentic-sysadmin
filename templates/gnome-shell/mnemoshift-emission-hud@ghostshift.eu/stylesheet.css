@@ -1,0 +1,13 @@
+.mnemoshift-emission-hud-button {
+    padding: 0 10px;
+    margin: 0;
+    border-radius: 4px;
+}
+
+.mnemoshift-emission-hud-button:hover {
+    background-color: rgba(41, 240, 247, 0.12);
+}
+
+.mnemoshift-emission-hud-label {
+    font-family: "JetBrains Mono", monospace;
+}

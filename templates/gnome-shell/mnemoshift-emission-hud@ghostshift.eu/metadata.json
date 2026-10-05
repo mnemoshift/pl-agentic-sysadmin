@@ -1,0 +1,7 @@
+{
+  "uuid": "mnemoshift-emission-hud@ghostshift.eu",
+  "name": "MnemoShift Emission HUD",
+  "description": "Tactical telemetry HUD (CPU, RAM, GPU, VRAM) replacing clock on emission monitor top bar",
+  "shell-version": [ "46" ],
+  "version": 1
+}

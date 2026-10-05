@@ -68,6 +68,7 @@ Repozytorium wykorzystuje dwupoziomowy, bezkolizyjny system skilli dla agentów 
    - Oficjalne standardy inżynieryjne dostarczane z repozytorium:
      * `desktop-manager` — zarządzanie profilami pulpitu (macOS / vanilla Zorin), unifikacja CSD i dok Plank.
      * `media-short-editor` — automatyzacja montażu wideo 9:16 w Kdenlive, obróbka audio z OBS-a i napisy Whisper Karaoke.
+     * `gdrive-sync` — selektywna, dwukierunkowa synchronizacja Dysku Google (rclone bisync/vfs) z dyskiem NVMe, eliminacja tarć FUSE/GVFS, zawieszania uśpienia i problemów z KeePassXC/uploadem w przeglądarkach.
    - Wdrażają uniwersalne mechanizmy stacji roboczej, audyty oraz obsługę specyfiki systemowej.
    - Agent korzysta z nich w pierwszej kolejności na bazie krótkich, jednozdaniowych promptów intencyjnych.
 
@@ -80,9 +81,10 @@ Repozytorium wykorzystuje dwupoziomowy, bezkolizyjny system skilli dla agentów 
 ## 4. INTERFEJS OPERACYJNY (MAKEFILE)
 
 Główne operacje stacji roboczej wywołuj poprzez ustandaryzowane komendy:
+- `make desktop-studio` — wdrożenie profilu Cyber Studio (MnemoShift Cyber-Blueprint, Top Bar Emission HUD, Conky HUD, Plank HUD),
 - `make desktop-macos` — wdrożenie profilu emisyjnego macOS (WhiteSur, kropki po lewej, Plank, CSD fix),
 - `make desktop-reset` — natychmiastowe przywrócenie stanu fabrycznego pulpitu Zorin OS,
-- `make desktop-status` — podgląd aktywnego stanu motywów, paska, kontrolek i doku,
+- `make desktop-status` — podgląd aktywnego stanu motywów, paska, kontrolek, doku i telemetrii,
 - `make audit` — audyt fizycznego sprzętu (CPU, RAM, GPU, monitory, audio, kamery),
 - `make inventory` — audyt zainstalowanego oprogramowania i usług,
 - `make session-status` — podgląd aktywnego stanu pamięci sesyjnej,
