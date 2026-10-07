@@ -9,17 +9,19 @@
 # ]
 # ///
 """
-Workstation Hub: Autonomiczny, w pełni generyczny potok lokalnego dubbingu wideo (Shorts / Screencasts).
+Workstation Hub: Autonomiczny, w pełni sparametryzowany potok lokalnego dubbingu wideo (Shorts / Screencasts).
+Obsługuje pojedyncze projekty oraz przetwarzanie wsadowe zestawu wideo (np. najpierw EP002, potem EP001).
 Wszystkie pliki użytkownika i materiały źródłowe są przetwarzane wyłącznie w katalogu roboczym (work/).
 
 Kroki potoku:
 1. Opcjonalna ekstrakcja próbki referencyjnej głosu (--ref-source / --ref-start / --ref-end).
-2. Ekstrakcja czystego audio ze źródłowego pliku wideo (WAV 24kHz mono).
-3. Segmentacja i ekstrakcja znaczników czasowych (scenariusz MD / SRT lub Whisper).
-4. Tłumaczenie inżynierskie PL -> EN ze słownikiem technicznym IT i rygorem okna czasowego.
-5. Synteza mowy: Zero-shot Breeze-TTS-2 (próbka referencyjna) lub szybki lektor (Kokoro / Edge-TTS).
-6. Time-syncing, padding ciszy i mastering EBU R128 (-14 LUFS / True Peak -1.0 dBFS).
-7. Złożenie pliku wideo z podmienioną ścieżką audio EN.
+2. Wykrycie lub przyjęcie wideo źródłowego w work/<ID>/input/.
+3. Ekstrakcja czystego audio ze źródłowego pliku wideo (WAV 24kHz mono).
+4. Segmentacja i ekstrakcja znaczników czasowych (scenariusz MD / SRT lub Whisper).
+5. Tłumaczenie inżynierskie PL -> EN ze słownikiem technicznym IT i rygorem okna czasowego.
+6. Synteza mowy: Zero-shot Breeze-TTS-2 (próbka referencyjna) lub szybki lektor (Kokoro / Edge-TTS).
+7. Time-syncing, padding ciszy i mastering EBU R128 (-14 LUFS / True Peak -1.0 dBFS).
+8. Złożenie pliku wideo z podmienioną ścieżką audio EN.
 """
 
 import argparse
@@ -52,6 +54,7 @@ TECH_TERMS = {
 
 # Wzorcowe tłumaczenia zdań dla standaryzacji
 PHRASE_DICTIONARY = {
+    # EP002 Short
     "Przestań traktować AI jak zabawkę do pogaduszek. Oto Agentic SysAdmin.":
         "Stop treating AI like a chatbot toy. Meet Agentic SysAdmin.",
     "Zamiast marnować godziny na forach i dłubaniu w konfiguracji, dałem agentowi jedno proste zadanie:":
@@ -62,6 +65,26 @@ PHRASE_DICTIONARY = {
         "One minute of work, background audit, and a complete implementation plan. Without touching a single config file.",
     "Wraz z Agentic SysAdmin nadeszła nowa era Linuksa. Całą sesję na żywo i otwarte repozytorium znajdziesz w filmie poniżej!":
         "With Agentic SysAdmin, a new era of Linux has arrived. Watch the full live session and get the open repo in the video below!",
+
+    # EP001 Short
+    "Natomiast zgrzyt nastąpił dla mnie przy agentach AI.":
+        "However, the real friction started for me with AI agents.",
+    "Tutaj Antigravity, bo tego narzędzia używam, miało problemy: albo zostawaliśmy w Windows,":
+        "Here Antigravity, the tool I rely on, faced bottlenecks: either we stayed inside Windows,",
+    "uruchamialiśmy Antigravity jako desktopową aplikację i kończyło się to tym,":
+        "running Antigravity as a desktop app, which meant",
+    "że Antigravity miało PowerShell jako runtime,":
+        "Antigravity was locked into PowerShell as its runtime,",
+    "brak dostępu do narzędzi linuksowych albo bardzo utrudnione, zwiększona ilość tokenów, kosztów, wolniejsze działanie – nie podobało mi się to.":
+        "no native access to Linux tooling, inflated token consumption, higher costs, and slower execution.",
+    "Zostając w WSL, agent nie miał dostępu do – albo przynajmniej nie udało mi się tego rozwiązać – nie miał dostępu do przeglądarki, Computer Use też był utrudniony,":
+        "Staying inside WSL, the agent lacked access to the host browser, making Computer Use awkward and brittle,",
+    "a agent produkując teraz dużo większe ilości zasobów, kodu czy dokumentów, chciałem je mieć dostępne od razu w Windowsie i tutaj też był zgrzyt, bo jednak to jest inny system plików.":
+        "and with the agent producing large volumes of assets and docs, cross-filesystem I/O between WSL and Windows became a constant bottleneck.",
+    "Decyzja, jaką musiałem podjąć to albo zostać na WSL i na Windowsie, albo kupić Maca, albo zaryzykować czystego Linuksa.":
+        "The choice was clear: stay handcuffed to WSL and Windows, buy a Mac, or migrate to bare-metal Linux.",
+    "WSL – jakoś już wirtualizacja mi się przejadła i nie chciałem dłużej z nią walczyć,":
+        "With WSL, virtualization overhead wore me out and I refused to fight it any longer,",
 }
 
 
@@ -222,18 +245,45 @@ def translate_segment(text_pl: str) -> str:
     return translated
 
 
-async def synthesize_edge_tts(text: str, out_wav: Path, voice: str = "en-US-ChristopherNeural") -> None:
-    import edge_tts
+def synthesize_edge_tts(text: str, out_wav: Path, voice: str = "en-US-ChristopherNeural") -> None:
     temp_mp3 = out_wav.with_suffix(".mp3")
-    communicate = edge_tts.Communicate(text, voice, rate="+2%", pitch="-2Hz")
-    await communicate.save(str(temp_mp3))
-    
-    cmd = [
+    edge_bin = None
+    for cand in [
+        shutil.which("edge-tts"),
+        str(Path.home() / ".local" / "share" / "ghostshift-tts" / "venv" / "bin" / "edge-tts"),
+        str(Path.home() / ".local" / "bin" / "edge-tts"),
+    ]:
+        if cand and Path(cand).exists():
+            edge_bin = cand
+            break
+            
+    if edge_bin:
+        cmd = [
+            edge_bin,
+            "--text", text,
+            "--voice", voice,
+            "--rate=+2%",
+            "--pitch=-2Hz",
+            f"--write-media={temp_mp3}"
+        ]
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    else:
+        cmd = [
+            "uv", "run", "--with", "edge-tts", "edge-tts",
+            "--text", text,
+            "--voice", voice,
+            "--rate=+2%",
+            "--pitch=-2Hz",
+            f"--write-media={temp_mp3}"
+        ]
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        
+    cmd_wav = [
         "ffmpeg", "-y", "-i", str(temp_mp3),
         "-acodec", "pcm_s16le", "-ar", "24000", "-ac", "1",
         str(out_wav)
     ]
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    subprocess.run(cmd_wav, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     if temp_mp3.exists():
         temp_mp3.unlink()
 
@@ -287,7 +337,7 @@ def synthesize_segment(text_en: str, out_wav: Path, engine: str, ref_audio: Path
             used_engine = "edge"
             
     if used_engine in ("edge", "auto", "kokoro"):
-        asyncio.run(synthesize_edge_tts(text_en, out_wav))
+        synthesize_edge_tts(text_en, out_wav)
         return "Edge-TTS (en-US-ChristopherNeural)"
 
     raise RuntimeError(f"Nieobsługiwany silnik TTS: {engine}")
@@ -361,35 +411,39 @@ def time_sync_and_master(
         log_ok(f"Zapisano zmasterowany plik audio: {output_wav.name}")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Generyczny autonomiczny potok dubbingu wideo w work/.")
-    parser.add_argument("-i", "--input", required=True, type=Path, help="Plik wideo źródłowego (MP4 w work/)")
-    parser.add_argument("-w", "--work-dir", type=Path, default=None, help="Katalog roboczy projektu (np. work/EP002_Short)")
-    parser.add_argument("-s", "--script", type=Path, default=None, help="Opcjonalny plik scenariusza (MD lub SRT)")
-    
-    # Parametry próbki głosu
-    parser.add_argument("--ref-audio", type=Path, default=None, help="Ścieżka do gotowej próbki referencyjnej WAV")
-    parser.add_argument("--ref-transcript", type=str, default="", help="Transkrypcja próbki referencyjnej")
-    parser.add_argument("--ref-source", type=Path, default=None, help="Plik źródłowy do wycięcia próbki w locie")
-    parser.add_argument("--ref-start", type=str, default="00:00:12.000", help="Początek wycinka próbki")
-    parser.add_argument("--ref-end", type=str, default="00:00:20.300", help="Koniec wycinka próbki")
+def auto_detect_input_video(work_dir: Path) -> Path | None:
+    input_dir = work_dir / "input"
+    if not input_dir.exists():
+        return None
 
-    # Silnik i styl
-    parser.add_argument("--engine", choices=["auto", "breeze", "kokoro", "edge"], default="auto", help="Silnik syntezy TTS")
-    parser.add_argument("--instruction", type=str, default="Maintain a calm, confident, authoritative engineering delivery with clear cadence.", help="Instrukcja stylu mowy")
-    parser.add_argument("--output-video", action="store_true", default=True, help="Wygeneruj zduplikowane wideo z dubbingiem EN")
-    args = parser.parse_args()
+    mp4_files = [f for f in input_dir.glob("*.mp4") if not f.name.startswith("footage_") and not f.name.startswith("raw_voiceover")]
+    if not mp4_files:
+        mp4_files = list(input_dir.glob("*.mp4"))
+    if not mp4_files:
+        return None
 
-    input_video = args.input.resolve()
-    if not input_video.exists():
-        log_err(f"Plik wejściowy nie istnieje: {input_video}")
-        sys.exit(1)
+    # Preferencja dla FIXED lub FINAL
+    for pref in ["FIXED", "FINAL", "Karaoke"]:
+        for f in mp4_files:
+            if pref in f.name:
+                return f
+    # Największy plik jako fallback
+    return max(mp4_files, key=lambda f: f.stat().st_size)
 
-    work_dir = args.work_dir.resolve() if args.work_dir else input_video.parent.parent
+
+def process_single_short(work_dir: Path, input_video: Path | None, script_path: Path | None, ref_audio: Path | None, ref_transcript: str, engine: str, instruction: str, output_video: bool) -> bool:
+    work_dir = work_dir.resolve()
+    short_id = work_dir.name
     assets_dir = work_dir / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
 
-    short_id = work_dir.name
+    if not input_video:
+        input_video = auto_detect_input_video(work_dir)
+
+    if not input_video or not input_video.exists():
+        log_err(f"Nie znaleziono wideo źródłowego w {work_dir}/input/")
+        return False
+
     total_duration = get_audio_duration(input_video)
 
     log_info("=" * 65)
@@ -397,41 +451,24 @@ def main():
     log_info("=" * 65)
     log_info(f"Wideo wejściowe:  {input_video.name} ({total_duration:.2f}s)")
     log_info(f"Katalog roboczy:  {work_dir}")
-    log_info(f"Silnik TTS:       {args.engine.upper()}")
+    log_info(f"Silnik TTS:       {engine.upper()}")
 
-    # 0. Opcjonalna ekstrakcja próbki referencyjnej
-    ref_audio = args.ref_audio
-    ref_transcript = args.ref_transcript
-    if args.ref_source and args.ref_source.exists():
-        target_sample_wav = assets_dir / "ref_voice_sample.wav"
-        extract_voice_sample_clip(args.ref_source, args.ref_start, args.ref_end, target_sample_wav, ref_transcript)
-        ref_audio = target_sample_wav
-
-    # Jeśli nie podano próbki, szukamy w katalogach roboczych work/
-    if not ref_audio:
-        candidates = [
-            assets_dir / "ref_voice_sample.wav",
-            work_dir / "input" / "ref_voice_sample.wav",
-            work_dir.parent / "voice_sample" / "ref_voice_sample.wav",
-        ]
-        for cand in candidates:
-            if cand.exists():
-                ref_audio = cand
-                txt_cand = cand.with_suffix(".txt")
-                if txt_cand.exists() and not ref_transcript:
-                    ref_transcript = txt_cand.read_text(encoding="utf-8").strip()
-                break
-
-    # 1. Ekstrakcja czystego audio ze źródłowego wideo
+    # 1. Ekstrakcja czystego audio
     raw_audio = assets_dir / f"{short_id}_VoiceOver_RAW_24k.wav"
     extract_raw_audio(input_video, raw_audio, sample_rate=24000)
 
     # 2. Parsowanie scenariusza lub transkrypcja
-    script_path = args.script
     if not script_path:
-        for candidate in [work_dir / "input" / "short_script.md", work_dir / f"{short_id}.srt", input_video.with_suffix(".srt")]:
-            if candidate.exists():
-                script_path = candidate
+        candidates = [
+            work_dir / "input" / "short_script.md",
+            work_dir / f"{short_id}.srt",
+            input_video.with_suffix(".srt"),
+        ]
+        # Dodatkowe poszukiwanie dowolnego .srt w input/
+        candidates.extend(list((work_dir / "input").glob("*.srt")))
+        for cand in candidates:
+            if cand.exists():
+                script_path = cand
                 break
 
     if script_path and script_path.exists():
@@ -444,8 +481,8 @@ def main():
         scenes = transcribe_with_whisper(raw_audio)
 
     if not scenes:
-        log_err("Nie udało się wyodrębnić segmentów do dubbingu.")
-        sys.exit(1)
+        log_err(f"Nie udało się wyodrębnić segmentów do dubbingu dla {short_id}.")
+        return False
 
     # 3. Tłumaczenie inżynierskie
     log_info("Tłumaczenie segmentów na język angielski z zachowaniem słownika IT...")
@@ -466,7 +503,7 @@ def main():
     active_engine_name = "unknown"
     for sc in scenes:
         part_wav = dub_parts_dir / f"scene_{sc['id']:03d}.wav"
-        active_engine_name = synthesize_segment(sc["text_en"], part_wav, args.engine, ref_audio, ref_transcript, args.instruction)
+        active_engine_name = synthesize_segment(sc["text_en"], part_wav, engine, ref_audio, ref_transcript, instruction)
         segment_wavs.append(part_wav)
 
     # 5. Time-sync i mastering EBU R128
@@ -474,7 +511,7 @@ def main():
     time_sync_and_master(scenes, segment_wavs, total_duration, mastered_wav, target_lufs=-14.0, target_tp=-1.0)
 
     # 6. Finalny montaż wideo EN
-    if args.output_video:
+    if output_video:
         output_video_file = assets_dir / f"{short_id}_FINAL_EN_DUBBED.mp4"
         log_info(f"Generowanie zduplikowanego wideo z angielską ścieżką dźwiękową: {output_video_file.name}...")
         cmd = [
@@ -498,7 +535,7 @@ def main():
         f.write(f"- **Silnik syntezy:** `{active_engine_name}`\n")
         f.write(f"- **Standard audio:** `EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS)`\n")
         f.write(f"- **Plik audio lektora:** `{mastered_wav.name}`\n")
-        if args.output_video:
+        if output_video:
             f.write(f"- **Zdubbingowane wideo EN:** `{short_id}_FINAL_EN_DUBBED.mp4`\n\n")
         f.write("## Tabela Zsynchronizowanych Scen\n\n")
         f.write("| Scena | Zakres czasu | Oryginał PL | Kwestia EN |\n")
@@ -510,6 +547,88 @@ def main():
     log_info("=" * 65)
     log_ok(f"PROCES ZAKOŃCZONY SUKCESEM DLA {short_id}!")
     log_info("=" * 65)
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generyczny autonomiczny potok dubbingu wideo (pojedynczy lub zestaw).")
+    parser.add_argument("-i", "--input", type=Path, default=None, help="Opcjonalny bezpośredni plik wideo źródłowego (MP4)")
+    parser.add_argument("-w", "--work-dir", type=Path, default=None, help="Katalog roboczy projektu (np. work/EP002_Short)")
+    parser.add_argument("-s", "--script", type=Path, default=None, help="Opcjonalny plik scenariusza (MD lub SRT)")
+    parser.add_argument("--batch", nargs="+", help="Lista katalogów projektów do przetworzenia wsadowego (np. work/EP002_Short work/EP001_Short)")
+    
+    # Parametry próbki głosu
+    parser.add_argument("--ref-audio", type=Path, default=None, help="Ścieżka do gotowej próbki referencyjnej WAV")
+    parser.add_argument("--ref-transcript", type=str, default="", help="Transkrypcja próbki referencyjnej")
+    parser.add_argument("--ref-source", type=Path, default=None, help="Plik źródłowy do wycięcia próbki w locie")
+    parser.add_argument("--ref-start", type=str, default="00:00:12.000", help="Początek wycinka próbki")
+    parser.add_argument("--ref-end", type=str, default="00:00:20.300", help="Koniec wycinka próbki")
+
+    # Silnik i styl
+    parser.add_argument("--engine", choices=["auto", "breeze", "kokoro", "edge"], default="auto", help="Silnik syntezy TTS")
+    parser.add_argument("--instruction", type=str, default="Maintain a calm, confident, authoritative engineering delivery with clear cadence.", help="Instrukcja stylu mowy")
+    parser.add_argument("--output-video", action="store_true", default=True, help="Wygeneruj zduplikowane wideo z dubbingiem EN")
+    args = parser.parse_args()
+
+    # Obsługa próbki referencyjnej
+    ref_audio = args.ref_audio
+    ref_transcript = args.ref_transcript
+    if args.ref_source and args.ref_source.exists():
+        sample_out = Path("work/voice_sample/ref_voice_sample.wav")
+        extract_voice_sample_clip(args.ref_source, args.ref_start, args.ref_end, sample_out, ref_transcript)
+        ref_audio = sample_out
+
+    if not ref_audio:
+        candidates = [
+            Path("work/voice_sample/ref_voice_sample.wav"),
+            Path("work/ref_voice_sample.wav"),
+        ]
+        for cand in candidates:
+            if cand.exists():
+                ref_audio = cand
+                txt_cand = cand.with_suffix(".txt")
+                if txt_cand.exists() and not ref_transcript:
+                    ref_transcript = txt_cand.read_text(encoding="utf-8").strip()
+                break
+
+    # Tryb wsadowy (zestaw wideo)
+    if args.batch:
+        log_info(f"Uruchamianie przetwarzania zestawu wideo ({len(args.batch)} projektów)...")
+        for b_dir in args.batch:
+            target_dir = Path(b_dir)
+            process_single_short(
+                work_dir=target_dir,
+                input_video=None,
+                script_path=None,
+                ref_audio=ref_audio,
+                ref_transcript=ref_transcript,
+                engine=args.engine,
+                instruction=args.instruction,
+                output_video=args.output_video
+            )
+        return
+
+    # Tryb pojedynczy
+    work_dir = args.work_dir
+    input_video = args.input.resolve() if args.input else None
+
+    if not work_dir and input_video:
+        work_dir = input_video.parent.parent
+
+    if not work_dir:
+        log_err("Wymagany parametr --work-dir (-w) lub --input (-i) lub --batch.")
+        sys.exit(1)
+
+    process_single_short(
+        work_dir=work_dir,
+        input_video=input_video,
+        script_path=args.script,
+        ref_audio=ref_audio,
+        ref_transcript=ref_transcript,
+        engine=args.engine,
+        instruction=args.instruction,
+        output_video=args.output_video
+    )
 
 
 if __name__ == "__main__":

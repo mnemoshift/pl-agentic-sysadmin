@@ -166,21 +166,30 @@ media-extract-sample:
 	@./scripts/media/extract_voice_sample.py -i "$(INPUT)" -s "$(START)" -e "$(END)" -o "$(OUTPUT)" $(if $(TRANSCRIPT),-t "$(TRANSCRIPT)")
 
 media-dub-short:
-	@if [ -z "$(INPUT)" ] || [ -z "$(WORKSPACE)" ]; then \
-		echo "[BŁĄD] Wymagane parametry INPUT i WORKSPACE. Przykład:"; \
-		echo "  make media-dub-short INPUT=work/EP002_Short/input/video.mp4 WORKSPACE=work/EP002_Short [REF_AUDIO=work/sample.wav]"; \
+	@if [ -z "$(WORKSPACE)" ]; then \
+		echo "[BŁĄD] Wymagany parametr WORKSPACE. Przykład:"; \
+		echo "  make media-dub-short WORKSPACE=work/EP002_Short [INPUT=work/EP002_Short/input/video.mp4] [REF_AUDIO=work/sample.wav]"; \
 		exit 1; \
 	fi
 	@chmod +x scripts/media/dub_short.py
-	@./scripts/media/dub_short.py -i "$(INPUT)" -w "$(WORKSPACE)" $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+	@./scripts/media/dub_short.py -w "$(WORKSPACE)" $(if $(INPUT),-i "$(INPUT)") $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
 
 media-dub-ep002:
 	@chmod +x scripts/media/dub_short.py
-	@./scripts/media/dub_short.py -i work/EP002_Short/input/EP002_Short_Agentic_SysAdmin.mp4 -w work/EP002_Short $(if $(ENGINE),--engine "$(ENGINE)")
+	@./scripts/media/dub_short.py -w work/EP002_Short $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
 
 media-dub-ep001:
 	@chmod +x scripts/media/dub_short.py
-	@./scripts/media/dub_short.py -i work/EP001_Short/input/EP001_Short_WSL_vs_Zorin.mp4 -w work/EP001_Short $(if $(ENGINE),--engine "$(ENGINE)")
+	@./scripts/media/dub_short.py -w work/EP001_Short $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+
+media-dub-batch:
+	@chmod +x scripts/media/dub_short.py
+	@./scripts/media/dub_short.py --batch work/EP002_Short work/EP001_Short $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+
+media-dub-clean:
+	@echo "Czyszczenie wygenerowanych artefaktów dubbingu w work/..."
+	@rm -rf work/voice_sample work/*/assets 2>/dev/null || true
+	@echo "[OK] Wyczyszczono artefakty dubbingu. Pliki w work/voice_source/ oraz work/*/input/ zachowane."
 
 # --- Google Drive Selektywna Synchronizacja (rclone) ---
 
