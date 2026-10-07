@@ -53,22 +53,47 @@ Agent interpretuje zwięzłe polecenia użytkownika i automatycznie realizuje po
   4. Raportuje gotowość próbki lektora do klonowania.
 
 ### Krok 2: Dubbing pierwszego shorta (EP002 Short)
-* **Prompt użytkownika:** `Przetłumacz i zdubbinguj shorta w work/EP002_Short z zachowaniem standardu -14 LUFS.`
+* **Prompt użytkownika:** `Przetłumacz i zdubbinguj shorta w work/EP002_Short.`
 * **Działanie Agenta:**
   1. Weryfikuje obecność wideo źródłowego w `work/EP002_Short/input/` (`EP002_Short_Agentic_SysAdmin_Karaoke_FIXED.mp4`) oraz próbki głosu w `work/voice_sample/`.
   2. Uruchamia `scripts/media/dub_short.py -w work/EP002_Short`.
-  3. Skrypt realizuje:
+  3. Skrypt realizuje automatycznie:
      - Ekstrakcję audio z wideo.
      - Parsowanie scenariusza `short_script.md` ze słownikiem technicznym IT.
      - Inżynierskie tłumaczenie terminów IT (*mount point*, *VRAM footprint*, *PCIe bus*, *macOS-inspired desktop*).
      - Syntezę segmentów mowy na GPU (Breeze-TTS-2 klonem głosu lub fallback) z próbką referencyjną.
-     - Wyrównanie czasowe (time-syncing pod cięcia) i mastering do -14 LUFS (EBU R128).
-     - Złożenie gotowego zduplikowanego pliku wideo `assets/EP002_Short_FINAL_EN_DUBBED.mp4`.
-  4. Wyświetla w czacie Antigravity tabelę porównawczą A/B (PL vs EN) i raportuje gotowe pliki.
+     - Wyrównanie czasowe (time-syncing pod cięcia) i mastering do broadcastowego standardu YouTube (**-14.0 LUFS**, True Peak $\le$ -1.0 dBFS).
+     - Dostarczenie **dwóch plików produkcyjnych**:
+       - `assets/EP002_Short_VoiceOver_EN_CLEAN.wav` (alternatywna ścieżka językowa pod YouTube Multi-Language Audio).
+       - `assets/EP002_Short_FINAL_EN_DUBBED.mp4` (pełne wideo EN: obraz + zdubbingowana ścieżka dźwiękowa).
+  4. Wyświetla w czacie tabelę porównawczą A/B (PL vs EN) oraz podsumowanie plików.
 
-### Krok 3: Dubbing drugiego shorta (EP001 Short - Zestaw wideo)
-* **Prompt użytkownika:** `Zdubbinguj teraz drugi materiał w work/EP001_Short.`
+### Krok 3: Odsłuch i weryfikacja
+* **Prompt użytkownika:** `Odtwórz wygenerowane wideo dla EP002 i podsumuj parametry audio.`
+* **Działanie Agenta:** Uruchamia odtwarzacz wideo z wygenerowanym plikiem i raportuje zmierzoną głośność (-14 LUFS, True Peak).
+
+---
+
+## 3. Tryb One-Shot („Na Raz” dla EP001 Short)
+
+Użytkownik zleca wykonanie całego potoku w jednym poleceniu czystej intencji (bez podawania flag CLI ani parametrów technicznych):
+
+* **Prompt użytkownika:** `Zdubbinguj materiał w work/EP001_Short przy użyciu przygotowanej próbki głosu i odtwórz gotowe wideo.`
+* *(lub od zera bez wcześniejszej próbki):* `Wytnij 8-sekundową próbkę głosu z work/voice_source od 00:12 do 00:20 i zdubbinguj materiał w work/EP001_Short.`
 * **Działanie Agenta:**
-  1. Weryfikuje obecność wideo w `work/EP001_Short/input/` (`EP001_Short_WSL_vs_Zorin_FINAL.mp4`) oraz pliku `.srt`.
-  2. Uruchamia `scripts/media/dub_short.py -w work/EP001_Short`.
-  3. Prezentuje podsumowanie wygenerowanych plików i potwierdza pełną skalowalność potoku na zestawie wideo.
+  1. Spina cały workflow bez pytań pomocniczych.
+  2. Ekstrahuje i tłumaczy 19 segmentów wypowiedzi z pliku `.srt`.
+  3. Syntezuje mowę na GPU i masteruje do -14 LUFS.
+  4. Zapisuje oba pliki produkcyjne w `work/EP001_Short/assets/`:
+     - `EP001_Short_VoiceOver_EN_CLEAN.wav` (dla YouTube Multi-Language Audio),
+     - `EP001_Short_FINAL_EN_DUBBED.mp4` (pełny film EN z dubbingiem).
+  5. Uruchamia podgląd wideo.
+
+---
+
+## 4. Wygenerowane Pliki Produkcyjne (Standard Emisyjny)
+
+Dla każdego projektu w katalogu `work/<ID>/assets/` powstają:
+1. **Alternatywna ścieżka audio (YouTube MLA):** `<ID>_VoiceOver_EN_CLEAN.wav` (WAV 48kHz stereo, -14.0 LUFS, True Peak $\le$ -1.0 dBFS) — do bezpośredniego wgrania w YouTube Studio jako dodatkowa ścieżka językowa do istniejącego filmu.
+2. **Pełne wideo z dubbingiem EN:** `<ID>_FINAL_EN_DUBBED.mp4` (wideo + dubbing EN) — gotowy film do publikacji na zagranicznym kanale lub Shorts.
+3. **Transkrypcja i raport:** `<ID>_Dubbing_Transcript_EN.json` oraz `<ID>_Dubbing_Summary.md` (tabela A/B scen PL vs EN).

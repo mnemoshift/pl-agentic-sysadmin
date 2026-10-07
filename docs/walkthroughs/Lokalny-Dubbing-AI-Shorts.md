@@ -60,15 +60,17 @@ Wklejasz w oknie czatu Antigravity:
   - Raportuje gotowość biometrii głosu do syntezy.
 
 ### Krok 2: Dubbing i mastering pierwszego shorta (EP002)
-Wklejasz w czacie polecenie:
-> *Przetłumacz i zdubbinguj shorta w work/EP002_Short z zachowaniem standardu -14 LUFS.*
+Wklejasz w czacie polecenie czystej intencji (bez podawania flag technicznych ani parametrów głośności — agent sam wie, że przygotowuje materiał emisyjny):
+> *Przetłumacz i zdubbinguj shorta w work/EP002_Short.*
 
 * **Działanie Agenta:**
   - Automatycznie wykrywa wideo w `work/EP002_Short/input/` oraz scenariusz `short_script.md`.
   - Tłumaczy kwestie z zachowaniem ścisłego słownika IT (*mount point*, *VRAM footprint*, *PCIe bus*, *macOS-inspired workspace*).
   - Przeprowadza syntezę na GPU z wykorzystaniem wyciętej próbki głosu.
   - Dopasowuje tempo do cięć wideo, wstawia pauzy i masteruje ścieżkę do standardu emisyjnego **-14 LUFS** (EBU R128).
-  - Składa gotowy zduplikowany plik wideo `work/EP002_Short/assets/EP002_Short_FINAL_EN_DUBBED.mp4`.
+  - Dostarcza **dwa pliki wyjściowe**:
+    1. Czysty plik audio lektora EN: `EP002_Short_VoiceOver_EN_CLEAN.wav` (pod YouTube Multi-Language Audio).
+    2. Gotowy plik wideo z dubbingiem: `EP002_Short_FINAL_EN_DUBBED.mp4` (obraz + audio EN).
   - Zwraca w czacie zwięzłą tabelę porównawczą A/B (PL vs EN).
 
 ### Krok 3: Odsłuch i inspekcja parametrów
@@ -87,10 +89,10 @@ Gdy wiesz już jak działa system, nie musisz rozbijać pracy na pojedyncze etap
 
 Dla drugiego shorta z zestawu (`work/EP001_Short`, 102 sekundy) zlecamy wykonanie całego potoku za jednym zamachem:
 
-> *Zdubbinguj materiał w work/EP001_Short przy użyciu przygotowanej próbki głosu ze standardem -14 LUFS i odtwórz gotowe wideo.*
+> *Zdubbinguj materiał w work/EP001_Short przy użyciu przygotowanej próbki głosu i odtwórz gotowe wideo.*
 
 Albo w scenariuszu, gdybyśmy startowali od zera bez wcześniejszego wycinania próbki:
-> *Wytnij 8-sekundową próbkę głosu z work/voice_source od 00:12 do 00:20 i wykonaj kompletny potok dubbingu dla work/EP001_Short z masteringiem -14 LUFS.*
+> *Wytnij 8-sekundową próbkę głosu z work/voice_source od 00:12 do 00:20 i zdubbinguj materiał w work/EP001_Short.*
 
 * **Działanie Agenta:**
   1. Spina cały workflow bez konieczności interwencji użytkownika:
@@ -98,8 +100,8 @@ Albo w scenariuszu, gdybyśmy startowali od zera bez wcześniejszego wycinania p
   3. Parsuje 19 segmentów wypowiedzi o wirtualizacji, PowerShellu i tokenach.
   4. Dokonuje inżynierskiego przekładu PL $\rightarrow$ EN.
   5. Przeprowadza syntezę na GPU, dopasowuje czasy segmentów pod oryginalne cięcia.
-  6. Przeprowadza mastering EBU R128 (-14 LUFS, True Peak $\le$ -1.0 dBFS).
-  7. Tworzy zduplikowany plik wideo `EP001_Short_FINAL_EN_DUBBED.mp4`.
+  6. Przeprowadza broadcastowy mastering EBU R128 (-14.0 LUFS, True Peak $\le$ -1.0 dBFS).
+  7. Tworzy oba kluczowe pliki produkcyjne (`EP001_Short_VoiceOver_EN_CLEAN.wav` oraz `EP001_Short_FINAL_EN_DUBBED.mp4`).
   8. Wyświetla podsumowanie z tabelą scen i natychmiast uruchamia odtworzenie rezultatu.
 
 ---
@@ -133,8 +135,16 @@ make media-dub-clean
 
 ## 6. Wygenerowane Pliki i Standard Emisyjny
 
-W katalogu `work/<ID>/assets/` powstaje kompletny pakiet produkcyjny:
-* `<ID>_VoiceOver_EN_CLEAN.wav` – zmasterowany plik audio lektora EN (48kHz stereo, -14.0 LUFS, True Peak $\le$ -1.0 dBFS).
-* `<ID>_Dubbing_Transcript_EN.json` – struktura danych z dokładnymi znacznikami start/end i kwestiami EN.
-* `<ID>_Dubbing_Summary.md` – tabela podsumowująca sceny i kwestie dwujęzyczne.
-* `<ID>_FINAL_EN_DUBBED.mp4` – gotowy plik wideo ze zsynchronizowaną angielską ścieżką dźwiękową pod YouTube Multi-Language Audio.
+W katalogu `work/<ID>/assets/` powstaje kompletny pakiet produkcyjny. Z każdego projektu otrzymujesz **dwa kluczowe pliki do dystrybucji**:
+
+1. **Plik dźwiękowy lektora (YouTube Multi-Language Audio):**
+   * `<ID>_VoiceOver_EN_CLEAN.wav` – zmasterowany plik audio lektora EN (48kHz stereo, broadcast mastering -14.0 LUFS, True Peak $\le$ -1.0 dBFS).
+   * **Zastosowanie:** Gotowy do bezpośredniego wgrania w YouTube Studio w zakładce *Napisy i dźwięk -> Ścieżka dźwiękowa* jako alternatywny język (English) do oryginalnego filmu. Widzowie z zagranicy słyszą angielski dubbing, widzowie z Polski polski oryginał — bez utraty watch-time i bez ponownego wrzucania filmu.
+
+2. **Zdubbingowany film EN (Full Video + Dubbing):**
+   * `<ID>_FINAL_EN_DUBBED.mp4` – kompletny plik wideo ze zsynchronizowaną angielską ścieżką dźwiękową i oryginalnym obrazem.
+   * **Zastosowanie:** Gotowy do bezpośredniej publikacji jako niezależny film na anglojęzycznym kanale YouTube lub osobnym formacie Shorts.
+
+3. **Artefakty pomocnicze:**
+   * `<ID>_Dubbing_Transcript_EN.json` – precyzyjne znaczniki czasowe, teksty PL i inżynierski przekład EN.
+   * `<ID>_Dubbing_Summary.md` – czytelny raport z tabelą scen A/B oraz zmierzonymi parametrami emisyjnymi.

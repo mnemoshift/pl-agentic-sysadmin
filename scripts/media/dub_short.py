@@ -533,10 +533,13 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
         f.write(f"# Raport Dubbingu AI: {short_id}\n\n")
         f.write(f"- **Wideo źródłowe:** `{input_video.name}` ({total_duration:.2f}s)\n")
         f.write(f"- **Silnik syntezy:** `{active_engine_name}`\n")
-        f.write(f"- **Standard audio:** `EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS)`\n")
-        f.write(f"- **Plik audio lektora:** `{mastered_wav.name}`\n")
+        f.write(f"- **Standard emisyjny audio:** `EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS)`\n\n")
+        f.write("## Wygenerowane Pliki Produkcyjne (Deliverables)\n\n")
+        f.write(f"1. **Plik dźwiękowy lektora (YouTube Multi-Language Audio):**\n")
+        f.write(f"   `{mastered_wav.name}` (WAV 48kHz stereo, -14.0 LUFS — do bezpośredniego wrzucenia w YouTube Studio jako alternatywna ścieżka językowa do istniejącego filmu).\n\n")
         if output_video:
-            f.write(f"- **Zdubbingowane wideo EN:** `{short_id}_FINAL_EN_DUBBED.mp4`\n\n")
+            f.write(f"2. **Zdubbingowany film EN (Full Video + Dubbing):**\n")
+            f.write(f"   `{output_video_file.name}` (obraz wideo + zsynchronizowany dubbing EN — do publikacji jako niezależny film na kanał anglojęzyczny lub Shorts).\n\n")
         f.write("## Tabela Zsynchronizowanych Scen\n\n")
         f.write("| Scena | Zakres czasu | Oryginał PL | Kwestia EN |\n")
         f.write("| :---: | :---: | :--- | :--- |\n")
@@ -546,6 +549,10 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
     log_ok(f"Zapisano raport podsumowujący: {summary_md.name}")
     log_info("=" * 65)
     log_ok(f"PROCES ZAKOŃCZONY SUKCESEM DLA {short_id}!")
+    log_info("Dostarczone pliki produkcyjne (Deliverables):")
+    log_info(f"  1. [YouTube Audio Track]: {mastered_wav.name}")
+    if output_video:
+        log_info(f"  2. [Full Dubbed Video]:   {output_video_file.name}")
     log_info("=" * 65)
     return True
 
