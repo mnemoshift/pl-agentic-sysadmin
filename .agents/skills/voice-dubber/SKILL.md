@@ -64,8 +64,8 @@ Agent interpretuje zwięzłe polecenia użytkownika i automatycznie realizuje po
      - Syntezę segmentów mowy na GPU (Breeze-TTS-2 klonem głosu lub fallback) z próbką referencyjną.
      - Wyrównanie czasowe (time-syncing pod cięcia) i mastering do broadcastowego standardu YouTube (**-14.0 LUFS**, True Peak $\le$ -1.0 dBFS).
      - Dostarczenie **dwóch plików produkcyjnych**:
-       - `assets/EP002_Short_VoiceOver_EN_CLEAN.wav` (alternatywna ścieżka językowa pod YouTube Multi-Language Audio).
-       - `assets/EP002_Short_FINAL_EN_DUBBED.mp4` (pełne wideo EN: obraz + zdubbingowana ścieżka dźwiękowa).
+       - `output/EP002_Short_VoiceOver_EN_CLEAN.wav` (alternatywna ścieżka językowa pod YouTube Multi-Language Audio).
+       - `output/EP002_Short_FINAL_EN_DUBBED.mp4` (pełne wideo EN: obraz + zdubbingowana ścieżka dźwiękowa).
   4. Wyświetla w czacie tabelę porównawczą A/B (PL vs EN) oraz podsumowanie plików.
 
 ### Krok 3: Odsłuch i weryfikacja
@@ -84,7 +84,7 @@ Użytkownik zleca wykonanie całego potoku w jednym poleceniu czystej intencji (
   1. Spina cały workflow bez pytań pomocniczych.
   2. Ekstrahuje i tłumaczy 19 segmentów wypowiedzi z pliku `.srt`.
   3. Syntezuje mowę na GPU i masteruje do -14 LUFS.
-  4. Zapisuje oba pliki produkcyjne w `work/EP001_Short/assets/`:
+  4. Zapisuje oba pliki produkcyjne w `work/EP001_Short/output/`:
      - `EP001_Short_VoiceOver_EN_CLEAN.wav` (dla YouTube Multi-Language Audio),
      - `EP001_Short_FINAL_EN_DUBBED.mp4` (pełny film EN z dubbingiem).
   5. Uruchamia podgląd wideo.
@@ -93,7 +93,7 @@ Użytkownik zleca wykonanie całego potoku w jednym poleceniu czystej intencji (
 
 ## 4. Wygenerowane Pliki Produkcyjne (Standard Emisyjny)
 
-Dla każdego projektu w katalogu `work/<ID>/assets/` powstają:
+Dla każdego projektu w katalogu `work/<ID>/output/` powstają:
 1. **Alternatywna ścieżka audio (YouTube MLA):** `<ID>_VoiceOver_EN_CLEAN.wav` (WAV 48kHz stereo, -14.0 LUFS, True Peak $\le$ -1.0 dBFS) — do bezpośredniego wgrania w YouTube Studio jako dodatkowa ścieżka językowa do istniejącego filmu.
 2. **Pełne wideo z dubbingiem EN:** `<ID>_FINAL_EN_DUBBED.mp4` (wideo + dubbing EN) — gotowy film do publikacji na zagranicznym kanale lub Shorts.
 3. **Transkrypcja i raport:** `<ID>_Dubbing_Transcript_EN.json` oraz `<ID>_Dubbing_Summary.md` (tabela A/B scen PL vs EN).

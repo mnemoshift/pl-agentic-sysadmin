@@ -188,7 +188,7 @@ media-dub-batch:
 
 media-dub-clean:
 	@echo "Czyszczenie wygenerowanych artefaktów dubbingu w work/..."
-	@rm -rf work/voice_sample work/*/assets 2>/dev/null || true
+	@rm -rf work/voice_sample work/*/output work/*/assets 2>/dev/null || true
 	@echo "[OK] Wyczyszczono artefakty dubbingu. Pliki w work/voice_source/ oraz work/*/input/ zachowane."
 
 # --- Google Drive Selektywna Synchronizacja (rclone) ---

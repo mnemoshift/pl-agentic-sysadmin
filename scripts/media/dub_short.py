@@ -434,8 +434,8 @@ def auto_detect_input_video(work_dir: Path) -> Path | None:
 def process_single_short(work_dir: Path, input_video: Path | None, script_path: Path | None, ref_audio: Path | None, ref_transcript: str, engine: str, instruction: str, output_video: bool) -> bool:
     work_dir = work_dir.resolve()
     short_id = work_dir.name
-    assets_dir = work_dir / "assets"
-    assets_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = work_dir / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     if not input_video:
         input_video = auto_detect_input_video(work_dir)
@@ -454,7 +454,7 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
     log_info(f"Silnik TTS:       {engine.upper()}")
 
     # 1. Ekstrakcja czystego audio lub wykorzystanie dedykowanego pliku lektorskiego z input/
-    raw_audio = assets_dir / f"{short_id}_VoiceOver_RAW_24k.wav"
+    raw_audio = output_dir / f"{short_id}_VoiceOver_RAW_24k.wav"
     input_voiceover = None
     input_dir = work_dir / "input"
     if input_dir.exists():
@@ -509,13 +509,13 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
     for sc in scenes:
         sc["text_en"] = translate_segment(sc["text_pl"])
 
-    transcript_json = assets_dir / f"{short_id}_Dubbing_Transcript_EN.json"
+    transcript_json = output_dir / f"{short_id}_Dubbing_Transcript_EN.json"
     with open(transcript_json, "w", encoding="utf-8") as f:
         json.dump(scenes, f, ensure_ascii=False, indent=2)
     log_ok(f"Zapisano transkrypcję segmentów: {transcript_json.name}")
 
     # 4. Synteza mowy
-    dub_parts_dir = assets_dir / "dub_parts"
+    dub_parts_dir = output_dir / "dub_parts"
     dub_parts_dir.mkdir(parents=True, exist_ok=True)
     segment_wavs = []
     
@@ -527,12 +527,12 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
         segment_wavs.append(part_wav)
 
     # 5. Time-sync i mastering EBU R128
-    mastered_wav = assets_dir / f"{short_id}_VoiceOver_EN_CLEAN.wav"
+    mastered_wav = output_dir / f"{short_id}_VoiceOver_EN_CLEAN.wav"
     time_sync_and_master(scenes, segment_wavs, total_duration, mastered_wav, target_lufs=-14.0, target_tp=-1.0)
 
     # 6. Finalny montaż wideo EN
     if output_video:
-        output_video_file = assets_dir / f"{short_id}_FINAL_EN_DUBBED.mp4"
+        output_video_file = output_dir / f"{short_id}_FINAL_EN_DUBBED.mp4"
         log_info(f"Generowanie zduplikowanego wideo z angielską ścieżką dźwiękową: {output_video_file.name}...")
         cmd = [
             "ffmpeg", "-y",
@@ -548,7 +548,7 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
         log_ok(f"Utworzono gotowy plik wideo EN: {output_video_file.name}")
 
     # Raport Markdown
-    summary_md = assets_dir / f"{short_id}_Dubbing_Summary.md"
+    summary_md = output_dir / f"{short_id}_Dubbing_Summary.md"
     with open(summary_md, "w", encoding="utf-8") as f:
         f.write(f"# Raport Dubbingu AI: {short_id}\n\n")
         f.write(f"- **Wideo źródłowe:** `{input_video.name}` ({total_duration:.2f}s)\n")

@@ -56,7 +56,7 @@ work/
             └── EP002_FINAL_EN_ElevenLabs.mp4              # Zmontowane wideo z ElevenLabs do podglądu A/B
 ```
 
-Przed rozpoczęciem sesji folder `work/voice_sample/` oraz foldery wyjściowe `assets/` nie istnieją — Agent wygeneruje je od zera na Twoich oczach.
+Przed rozpoczęciem sesji folder `work/voice_sample/` oraz foldery wyjściowe `output/` nie istnieją — Agent wygeneruje je od zera na Twoich oczach.
 
 ---
 
@@ -84,7 +84,7 @@ Wklejasz w czacie polecenie czystej intencji (bez podawania flag technicznych an
   - Tłumaczy kwestie z zachowaniem ścisłego słownika IT (*mount point*, *VRAM footprint*, *PCIe bus*, *macOS-inspired workspace*).
   - Przeprowadza syntezę na GPU z wykorzystaniem wyciętej próbki głosu.
   - Dopasowuje tempo do cięć wideo, wstawia pauzy i masteruje ścieżkę do standardu emisyjnego **-14 LUFS** (EBU R128).
-  - Dostarcza **dwa pliki wyjściowe**:
+  - Zapisuje rezultaty w folderze wyjściowym `work/EP002_Short/output/` i dostarcza **dwa pliki produkcyjne**:
     1. Czysty plik audio lektora EN: `EP002_Short_VoiceOver_EN_CLEAN.wav` (pod YouTube Multi-Language Audio).
     2. Gotowy plik wideo z dubbingiem: `EP002_Short_FINAL_EN_DUBBED.mp4` (obraz + audio EN).
   - Zwraca w czacie zwięzłą tabelę porównawczą A/B (PL vs EN).
@@ -117,7 +117,9 @@ Albo w scenariuszu, gdybyśmy startowali od zera bez wcześniejszego wycinania p
   4. Dokonuje inżynierskiego przekładu PL $\rightarrow$ EN.
   5. Przeprowadza syntezę na GPU, dopasowuje czasy segmentów pod oryginalne cięcia.
   6. Przeprowadza broadcastowy mastering EBU R128 (-14.0 LUFS, True Peak $\le$ -1.0 dBFS).
-  7. Tworzy oba kluczowe pliki produkcyjne (`EP001_Short_VoiceOver_EN_CLEAN.wav` oraz `EP001_Short_FINAL_EN_DUBBED.mp4`).
+  7. Zapisuje oba kluczowe pliki produkcyjne w `work/EP001_Short/output/`:
+     - `EP001_Short_VoiceOver_EN_CLEAN.wav`
+     - `EP001_Short_FINAL_EN_DUBBED.mp4`
   8. Wyświetla podsumowanie z tabelą scen i natychmiast uruchamia odtworzenie rezultatu.
 
 ---
@@ -151,7 +153,7 @@ make media-dub-clean
 
 ## 6. Wygenerowane Pliki i Standard Emisyjny
 
-W katalogu `work/<ID>/assets/` powstaje kompletny pakiet produkcyjny. Z każdego projektu otrzymujesz **dwa kluczowe pliki do dystrybucji**:
+W katalogu `work/<ID>/output/` (zaraz obok katalogu `input/`) powstaje kompletny pakiet produkcyjny. Z każdego projektu otrzymujesz **dwa kluczowe pliki do dystrybucji**:
 
 1. **Plik dźwiękowy lektora (YouTube Multi-Language Audio):**
    * `<ID>_VoiceOver_EN_CLEAN.wav` – zmasterowany plik audio lektora EN (48kHz stereo, broadcast mastering -14.0 LUFS, True Peak $\le$ -1.0 dBFS).
