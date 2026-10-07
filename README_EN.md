@@ -131,6 +131,7 @@ Explore practical end-to-end sessions in `docs/walkthroughs/` comparing legacy t
 - 🧭 [**Dual-Engine Desktop Architecture (X11 vs Wayland)**](docs/desktop/DUAL_ENGINE_GUIDE.md) — TopChrome dock engineering, 2px edge trigger, and Zoom & Hop (1.2x) hover animation on laptops and workstations.
 - ⚙️ [**Kdenlive and MCP Server Setup in User-Space**](docs/walkthroughs/Konfiguracja-Kdenlive-MCP.md) — rootless Flatpak installation, MLT melt CLI wrappers, XML generator fix, and Antigravity integration.
 - 🎬 [**Autonomous YouTube Short Editing in Kdenlive with Agentic AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) — zero-subscription, local alternative to CapCut Pro: audio audit & normalization (-14 LUFS), 9:16 timeline composition, and dynamic karaoke subtitles (Whisper + ASS).
+- 🎙️ [**Zero-Cloud AI Dubbing & Voiceover on GPU**](docs/walkthroughs/Lokalny-Dubbing-AI-Shorts.md) — sovereign voiceover pipeline on RTX 4060 Ti: voice sample extraction, Whisper transcription, engineering PL->EN translation, EBU R128 (-14 LUFS) mastering, and video muxing.
 - 🗣️ [**'Select & Listen' Neural TTS Reader**](docs/walkthroughs/Czytnik-Glosowy-TTS.md) — rootless user-space Microsoft Edge Neural TTS, low-latency streaming pipeline to mpv (<250ms), Markdown sanitizer, and global `<Super>+R` shortcut.
 
 ---

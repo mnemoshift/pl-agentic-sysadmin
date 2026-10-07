@@ -154,6 +154,34 @@ media-prepare-demo:
 	@chmod +x scripts/media/prepare_demo.sh
 	@./scripts/media/prepare_demo.sh
 
+# --- Autonomiczny Potok Dubbingu i Voiceoveru AI (Whisper / TTS / EBU R128) ---
+
+media-extract-sample:
+	@if [ -z "$(INPUT)" ] || [ -z "$(START)" ] || [ -z "$(END)" ] || [ -z "$(OUTPUT)" ]; then \
+		echo "[BŁĄD] Wymagane parametry INPUT, START, END i OUTPUT. Przykład:"; \
+		echo "  make media-extract-sample INPUT=work/source.wav START=00:00:12.000 END=00:00:20.300 OUTPUT=work/voice_sample/ref.wav [TRANSCRIPT=\"...\"]"; \
+		exit 1; \
+	fi
+	@chmod +x scripts/media/extract_voice_sample.py
+	@./scripts/media/extract_voice_sample.py -i "$(INPUT)" -s "$(START)" -e "$(END)" -o "$(OUTPUT)" $(if $(TRANSCRIPT),-t "$(TRANSCRIPT)")
+
+media-dub-short:
+	@if [ -z "$(INPUT)" ] || [ -z "$(WORKSPACE)" ]; then \
+		echo "[BŁĄD] Wymagane parametry INPUT i WORKSPACE. Przykład:"; \
+		echo "  make media-dub-short INPUT=work/EP002_Short/input/video.mp4 WORKSPACE=work/EP002_Short [REF_AUDIO=work/sample.wav]"; \
+		exit 1; \
+	fi
+	@chmod +x scripts/media/dub_short.py
+	@./scripts/media/dub_short.py -i "$(INPUT)" -w "$(WORKSPACE)" $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+
+media-dub-ep002:
+	@chmod +x scripts/media/dub_short.py
+	@./scripts/media/dub_short.py -i work/EP002_Short/input/EP002_Short_Agentic_SysAdmin.mp4 -w work/EP002_Short $(if $(ENGINE),--engine "$(ENGINE)")
+
+media-dub-ep001:
+	@chmod +x scripts/media/dub_short.py
+	@./scripts/media/dub_short.py -i work/EP001_Short/input/EP001_Short_WSL_vs_Zorin.mp4 -w work/EP001_Short $(if $(ENGINE),--engine "$(ENGINE)")
+
 # --- Google Drive Selektywna Synchronizacja (rclone) ---
 
 gdrive-status:

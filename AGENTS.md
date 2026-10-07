@@ -92,7 +92,9 @@ Główne operacje stacji roboczej wywołuj poprzez ustandaryzowane komendy:
 - `make check` — weryfikacja integralności repozytorium,
 - `make media-clean-audio` — audyt, przycięcie ciszy/falstartów i normalizacja audio do -14 LUFS (EBU R128),
 - `make media-karaoke` — generowanie dynamicznych napisów ASS (CapCut Karaoke) z lokalnym Whisperem,
-- `make media-build-short` — automatyczny montaż wertykalnego projektu Kdenlive 9:16 (kaskada rozmycia + napisy).
+- `make media-build-short` — automatyczny montaż wertykalnego projektu Kdenlive 9:16 (kaskada rozmycia + napisy),
+- `make media-extract-sample` — wycięcie 3-10s próbki referencyjnej głosu lektora ze wskazanego nagrania w `work/`,
+- `make media-dub-short` — automatyczny dubbing i mastering shorta (Whisper + inżynierskie tłumaczenie PL->EN + synteza mowy + mastering -14 LUFS).
 
 
 ---

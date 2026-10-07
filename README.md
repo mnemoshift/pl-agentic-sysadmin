@@ -126,6 +126,7 @@ W katalogu `docs/walkthroughs/` znajdziesz szczegółowe scenariusze sesji z age
 - 🧭 [**Architektura Dwutorowa Pulpitu (X11 vs Wayland)**](docs/desktop/DUAL_ENGINE_GUIDE.md) — inżynieria doku TopChrome, wyzwalacz krawędziowy 2px oraz animacja unoszenia ikon (Zoom & Hop 1.2x) na laptopach i stacjach roboczych.
 - ⚙️ [**Konfiguracja Kdenlive i Serwera MCP w User-Space**](docs/walkthroughs/Konfiguracja-Kdenlive-MCP.md) — instalacja Flatpak bez roota, wrappery CLI silnika MLT melt, naprawa generatora XML i integracja z Antigravity.
 - 🎬 [**Autonomiczny Montaż Shorta w Kdenlive z Agentem AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) — bezpłatna, lokalna alternatywa dla CapCuta: audyt i normalizacja audio (-14 LUFS), kaskadowy montaż 9:16 i dynamiczne napisy karaoke (Whisper + ASS).
+- 🎙️ [**Suwerenny Dubbing i Voiceover AI na GPU**](docs/walkthroughs/Lokalny-Dubbing-AI-Shorts.md) — autonomiczny potok tłumaczenia i syntezy mowy na RTX 4060 Ti: ekstrakcja próbki głosu, Whisper, inżynierskie tłumaczenie PL->EN, mastering EBU R128 (-14 LUFS) i montaż wideo.
 - 🗣️ [**Czytnik Tekstu TTS 'Select & Listen'**](docs/walkthroughs/Czytnik-Glosowy-TTS.md) — neuronowy lektor Microsoft Edge TTS w przestrzeni użytkownika, potok streamingowy do mpv (<250ms), filtr Markdown i globalny skrót `<Super>+R`.
 
 ---
