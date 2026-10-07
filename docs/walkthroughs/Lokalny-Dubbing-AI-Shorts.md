@@ -1,6 +1,6 @@
 # Walkthrough: Suwerenny Potok Dubbingu i Voiceoveru AI na GPU (Shorts)
 
-Procedura automatycznego tłumaczenia, syntezy mowy i masteringu audio dla formatów YouTube Shorts (format pionowy 9:16) bez zewnętrznych API i opłat chmurowych.
+Procedura automatycznego tłumaczenia, syntezy mowy i masteringu audio dla zestawu materiałów YouTube Shorts (format pionowy 9:16) bez zewnętrznych API i opłat chmurowych.
 
 ---
 
@@ -8,7 +8,7 @@ Procedura automatycznego tłumaczenia, syntezy mowy i masteringu audio dla forma
 
 Przepustowość wewnętrznej pamięci GDDR6 karty graficznej wynosi **288 GB/s**, podczas gdy magistrala PCIe 4.0 x8 oferuje zaledwie **~12 GB/s** (proporcja **24:1**). 
 
-Przekroczenie budżetu 16.0 GB VRAM powoduje natychmiastowe zrzucanie danych do systemowego RAM-u przez wąskie gardło magistrali i katastrofalny spadek wydajności. Dlatego potok audio został zaprojektowany z twardym marginesem bezpieczeństwa:
+Przekroczenie budżetu 16.0 GB VRAM powoduje natychmiastowe zrzucanie tensorów do systemowego RAM-u przez wąskie gardło magistrali i katastrofalny spadek wydajności (spadek 24:1). Dlatego cały potok audio zamyka się w bezpiecznym oknie pamięci z dużym marginesem bezpieczeństwa:
 
 | Komponent / Model | Rola w Potoku | Format Wag | Alokacja VRAM |
 | :--- | :--- | :--- | :---: |
@@ -22,40 +22,105 @@ Przekroczenie budżetu 16.0 GB VRAM powoduje natychmiastowe zrzucanie danych do 
 
 ---
 
-## 2. Dostępne Moduły w `scripts/media/`
+## 2. Przygotowanie Przestrzeni Roboczej (`work/`)
 
-* `scripts/media/extract_voice_sample.py` – precyzyjne wycięcie 3–10 sekundowej próbki referencyjnej mowy z nagrania źródłowego w `work/`.
-* `scripts/media/dub_short.py` – kompletny orkiestrator potoku:
-  1. Ekstrakcja audio z wideo źródłowego (WAV 24kHz mono).
-  2. Parsowanie scenariusza (`short_script.md` / `.srt`) lub automatyczna transkrypcja Whisper.
-  3. Inżynierskie tłumaczenie terminów IT z dopasowaniem do okna czasowego.
-  4. Synteza mowy na GPU (Breeze-TTS-2 lub lekki fallback).
-  5. Time-syncing, wstawianie pauz i mastering do standardu **-14 LUFS** (EBU R128).
-  6. Wygenerowanie gotowego pliku wideo z angielską ścieżką dźwiękową.
+Repozytorium jest w 100% generyczne — żadne prywatne surówki ani nagrania lektorskie nie trafiają do Gita. Wszystkie pliki wejściowe umieszczasz wyłącznie w katalogu `work/` (objętym `.gitignore`):
+
+```text
+work/
+├── voice_source/
+│   └── EP003_VoiceOver_CLEAN.wav                         # Długie, płynne nagranie do wycięcia próbki głosu
+├── EP002_Short/
+│   └── input/
+│       ├── EP002_Short_Agentic_SysAdmin_Karaoke_FIXED.mp4 # Polski short z montażem pulpitu (30s)
+│       └── short_script.md                                # Rozpiska kwestii i scenariusza
+└── EP001_Short/
+    └── input/
+        ├── EP001_Short_WSL_vs_Zorin_FINAL.mp4             # Polski short WSL vs Zorin (102s)
+        └── EP001_Short_WSL_vs_Zorin.srt                   # Napisy z oryginalnymi znacznikami czasu
+```
+
+Przed rozpoczęciem sesji folder `work/voice_sample/` oraz foldery wyjściowe `assets/` nie istnieją — Agent wygeneruje je od zera na Twoich oczach.
 
 ---
 
-## 3. Przykładowy Przebieg Operacyjny
+## 3. Ścieżka Agentic w Antigravity (Czysta Intencja Inżynierska)
 
-### Krok 1: Wycięcie próbki głosu
+Otwierasz Antigravity w projekcie `pl-agentic-sysadmin-work`. Agent automatycznie ładuje kontekst z `AGENTS.md` oraz skill `voice-dubber`. 
+
+Nie musisz instruować agenta kim jest, ani tłumaczyć mu jakich skryptów czy flag ma użyć — podajesz wyłącznie zwięzłą, inżynierską intencję.
+
+### Krok 1: Wycięcie próbki głosu lektora
+Wklejasz w oknie czatu Antigravity:
+> *Wytnij 8-sekundową próbkę głosu z nagrania w work/voice_source od 00:12 do 00:20.*
+
+* **Działanie Agenta:** 
+  - Lokalizuje `work/voice_source/EP003_VoiceOver_CLEAN.wav`.
+  - Wywołuje procedurę ekstrakcji i zapisuje bezstratną próbkę studyjną (24kHz mono WAV) w `work/voice_sample/ref_voice_sample.wav` wraz z transkrypcją referencyjną (*„Zmontowałem to w całości lokalnie na Linuksie...”*).
+  - Raportuje gotowość biometrii głosu do syntezy.
+
+### Krok 2: Dubbing pierwszego shorta (EP002 Short)
+Wklejasz w czacie polecenie dla głównego materiału:
+> *Przetłumacz i zdubbinguj shorta w work/EP002_Short z zachowaniem standardu -14 LUFS.*
+
+* **Działanie Agenta:**
+  - Automatycznie wykrywa wideo w `work/EP002_Short/input/` oraz scenariusz `short_script.md`.
+  - Tłumaczy kwestie z zachowaniem ścisłego słownika IT (*mount point*, *VRAM footprint*, *PCIe bus*, *macOS-inspired workspace*).
+  - Przeprowadza syntezę na GPU z wykorzystaniem wyciętej próbki głosu.
+  - Dopasowuje tempo do cięć wideo, wstawia pauzy i masteruje ścieżkę do standardu emisyjnego **-14 LUFS** (EBU R128).
+  - Składa gotowy zduplikowany plik wideo `work/EP002_Short/assets/EP002_Short_FINAL_EN_DUBBED.mp4`.
+  - Zwraca w czacie zwięzłą tabelę porównawczą A/B (PL vs EN).
+
+### Krok 3: Dubbing drugiego shorta z zestawu (EP001 Short)
+Po weryfikacji pierwszego materiału zlecasz przetworzenie dłuższego wideo z zestawu:
+> *Zdubbinguj teraz drugi materiał w work/EP001_Short.*
+
+* **Działanie Agenta:**
+  - Samodzielnie przełącza się na `work/EP001_Short/input/EP001_Short_WSL_vs_Zorin_FINAL.mp4`.
+  - Parsuje 19 segmentów z pliku `.srt`, tłumaczy techniczny wywód o wirtualizacji i tokenach.
+  - Generuje zmasterowane audio i zduplikowane wideo `EP001_Short_FINAL_EN_DUBBED.mp4` (102s).
+
+### Krok 4: Odsłuch i weryfikacja parametrów
+Wpisujesz w czacie:
+> *Odtwórz wygenerowane wideo dla EP002 i podsumuj parametry audio.*
+
+* **Działanie Agenta:**
+  - Uruchamia podgląd wideo lub odtwarza próbkę audio w systemowym odtwarzaczu.
+  - Wyświetla zmierzone parametry: Zintegrowana głośność (`-14.0 LUFS` do `-15.3 LUFS`), True Peak (`< -1.0 dBFS`), LRA.
+
+---
+
+## 4. Ścieżka Manualna / Oldschool CLI (Dla zdeterminowanych)
+
+Wyłącznie w celach poglądowych dla inżynierów, którzy chcą uruchomić poszczególne polecenia ręcznie z poziomu terminala bash:
+
 ```bash
+# 1. Ręczne wycięcie próbki referencyjnej głosu:
 python3 scripts/media/extract_voice_sample.py \
   -i work/voice_source/EP003_VoiceOver_CLEAN.wav \
   -s 00:00:12.000 -e 00:00:20.300 \
   -o work/voice_sample/ref_voice_sample.wav \
   -t "Zmontowałem to w całości lokalnie na Linuksie, rozmawiając z agentem AI w naszym repozytorium, ani razu nie dotknąłem myszki."
+
+# 2. Ręczny dubbing pierwszego shorta (EP002):
+python3 scripts/media/dub_short.py -w work/EP002_Short
+
+# 3. Ręczny dubbing drugiego shorta (EP001):
+python3 scripts/media/dub_short.py -w work/EP001_Short
+
+# 4. Lub przetwarzanie całego zestawu wsadowo jednym poleceniem:
+python3 scripts/media/dub_short.py --batch work/EP002_Short work/EP001_Short
+
+# 5. Czysty reset katalogu roboczego przed kolejnym nagraniem:
+make media-dub-clean
 ```
 
-### Krok 2: Dubbing i mastering shorta EP002
-```bash
-python3 scripts/media/dub_short.py \
-  -i work/EP002_Short/input/EP002_Short_Agentic_SysAdmin.mp4 \
-  -w work/EP002_Short \
-  --ref-audio work/voice_sample/ref_voice_sample.wav
-```
+---
 
-### Krok 3: Pliki wynikowe w `work/EP002_Short/assets/`
-* `EP002_Short_VoiceOver_EN_CLEAN.wav` – zmasterowany plik audio lektora EN (-14.0 LUFS, True Peak <= -1.0 dBFS).
-* `EP002_Short_Dubbing_Transcript_EN.json` – znaczniki czasowe i kwestie dwujęzyczne.
-* `EP002_Short_Dubbing_Summary.md` – tabela podsumowująca sceny.
-* `EP002_Short_FINAL_EN_DUBBED.mp4` – zduplikowany short z podmienionym audio.
+## 5. Wygenerowane Pliki i Standard Emisyjny
+
+W katalogu `work/<ID>/assets/` powstaje kompletny pakiet produkcyjny:
+* `<ID>_VoiceOver_EN_CLEAN.wav` – zmasterowany plik audio lektora EN (48kHz stereo, -14.0 LUFS, True Peak $\le$ -1.0 dBFS).
+* `<ID>_Dubbing_Transcript_EN.json` – struktura danych z dokładnymi znacznikami start/end i kwestiami EN.
+* `<ID>_Dubbing_Summary.md` – tabela podsumowująca sceny i kwestie dwujęzyczne.
+* `<ID>_FINAL_EN_DUBBED.mp4` – gotowy plik wideo z zsynchronizowaną angielską ścieżką dźwiękową pod YouTube Multi-Language Audio.
