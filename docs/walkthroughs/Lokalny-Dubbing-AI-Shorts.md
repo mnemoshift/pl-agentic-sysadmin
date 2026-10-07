@@ -44,11 +44,11 @@ Przed rozpoczęciem sesji folder `work/voice_sample/` oraz foldery wyjściowe `a
 
 ---
 
-## 3. Ścieżka Agentic w Antigravity (Czysta Intencja Inżynierska)
+## 3. Ścieżka Krok po Kroku w Antigravity (Anatomia Potoku na EP002)
 
 Otwierasz Antigravity w projekcie `pl-agentic-sysadmin-work`. Agent automatycznie ładuje kontekst z `AGENTS.md` oraz skill `voice-dubber`. 
 
-Nie musisz instruować agenta kim jest, ani tłumaczyć mu jakich skryptów czy flag ma użyć — podajesz wyłącznie zwięzłą, inżynierską intencję.
+W pierwszym podejściu przechodzimy przez proces krok po kroku, aby dokładnie widzieć anatomię poszczególnych etapów i bilans zasobów:
 
 ### Krok 1: Wycięcie próbki głosu lektora
 Wklejasz w oknie czatu Antigravity:
@@ -59,8 +59,8 @@ Wklejasz w oknie czatu Antigravity:
   - Wywołuje procedurę ekstrakcji i zapisuje bezstratną próbkę studyjną (24kHz mono WAV) w `work/voice_sample/ref_voice_sample.wav` wraz z transkrypcją referencyjną (*„Zmontowałem to w całości lokalnie na Linuksie...”*).
   - Raportuje gotowość biometrii głosu do syntezy.
 
-### Krok 2: Dubbing pierwszego shorta (EP002 Short)
-Wklejasz w czacie polecenie dla głównego materiału:
+### Krok 2: Dubbing i mastering pierwszego shorta (EP002)
+Wklejasz w czacie polecenie:
 > *Przetłumacz i zdubbinguj shorta w work/EP002_Short z zachowaniem standardu -14 LUFS.*
 
 * **Działanie Agenta:**
@@ -71,16 +71,7 @@ Wklejasz w czacie polecenie dla głównego materiału:
   - Składa gotowy zduplikowany plik wideo `work/EP002_Short/assets/EP002_Short_FINAL_EN_DUBBED.mp4`.
   - Zwraca w czacie zwięzłą tabelę porównawczą A/B (PL vs EN).
 
-### Krok 3: Dubbing drugiego shorta z zestawu (EP001 Short)
-Po weryfikacji pierwszego materiału zlecasz przetworzenie dłuższego wideo z zestawu:
-> *Zdubbinguj teraz drugi materiał w work/EP001_Short.*
-
-* **Działanie Agenta:**
-  - Samodzielnie przełącza się na `work/EP001_Short/input/EP001_Short_WSL_vs_Zorin_FINAL.mp4`.
-  - Parsuje 19 segmentów z pliku `.srt`, tłumaczy techniczny wywód o wirtualizacji i tokenach.
-  - Generuje zmasterowane audio i zduplikowane wideo `EP001_Short_FINAL_EN_DUBBED.mp4` (102s).
-
-### Krok 4: Odsłuch i weryfikacja parametrów
+### Krok 3: Odsłuch i inspekcja parametrów
 Wpisujesz w czacie:
 > *Odtwórz wygenerowane wideo dla EP002 i podsumuj parametry audio.*
 
@@ -90,7 +81,30 @@ Wpisujesz w czacie:
 
 ---
 
-## 4. Ścieżka Manualna / Oldschool CLI (Dla zdeterminowanych)
+## 4. Ścieżka One-Shot w Antigravity (Cały Potok „Na Raz” dla EP001)
+
+Gdy wiesz już jak działa system, nie musisz rozbijać pracy na pojedyncze etapy. Prawdziwa siła podejścia **Agentic SysAdmin** polega na zleceniu pełnego łańcucha operacyjnego za pomocą **dokładnie jednego promptu czystej intencji**.
+
+Dla drugiego shorta z zestawu (`work/EP001_Short`, 102 sekundy) zlecamy wykonanie całego potoku za jednym zamachem:
+
+> *Zdubbinguj materiał w work/EP001_Short przy użyciu przygotowanej próbki głosu ze standardem -14 LUFS i odtwórz gotowe wideo.*
+
+Albo w scenariuszu, gdybyśmy startowali od zera bez wcześniejszego wycinania próbki:
+> *Wytnij 8-sekundową próbkę głosu z work/voice_source od 00:12 do 00:20 i wykonaj kompletny potok dubbingu dla work/EP001_Short z masteringiem -14 LUFS.*
+
+* **Działanie Agenta:**
+  1. Spina cały workflow bez konieczności interwencji użytkownika:
+  2. Bada wejście: wykrywa `EP001_Short_WSL_vs_Zorin_FINAL.mp4` oraz plik `.srt`.
+  3. Parsuje 19 segmentów wypowiedzi o wirtualizacji, PowerShellu i tokenach.
+  4. Dokonuje inżynierskiego przekładu PL $\rightarrow$ EN.
+  5. Przeprowadza syntezę na GPU, dopasowuje czasy segmentów pod oryginalne cięcia.
+  6. Przeprowadza mastering EBU R128 (-14 LUFS, True Peak $\le$ -1.0 dBFS).
+  7. Tworzy zduplikowany plik wideo `EP001_Short_FINAL_EN_DUBBED.mp4`.
+  8. Wyświetla podsumowanie z tabelą scen i natychmiast uruchamia odtworzenie rezultatu.
+
+---
+
+## 5. Ścieżka Manualna / Oldschool CLI (Dla zdeterminowanych)
 
 Wyłącznie w celach poglądowych dla inżynierów, którzy chcą uruchomić poszczególne polecenia ręcznie z poziomu terminala bash:
 
@@ -117,10 +131,10 @@ make media-dub-clean
 
 ---
 
-## 5. Wygenerowane Pliki i Standard Emisyjny
+## 6. Wygenerowane Pliki i Standard Emisyjny
 
 W katalogu `work/<ID>/assets/` powstaje kompletny pakiet produkcyjny:
 * `<ID>_VoiceOver_EN_CLEAN.wav` – zmasterowany plik audio lektora EN (48kHz stereo, -14.0 LUFS, True Peak $\le$ -1.0 dBFS).
 * `<ID>_Dubbing_Transcript_EN.json` – struktura danych z dokładnymi znacznikami start/end i kwestiami EN.
 * `<ID>_Dubbing_Summary.md` – tabela podsumowująca sceny i kwestie dwujęzyczne.
-* `<ID>_FINAL_EN_DUBBED.mp4` – gotowy plik wideo z zsynchronizowaną angielską ścieżką dźwiękową pod YouTube Multi-Language Audio.
+* `<ID>_FINAL_EN_DUBBED.mp4` – gotowy plik wideo ze zsynchronizowaną angielską ścieżką dźwiękową pod YouTube Multi-Language Audio.
