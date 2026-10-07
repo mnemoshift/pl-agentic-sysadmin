@@ -24,20 +24,36 @@ Przekroczenie budżetu 16.0 GB VRAM powoduje natychmiastowe zrzucanie tensorów 
 
 ## 2. Przygotowanie Przestrzeni Roboczej (`work/`)
 
-Repozytorium jest w 100% generyczne — żadne prywatne surówki ani nagrania lektorskie nie trafiają do Gita. Wszystkie pliki wejściowe umieszczasz wyłącznie w katalogu `work/` (objętym `.gitignore`):
+Repozytorium jest w 100% generyczne — żadne prywatne surówki ani nagrania lektorskie nie trafiają do Gita. Wszystkie materiały źródłowe umieszczasz wyłącznie w katalogu `work/` (objętym `.gitignore`).
+
+W potoku dubbingu przyjmujemy jednolity, inżynierski standard wejściowy dla każdego projektu (`work/<ID>/input/`):
+1. **Wideo (`*.mp4`):** Obraz ze zmontowanym materiałem.
+2. **Czysty Lektor (`*_VoiceOver_CLEAN.wav`):** Odrębna, bezstratna ścieżka mowy (jeśli nie jest dostępna, skrypt automatycznie ekstrahuje strumień audio z pliku wideo).
+3. **Opcjonalny Skrypt / Napisy (`short_script.md` lub `*.srt`):** Gotowy podział na kwestie (dla formatu Shorts). Jeśli skrypt nie zostanie dostarczony (np. dla długiego filmu), potok automatycznie uruchamia lokalny model Whisper do transkrypcji i detekcji znaczników czasowych.
+
+Struktura katalogu `work/` przygotowana pod nagranie screencasta:
 
 ```text
 work/
 ├── voice_source/
-│   └── EP003_VoiceOver_CLEAN.wav                         # Długie, płynne nagranie do wycięcia próbki głosu
+│   └── EP003_VoiceOver_CLEAN.wav                         # Nagranie źródłowe do wycięcia próbki lektora (00:12–00:20)
 ├── EP002_Short/
 │   └── input/
-│       ├── EP002_Short_Agentic_SysAdmin_Karaoke_FIXED.mp4 # Polski short z montażem pulpitu (30s)
-│       └── short_script.md                                # Rozpiska kwestii i scenariusza
-└── EP001_Short/
+│       ├── EP002_Short_Agentic_SysAdmin_Karaoke_FIXED.mp4 # Wideo shorta (30s)
+│       ├── EP002_Short_VoiceOver_CLEAN.wav                # Czysta polska ścieżka lektorska
+│       └── short_script.md                                # Scenariusz z podziałem na sceny i kwestie
+├── EP001_Short/
+│   └── input/
+│       ├── EP001_Short_WSL_vs_Zorin_FINAL.mp4             # Wideo shorta (102s)
+│       ├── EP001_Short_VoiceOver_CLEAN.wav                # Czysta polska ścieżka lektorska
+│       └── EP001_Short_WSL_vs_Zorin.srt                   # Napisy z oryginalnymi znacznikami czasu
+└── EP002/
     └── input/
-        ├── EP001_Short_WSL_vs_Zorin_FINAL.mp4             # Polski short WSL vs Zorin (102s)
-        └── EP001_Short_WSL_vs_Zorin.srt                   # Napisy z oryginalnymi znacznikami czasu
+        ├── EP002_Zorin_Desktop_FINAL.mp4                  # Pełny film długi (12:08, 1440p60)
+        ├── EP002_VoiceOver_CLEAN.wav                      # Czysta polska ścieżka lektorska (brak skryptu -> Whisper auto)
+        └── reference/
+            ├── EP002_Audio_EN_ElevenLabs_14LUFS.mp3       # Ścieżka z ElevenLabs (do porównania A/B i rachunku)
+            └── EP002_FINAL_EN_ElevenLabs.mp4              # Zmontowane wideo z ElevenLabs do podglądu A/B
 ```
 
 Przed rozpoczęciem sesji folder `work/voice_sample/` oraz foldery wyjściowe `assets/` nie istnieją — Agent wygeneruje je od zera na Twoich oczach.

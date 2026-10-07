@@ -97,3 +97,11 @@ Dla każdego projektu w katalogu `work/<ID>/assets/` powstają:
 1. **Alternatywna ścieżka audio (YouTube MLA):** `<ID>_VoiceOver_EN_CLEAN.wav` (WAV 48kHz stereo, -14.0 LUFS, True Peak $\le$ -1.0 dBFS) — do bezpośredniego wgrania w YouTube Studio jako dodatkowa ścieżka językowa do istniejącego filmu.
 2. **Pełne wideo z dubbingiem EN:** `<ID>_FINAL_EN_DUBBED.mp4` (wideo + dubbing EN) — gotowy film do publikacji na zagranicznym kanale lub Shorts.
 3. **Transkrypcja i raport:** `<ID>_Dubbing_Transcript_EN.json` oraz `<ID>_Dubbing_Summary.md` (tabela A/B scen PL vs EN).
+
+---
+
+## 5. Materiały Długie i Walidacja Referencyjna (`work/EP002`)
+
+Dla pełnometrażowych materiałów (np. `work/EP002`, 12:08):
+* Gdy w `input/` brak pliku scenariusza (`.md` / `.srt`), potok automatycznie uruchamia silnik Whisper na ścieżce `EP002_VoiceOver_CLEAN.wav` lub wyekstrahowanym audio z filmu.
+* W folderze `work/EP002/input/reference/` przechowywana jest wersja zmontowana w chmurze (`EP002_Audio_EN_ElevenLabs_14LUFS.mp3` oraz `EP002_FINAL_EN_ElevenLabs.mp4`), służąca do natychmiastowego odsłuchu i porównania A/B jakości oraz bilansu ekonomicznego (0 zł vs spalony limit tokenów).

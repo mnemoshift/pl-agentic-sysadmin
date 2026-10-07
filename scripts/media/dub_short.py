@@ -453,11 +453,30 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
     log_info(f"Katalog roboczy:  {work_dir}")
     log_info(f"Silnik TTS:       {engine.upper()}")
 
-    # 1. Ekstrakcja czystego audio
+    # 1. Ekstrakcja czystego audio lub wykorzystanie dedykowanego pliku lektorskiego z input/
     raw_audio = assets_dir / f"{short_id}_VoiceOver_RAW_24k.wav"
-    extract_raw_audio(input_video, raw_audio, sample_rate=24000)
+    input_voiceover = None
+    input_dir = work_dir / "input"
+    if input_dir.exists():
+        for vo_cand in sorted(input_dir.glob("*.wav")):
+            if "voiceover" in vo_cand.name.lower() or "voice_over" in vo_cand.name.lower() or "clean" in vo_cand.name.lower():
+                input_voiceover = vo_cand
+                break
 
-    # 2. Parsowanie scenariusza lub transkrypcja
+    if input_voiceover and input_voiceover.exists():
+        log_info(f"Wykryto dedykowany plik lektorski: {input_voiceover.name}")
+        cmd = [
+            "ffmpeg", "-y", "-i", str(input_voiceover),
+            "-vn", "-acodec", "pcm_s16le",
+            "-ar", "24000", "-ac", "1",
+            str(raw_audio)
+        ]
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        log_ok("Przygotowano strumień lektorski 24kHz z dedykowanego pliku WAV.")
+    else:
+        extract_raw_audio(input_video, raw_audio, sample_rate=24000)
+
+    # 2. Parsowanie scenariusza lub automatyczna transkrypcja Whisper
     if not script_path:
         candidates = [
             work_dir / "input" / "short_script.md",
@@ -478,6 +497,7 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
         else:
             scenes = parse_short_script_md(script_path)
     else:
+        log_info("Brak pliku scenariusza (.md/.srt) — uruchamianie automatycznej transkrypcji Whisper...")
         scenes = transcribe_with_whisper(raw_audio)
 
     if not scenes:
