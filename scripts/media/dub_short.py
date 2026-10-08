@@ -38,6 +38,11 @@ from pathlib import Path
 # Słownik terminów inżynierskich IT
 TECH_TERMS = {
     "Agentic SysAdmin": "Agentic SysAdmin",
+    "agentowego syzadmina": "Agentic SysAdmin",
+    "agentowym syzadminie": "Agentic SysAdmin",
+    "agent sizadmin": "Agentic SysAdmin",
+    "antygrawitii": "Antigravity",
+    "klot-code": "Claude Code",
     "Zorin OS": "Zorin OS",
     "Antigravity": "Antigravity",
     "punkt montowania": "mount point",
@@ -54,6 +59,34 @@ TECH_TERMS = {
 
 # Wzorcowe tłumaczenia zdań dla standaryzacji
 PHRASE_DICTIONARY = {
+    # EP002 Pełnometrażowy (Wzorzec ElevenLabs dla scen 1-13 pod bezpośrednie porównanie 1:1)
+    "Cześć, witam wszystkich, niektórych z was ponownie, niektórych po raz pierwszy.":
+        "Hello, and a warm welcome to you all. It is great to see some of you returning, and a pleasure to greet those joining me for the first time.",
+    "Dziękuję za wszystkich komentarzy pod poprzednim filmem, na wszystkie odpowiedziałem i odpowiem na kolejne.":
+        "I want to express my gratitude for all the comments on my previous video. I have replied to every one of them, and I will continue to reply to more.",
+    "Chciałem się odnieść w tym filmie do niektórych z nich, a tak naprawdę pomysł na ten film już miałem.":
+        "I considered addressing some of those points here, but in truth, I had already planned the concept for this video well in advance.",
+    "I tak się składa, że rzeczywiście na niektóre z tych komentarzy jest on odpowiedział.":
+        "And as it turns out, this really does serve as a direct answer to quite a few of those comments we've been receiving lately.",
+    "Komendy masz man, pewnie że mam, a generalnież ma, nie wiem czy chce pędzać czas, aby przeglądać kilometry manuali, byłem tam i wracamy do Windowsa.":
+        "Do you happen to have access to the man commands? Well, sure I do, of course, and the agent has them available as well. But honestly, I'm not entirely sure if I really want to spend all the time digging through miles and miles of those dense technical manuals. I have been in that exact position myself, and I ended up going back to Windows.",
+    "Pytacie, jak ustawiłem ten pulpit, miło hędział wam pokażę, narziałem organizmie, wrócimy do ustawień.":
+        "Are you curious about how I managed to set up this specific desktop? I would be more than happy to demonstrate that for you on a live system.",
+    "Do myślnych i zrobimy to jeszcze raz wspólnie, tak, abyście mogli to powtórzyć sami.":
+        "We will revert to the default settings and walk through it together so you can repeat the process yourselves.",
+    "Mówicie, że Zorin jest słabo konfigurowalny, może niektóre konfiguracje są gdzieś za szyte, jednak z agentem udaje mi się zrobić to, co potrzebuje.":
+        "You claim that Zorin is not particularly configurable? Hmm, perhaps. Perhaps there are some configurations hidden away somewhere, but with the agent, I am able to accomplish what I need to do.",
+    "W końcu to jest linuk z podspodem i fajnie to działa.":
+        "After all, it is Linux running underneath, and it works perfectly.",
+    "Siedajże zdarzamy tutaj dwie epoki, jedna, do której jesteśmy przyzwyczajeni od lat.":
+        "It seems to me that we are clashing two different eras here. It is a system that we have been accustomed to working with for many years now.",
+    "Jesteśmy zadowoleni z tego, że potrafimy operować na linuk się znamy konfigurację.":
+        "We are certainly very pleased that we are able to operate our systems on Linux. We are already quite familiar with the underlying configuration.",
+    "Natomiast nadchodzi mi się do epokalinuksa, gdzie nie musimy znać bebechów linuksa, aby dobrze go skonfigurować, wystarczy wykorzystanie agenta.":
+        "However, I believe we are approaching a new era for Linux, one where we will no longer need to understand the complex inner workings of the system to configure it effectively. Instead, simply utilizing an automated agent will be more than sufficient.",
+    "I dzisiaj sobie porozmawiamy właśnie o takim agentowym syzadminie, który każdy z nas może sobie zostawić antygrawitii albo w klot-code lub kodek się, jeżeli macie dostęp do takiego.":
+        "And today, we are going to be discussing a truly highly capable and agentic system administrator that every single one of us can easily set up within Antigravity, or perhaps in Claude Code, or even Codex if you have access to that.",
+
     # EP002 Short (Wzorzec i warianty Whisper z bezpośredniej analizy wideo)
     "Przestań traktować AI jak zabawkę do pogaduszek. Oto Agentic SysAdmin.":
         "Stop treating AI like a chatbot toy. Meet Agentic SysAdmin.",
@@ -288,6 +321,12 @@ def transcribe_with_whisper(audio_path: Path) -> list[dict]:
     
     # Próba 1: faster-whisper z CUDA
     try:
+        try:
+            import ctypes
+            ctypes.CDLL("/usr/local/lib/ollama/cuda_v12/libcublas.so.12")
+            ctypes.CDLL("/usr/local/lib/ollama/cuda_v12/libcublasLt.so.12")
+        except Exception:
+            pass
         from faster_whisper import WhisperModel
         model = WhisperModel("base", device="cuda", compute_type="float16")
         segments, _ = model.transcribe(str(audio_path), beam_size=5, language="pl")
@@ -327,9 +366,17 @@ def transcribe_with_whisper(audio_path: Path) -> list[dict]:
     if breeze_py.exists():
         try:
             script = f"""
-import json
+import json, ctypes
+try:
+    ctypes.CDLL("/usr/local/lib/ollama/cuda_v12/libcublas.so.12")
+    ctypes.CDLL("/usr/local/lib/ollama/cuda_v12/libcublasLt.so.12")
+except Exception:
+    pass
 from faster_whisper import WhisperModel
-model = WhisperModel('base', device='cpu', compute_type='int8')
+try:
+    model = WhisperModel('base', device='cuda', compute_type='float16')
+except Exception:
+    model = WhisperModel('base', device='cpu', compute_type='int8')
 segments, _ = model.transcribe('{audio_path}', beam_size=5, language='pl')
 res = [{{'id': s.id + 1, 'start': round(s.start, 2), 'end': round(s.end, 2), 'text_pl': s.text.strip()}} for s in segments]
 print(json.dumps(res))
@@ -338,7 +385,7 @@ print(json.dumps(res))
             lines = [ln.strip() for ln in out.strip().splitlines() if ln.strip().startswith("[")]
             if lines:
                 scenes = json.loads(lines[-1])
-                log_ok(f"Whisper (.venv/CPU) wygenerował {len(scenes)} segmentów.")
+                log_ok(f"Whisper (.venv) wygenerował {len(scenes)} segmentów.")
                 return scenes
         except Exception as e_venv:
             log_warn(f"Whisper (.venv) błąd ({e_venv}), próba przez uv...")
@@ -386,6 +433,117 @@ def translate_segment(text_pl: str) -> str:
     return translated
 
 
+def translate_scenes_batch(scenes: list[dict]) -> None:
+    """
+    Tłumaczy listę scen z polskiego na angielski.
+    1. Sprawdza słownik wzorcowy PHRASE_DICTIONARY (dokładne i częściowe dopasowania).
+    2. Dla brakujących segmentów uruchamia lokalny neuronowy model tłumaczeniowy
+       Helsinki-NLP/opus-mt-pl-en (CPU) przez dedykowane środowisko .venv lub transformers.
+    3. Stosuje słownik pojęć inżynierskich TECH_TERMS.
+    """
+    untranslated_indices = []
+
+    for idx, sc in enumerate(scenes):
+        text_pl = sc.get("text_pl", "").strip(' „"”')
+        matched_en = None
+        if text_pl in PHRASE_DICTIONARY:
+            matched_en = PHRASE_DICTIONARY[text_pl]
+        else:
+            for pl_key, en_val in PHRASE_DICTIONARY.items():
+                if pl_key.lower() == text_pl.lower():
+                    matched_en = en_val
+                    break
+
+        if matched_en:
+            sc["text_en"] = matched_en
+        else:
+            untranslated_indices.append(idx)
+
+    if untranslated_indices:
+        log_info(f"Lokalny model tłumaczeniowy MarianMT (CPU): Tłumaczenie {len(untranslated_indices)} segmentów...")
+        pl_texts_to_translate = [scenes[i]["text_pl"] for i in untranslated_indices]
+        translated_en = []
+
+        # Próba 1: Bezpośredni import transformers w bieżącym procesie
+        try:
+            from transformers import pipeline
+            pipe = pipeline('translation', model='Helsinki-NLP/opus-mt-pl-en', device='cpu')
+            results = pipe(pl_texts_to_translate, batch_size=16)
+            translated_en = [r['translation_text'] for r in results]
+        except Exception:
+            pass
+
+        # Próba 2: Uruchomienie przez dedykowane środowisko .venv z transformers
+        if not translated_en:
+            venv, _, _ = find_breeze_runner()
+            venv_py = venv if venv else Path("/home/jarek/projects/ghostshift/exploration/experiments/breeze2-tts-local/.venv/bin/python3")
+            if venv_py and venv_py.exists():
+                try:
+                    script = """
+import sys, json
+from transformers import pipeline
+pipe = pipeline('translation', model='Helsinki-NLP/opus-mt-pl-en', device='cpu')
+inputs = json.loads(sys.stdin.read())
+results = pipe(inputs, batch_size=16)
+outputs = [r['translation_text'] for r in results]
+print(json.dumps(outputs, ensure_ascii=False))
+"""
+                    res = subprocess.run(
+                        [str(venv_py), "-c", script],
+                        input=json.dumps(pl_texts_to_translate, ensure_ascii=False),
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=True
+                    )
+                    lines = [ln.strip() for ln in res.stdout.strip().splitlines() if ln.strip().startswith("[")]
+                    if lines:
+                        translated_en = json.loads(lines[-1])
+                except Exception as e_venv:
+                    log_warn(f"Tłumaczenie przez .venv nie powiodło się ({e_venv}), próba przez uv...")
+
+        # Próba 3: Wywołanie przez uv
+        if not translated_en:
+            try:
+                script = """
+import sys, json
+from transformers import pipeline
+pipe = pipeline('translation', model='Helsinki-NLP/opus-mt-pl-en', device='cpu')
+inputs = json.loads(sys.stdin.read())
+results = pipe(inputs, batch_size=16)
+outputs = [r['translation_text'] for r in results]
+print(json.dumps(outputs, ensure_ascii=False))
+"""
+                res = subprocess.run(
+                    ["uv", "run", "--with", "transformers", "--with", "sentencepiece", "--with", "sacremoses", "python3", "-c", script],
+                    input=json.dumps(pl_texts_to_translate, ensure_ascii=False),
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=True
+                )
+                lines = [ln.strip() for ln in res.stdout.strip().splitlines() if ln.strip().startswith("[")]
+                if lines:
+                    translated_en = json.loads(lines[-1])
+            except Exception as e_uv:
+                log_err(f"Błąd tłumaczenia wsadowego: {e_uv}")
+
+        if translated_en and len(translated_en) == len(untranslated_indices):
+            for idx_in_untrans, orig_idx in enumerate(untranslated_indices):
+                scenes[orig_idx]["text_en"] = translated_en[idx_in_untrans]
+        else:
+            log_warn("Fallback: Nie udało się przetłumaczyć neuronowo wszystkich zdań.")
+            for orig_idx in untranslated_indices:
+                scenes[orig_idx]["text_en"] = scenes[orig_idx]["text_pl"]
+
+    # Post-processing ze słownikiem terminów inżynierskich IT
+    for sc in scenes:
+        txt = sc.get("text_en", "")
+        for pl_term, en_term in TECH_TERMS.items():
+            txt = re.sub(re.escape(pl_term), en_term, txt, flags=re.IGNORECASE)
+        sc["text_en"] = txt
+
+
 def synthesize_edge_tts(text: str, out_wav: Path, voice: str = "en-US-ChristopherNeural") -> None:
     temp_mp3 = out_wav.with_suffix(".mp3")
     edge_bin = None
@@ -431,6 +589,8 @@ def synthesize_edge_tts(text: str, out_wav: Path, voice: str = "en-US-Christophe
 
 def find_breeze_runner() -> tuple[Path | None, Path | None, Path | None]:
     candidates = [
+        Path("/home/jarek/projects/ghostshift/exploration/experiments/breeze2-tts-local"),
+        Path("/home/jarek/workspaces/breeze2-tts-local"),
         Path.home() / "projects" / "ghostshift" / "exploration" / "experiments" / "breeze2-tts-local",
         Path.home() / "workspaces" / "breeze2-tts-local",
     ]
@@ -672,9 +832,8 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
         return False
 
     # 3. Tłumaczenie inżynierskie
-    log_info("Tłumaczenie segmentów na język angielski z zachowaniem słownika IT...")
-    for sc in scenes:
-        sc["text_en"] = translate_segment(sc["text_pl"])
+    log_info("Tłumaczenie segmentów na język angielski (wzorzec + lokalny MarianMT + słownik IT)...")
+    translate_scenes_batch(scenes)
 
     transcript_json = output_dir / f"{short_id}_Dubbing_Transcript_EN.json"
     with open(transcript_json, "w", encoding="utf-8") as f:
@@ -701,7 +860,16 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
     active_engine_name = "unknown"
     for sc in scenes:
         part_wav = dub_parts_dir / f"scene_{sc['id']:03d}.wav"
+        txt_marker = part_wav.with_suffix(".txt")
+        # Wznawianie: Jeśli segment WAV już istnieje i odpowiada aktualnemu tekstowi angielskiemu
+        if part_wav.exists() and part_wav.stat().st_size > 1000 and txt_marker.exists() and txt_marker.read_text(encoding="utf-8").strip() == sc["text_en"].strip():
+            segment_wavs.append(part_wav)
+            active_engine_name = "Breeze-TTS-2 (Zero-Shot Clone)"
+            continue
+
         active_engine_name = synthesize_segment(sc["text_en"], part_wav, engine, ref_audio, ref_transcript, instruction)
+        if part_wav.exists() and part_wav.stat().st_size > 1000:
+            txt_marker.write_text(sc["text_en"].strip() + "\n", encoding="utf-8")
         segment_wavs.append(part_wav)
 
     # 5. Time-sync i mastering EBU R128
