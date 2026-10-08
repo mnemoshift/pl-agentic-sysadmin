@@ -26,10 +26,9 @@ Przekroczenie budżetu 16.0 GB VRAM powoduje natychmiastowe zrzucanie tensorów 
 
 Repozytorium jest w 100% generyczne — żadne prywatne surówki ani nagrania lektorskie nie trafiają do Gita. Wszystkie materiały źródłowe umieszczasz wyłącznie w katalogu `work/` (objętym `.gitignore`).
 
-W potoku dubbingu przyjmujemy jednolity, inżynierski standard wejściowy dla każdego projektu (`work/<ID>/input/`):
-1. **Wideo (`*.mp4`):** Obraz ze zmontowanym materiałem.
-2. **Czysty Lektor (`*_VoiceOver_CLEAN.wav`):** Odrębna, bezstratna ścieżka mowy (jeśli nie jest dostępna, skrypt automatycznie ekstrahuje strumień audio z pliku wideo).
-3. **Opcjonalny Skrypt / Napisy (`short_script.md` lub `*.srt`):** Gotowy podział na kwestie (dla formatu Shorts). Jeśli skrypt nie zostanie dostarczony (np. dla długiego filmu), potok automatycznie uruchamia lokalny model Whisper do transkrypcji i detekcji znaczników czasowych.
+W potoku dubbingu przyjmujemy jednolity, suwerenny standard wejściowy dla każdego projektu (`work/<ID>/input/`):
+* **Czysty Plik Wideo (`*.mp4`):** Każdy podkatalog `input/` zawiera **WYŁĄCZNIE plik wideo**.
+* **Zero zależności od zewnętrznych napisów:** Stan początkowy nie bazuje na obecności plików `.srt` ani skryptów `.md`. Jeżeli napisy są potrzebne, agent i potok generują je od zera w locie (Whisper ekstrahuje mowę, tworzy segmenty i zapisuje napisy `_PL.srt` oraz `_EN.srt` w `output/`).
 
 Struktura katalogu `work/` przygotowana pod nagranie screencasta:
 
@@ -39,21 +38,16 @@ work/
 │   └── EP003_VoiceOver_CLEAN.wav                         # Nagranie źródłowe do wycięcia próbki lektora (00:12–00:20)
 ├── EP002_Short/
 │   └── input/
-│       ├── EP002_Short_Agentic_SysAdmin_Karaoke_FIXED.mp4 # Wideo shorta (30s)
-│       ├── EP002_Short_VoiceOver_CLEAN.wav                # Czysta polska ścieżka lektorska
-│       └── short_script.md                                # Scenariusz z podziałem na sceny i kwestie
+│       └── EP002_Short_Agentic_SysAdmin_Karaoke_FIXED.mp4 # Wyłącznie wideo shorta (30s)
 ├── EP001_Short/
 │   └── input/
-│       ├── EP001_Short_WSL_vs_Zorin_FINAL.mp4             # Wideo shorta (102s)
-│       ├── EP001_Short_VoiceOver_CLEAN.wav                # Czysta polska ścieżka lektorska
-│       └── EP001_Short_WSL_vs_Zorin.srt                   # Napisy z oryginalnymi znacznikami czasu
+│       └── EP001_Short_WSL_vs_Zorin_FINAL.mp4             # Wyłącznie wideo shorta (34s, "Po 10 latach...")
 └── EP002/
-    └── input/
-        ├── EP002_Zorin_Desktop_FINAL.mp4                  # Pełny film długi (12:08, 1440p60)
-        ├── EP002_VoiceOver_CLEAN.wav                      # Czysta polska ścieżka lektorska (brak skryptu -> Whisper auto)
-        └── reference/
-            ├── EP002_Audio_EN_ElevenLabs_14LUFS.mp3       # Ścieżka z ElevenLabs (do porównania A/B i rachunku)
-            └── EP002_FINAL_EN_ElevenLabs.mp4              # Zmontowane wideo z ElevenLabs do podglądu A/B
+    ├── input/
+    │   └── EP002_Zorin_Desktop_FINAL.mp4                  # Wyłącznie wideo pełnego filmu (12:08, 1440p60)
+    └── reference/
+        ├── EP002_Audio_EN_ElevenLabs_14LUFS.mp3       # Ścieżka z ElevenLabs (do porównania A/B i rachunku)
+        └── EP002_FINAL_EN_ElevenLabs.mp4              # Zmontowane wideo z ElevenLabs do podglądu A/B
 ```
 
 Przed rozpoczęciem sesji folder `work/voice_sample/` oraz foldery wyjściowe `output/` nie istnieją — Agent wygeneruje je od zera na Twoich oczach.
@@ -80,13 +74,16 @@ Wklejasz w czacie polecenie czystej intencji (bez podawania flag technicznych an
 > *Przetłumacz i zdubbinguj shorta w work/EP002_Short.*
 
 * **Działanie Agenta:**
-  - Automatycznie wykrywa wideo w `work/EP002_Short/input/` oraz scenariusz `short_script.md`.
+  - Automatycznie wykrywa wideo w `work/EP002_Short/input/` (brak predefiniowanych napisów czy skryptów).
+  - Ekstrahuje strumień mowy i lokalnie uruchamia Whisper, który w locie dzieli nagranie na segmenty ze znacznikami czasu.
   - Tłumaczy kwestie z zachowaniem ścisłego słownika IT (*mount point*, *VRAM footprint*, *PCIe bus*, *macOS-inspired workspace*).
-  - Przeprowadza syntezę na GPU z wykorzystaniem wyciętej próbki głosu.
+  - Generuje komplet napisów SRT (`EP002_Short_PL.srt` oraz `EP002_Short_EN.srt`).
+  - Przeprowadza syntezę na GPU (Breeze-TTS-2) z wykorzystaniem wyciętej próbki głosu.
   - Dopasowuje tempo do cięć wideo, wstawia pauzy i masteruje ścieżkę do standardu emisyjnego **-14 LUFS** (EBU R128).
-  - Zapisuje rezultaty w folderze wyjściowym `work/EP002_Short/output/` i dostarcza **dwa pliki produkcyjne**:
+  - Zapisuje rezultaty w folderze wyjściowym `work/EP002_Short/output/` i dostarcza komplet plików produkcyjnych:
     1. Czysty plik audio lektora EN: `EP002_Short_VoiceOver_EN_CLEAN.wav` (pod YouTube Multi-Language Audio).
     2. Gotowy plik wideo z dubbingiem: `EP002_Short_FINAL_EN_DUBBED.mp4` (obraz + audio EN).
+    3. Napisy: `EP002_Short_EN.srt` oraz `EP002_Short_PL.srt`.
   - Zwraca w czacie zwięzłą tabelę porównawczą A/B (PL vs EN).
 
 ### Krok 3: Odsłuch i inspekcja parametrów
@@ -112,29 +109,30 @@ Albo w scenariuszu, gdybyśmy startowali od zera bez wcześniejszego wycinania p
 
 * **Działanie Agenta:**
   1. Spina cały workflow bez konieczności interwencji użytkownika.
-  2. Bada wejście: wykrywa `EP001_Short_WSL_vs_Zorin_FINAL.mp4` oraz skrypt / napisy.
-  3. Parsuje 6 dynamicznych segmentów wypowiedzi o porzuceniu WSL2, drenażu tokenów w PowerShellu i natywnym Linuksie.
-  4. Dokonuje inżynierskiego przekładu PL $\rightarrow$ EN.
+  2. Bada wejście: wykrywa wyłącznie plik wideo `EP001_Short_WSL_vs_Zorin_FINAL.mp4` (bez zewnętrznych plików .srt czy .wav).
+  3. Ekstrahuje audio i transkrypuje w Whisper 6 dynamicznych segmentów o porzuceniu WSL2, drenażu tokenów w PowerShellu i natywnym Linuksie.
+  4. Dokonuje inżynierskiego przekładu PL $\rightarrow$ EN i generuje napisy `EP001_Short_PL.srt` oraz `EP001_Short_EN.srt`.
   5. Przeprowadza syntezę na GPU (model Breeze-TTS-2 w VRAM), dopasowuje czasy segmentów pod oryginalne cięcia.
   6. Przeprowadza broadcastowy mastering EBU R128 (-14.0 LUFS, True Peak $\le$ -1.0 dBFS).
-  7. Zapisuje oba kluczowe pliki produkcyjne w `work/EP001_Short/output/`:
+  7. Zapisuje komplet plików produkcyjnych w `work/EP001_Short/output/`:
      - `EP001_Short_VoiceOver_EN_CLEAN.wav`
      - `EP001_Short_FINAL_EN_DUBBED.mp4`
+     - `EP001_Short_EN.srt` oraz `EP001_Short_PL.srt`
   8. Wyświetla podsumowanie z tabelą scen i natychmiast uruchamia odtworzenie rezultatu.
 
 ---
 
 ## 5. Skalowanie na Długi Format (EP002 i Porównanie 1:1 z ElevenLabs)
 
-Ten sam suwerenny potok nie jest ograniczony wyłącznie do formatu Shorts. W projekcie `work/EP002` znajduje się pełnometrażowy odcinek (12:08, 1440p60) oraz nagranie referencyjne przygotowane w ElevenLabs (`work/EP002/input/reference/EP002_FINAL_EN_ElevenLabs.mp4`), które pochłonęło **115 000 płatnych kredytów**.
+Ten sam suwerenny potok nie jest ograniczony wyłącznie do formatu Shorts. W projekcie `work/EP002` znajduje się pełnometrażowy odcinek (12:08, 1440p60) w `work/EP002/input/EP002_Zorin_Desktop_FINAL.mp4` oraz nagranie referencyjne przygotowane w ElevenLabs (`work/EP002/reference/EP002_FINAL_EN_ElevenLabs.mp4`), które pochłonęło **115 000 płatnych kredytów**.
 
 Wpisujesz w czacie Antigravity:
 > *Zdubbinguj materiał w work/EP002 przy użyciu przygotowanej próbki głosu.*
 
 * **Działanie Agenta:**
-  1. Wykrywa `EP002_Zorin_Desktop_FINAL.mp4` oraz plik lektora `EP002_VoiceOver_CLEAN.wav`.
-  2. Automatycznie transkrypuje i synchronizuje segmenty z wykorzystaniem lokalnego modelu Whisper.
-  3. Dokonuje inżynierskiego przekładu dialogów.
+  1. Wykrywa czyste wideo `EP002_Zorin_Desktop_FINAL.mp4` w `input/`.
+  2. Ekstrahuje strumień mowy i automatycznie transkrypuje oraz synchronizuje segmenty z wykorzystaniem lokalnego modelu Whisper.
+  3. Dokonuje inżynierskiego przekładu dialogów oraz generuje napisy SRT.
   4. Generuje zsynchronizowane audio i gotowy plik wideo w `work/EP002/output/`.
   5. Umożliwia natychmiastowe zderzenie jakościowe A/B: odsłuch lokalnego modelu na karcie RTX 4060 Ti (koszt 0 zł, zero wycieków do chmury) obok chmurowego dubbingu ElevenLabs.
 
