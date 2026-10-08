@@ -398,13 +398,14 @@ def synthesize_breeze(text: str, out_wav: Path, ref_audio: Path, ref_transcript:
         "--ref-audio", str(ref_audio.resolve()),
         "--ref-text", ref_transcript,
         "--output", str(out_wav.resolve()),
-        "--cfg-scale", "4.0"
     ]
     if instruction:
         cmd.extend(["--instruction", instruction])
         
     env = dict(os.environ)
     env["PYTHONPATH"] = str(infer.parent)
+    local_bin = str(Path.home() / ".local" / "bin")
+    env["PATH"] = f"{local_bin}:{env.get('PATH', '')}"
 
     try:
         log_info(f"Breeze-TTS-2: Synteza '{text[:45]}...' (ref: {ref_audio.name})")
