@@ -38,5 +38,7 @@ scripts/local_*
 /work/
 work/
 /workspaces/
-workspaces/
-
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
