@@ -103,7 +103,7 @@ Wpisujesz w czacie:
 
 Gdy wiesz już jak działa system, nie musisz rozbijać pracy na pojedyncze etapy. Prawdziwa siła podejścia **Agentic SysAdmin** polega na zleceniu pełnego łańcucha operacyjnego za pomocą **dokładnie jednego promptu czystej intencji**.
 
-Dla drugiego shorta z zestawu (`work/EP001_Short`, 102 sekundy) zlecamy wykonanie całego potoku za jednym zamachem:
+Dla drugiego shorta z zestawu (`work/EP001_Short`, 34-sekundowa wersja punchy) zlecamy wykonanie całego potoku za jednym zamachem:
 
 > *Zdubbinguj materiał w work/EP001_Short przy użyciu przygotowanej próbki głosu i odtwórz gotowe wideo.*
 
@@ -111,11 +111,11 @@ Albo w scenariuszu, gdybyśmy startowali od zera bez wcześniejszego wycinania p
 > *Wytnij 8-sekundową próbkę głosu z work/voice_source od 00:12 do 00:20 i zdubbinguj materiał w work/EP001_Short.*
 
 * **Działanie Agenta:**
-  1. Spina cały workflow bez konieczności interwencji użytkownika:
-  2. Bada wejście: wykrywa `EP001_Short_WSL_vs_Zorin_FINAL.mp4` oraz plik `.srt`.
-  3. Parsuje 19 segmentów wypowiedzi o wirtualizacji, PowerShellu i tokenach.
+  1. Spina cały workflow bez konieczności interwencji użytkownika.
+  2. Bada wejście: wykrywa `EP001_Short_WSL_vs_Zorin_FINAL.mp4` oraz skrypt / napisy.
+  3. Parsuje 6 dynamicznych segmentów wypowiedzi o porzuceniu WSL2, drenażu tokenów w PowerShellu i natywnym Linuksie.
   4. Dokonuje inżynierskiego przekładu PL $\rightarrow$ EN.
-  5. Przeprowadza syntezę na GPU, dopasowuje czasy segmentów pod oryginalne cięcia.
+  5. Przeprowadza syntezę na GPU (model Breeze-TTS-2 w VRAM), dopasowuje czasy segmentów pod oryginalne cięcia.
   6. Przeprowadza broadcastowy mastering EBU R128 (-14.0 LUFS, True Peak $\le$ -1.0 dBFS).
   7. Zapisuje oba kluczowe pliki produkcyjne w `work/EP001_Short/output/`:
      - `EP001_Short_VoiceOver_EN_CLEAN.wav`
@@ -124,7 +124,23 @@ Albo w scenariuszu, gdybyśmy startowali od zera bez wcześniejszego wycinania p
 
 ---
 
-## 5. Ścieżka Manualna / Oldschool CLI (Dla zdeterminowanych)
+## 5. Skalowanie na Długi Format (EP002 i Porównanie 1:1 z ElevenLabs)
+
+Ten sam suwerenny potok nie jest ograniczony wyłącznie do formatu Shorts. W projekcie `work/EP002` znajduje się pełnometrażowy odcinek (12:08, 1440p60) oraz nagranie referencyjne przygotowane w ElevenLabs (`work/EP002/input/reference/EP002_FINAL_EN_ElevenLabs.mp4`), które pochłonęło **115 000 płatnych kredytów**.
+
+Wpisujesz w czacie Antigravity:
+> *Zdubbinguj materiał w work/EP002 przy użyciu przygotowanej próbki głosu.*
+
+* **Działanie Agenta:**
+  1. Wykrywa `EP002_Zorin_Desktop_FINAL.mp4` oraz plik lektora `EP002_VoiceOver_CLEAN.wav`.
+  2. Automatycznie transkrypuje i synchronizuje segmenty z wykorzystaniem lokalnego modelu Whisper.
+  3. Dokonuje inżynierskiego przekładu dialogów.
+  4. Generuje zsynchronizowane audio i gotowy plik wideo w `work/EP002/output/`.
+  5. Umożliwia natychmiastowe zderzenie jakościowe A/B: odsłuch lokalnego modelu na karcie RTX 4060 Ti (koszt 0 zł, zero wycieków do chmury) obok chmurowego dubbingu ElevenLabs.
+
+---
+
+## 6. Ścieżka Manualna / Oldschool CLI (Dla zdeterminowanych)
 
 Wyłącznie w celach poglądowych dla inżynierów, którzy chcą uruchomić poszczególne polecenia ręcznie z poziomu terminala bash:
 
@@ -142,16 +158,19 @@ python3 scripts/media/dub_short.py -w work/EP002_Short
 # 3. Ręczny dubbing drugiego shorta (EP001):
 python3 scripts/media/dub_short.py -w work/EP001_Short
 
-# 4. Lub przetwarzanie całego zestawu wsadowo jednym poleceniem:
-python3 scripts/media/dub_short.py --batch work/EP002_Short work/EP001_Short
+# 4. Ręczny dubbing długiego odcinka (EP002):
+python3 scripts/media/dub_short.py -w work/EP002
 
-# 5. Czysty reset katalogu roboczego przed kolejnym nagraniem:
+# 5. Lub przetwarzanie całego zestawu wsadowo jednym poleceniem:
+python3 scripts/media/dub_short.py --batch work/EP002_Short work/EP001_Short work/EP002
+
+# 6. Czysty reset katalogu roboczego przed kolejnym nagraniem:
 make media-dub-clean
 ```
 
 ---
 
-## 6. Wygenerowane Pliki i Standard Emisyjny
+## 7. Wygenerowane Pliki i Standard Emisyjny
 
 W katalogu `work/<ID>/output/` (zaraz obok katalogu `input/`) powstaje kompletny pakiet produkcyjny. Z każdego projektu otrzymujesz **dwa kluczowe pliki do dystrybucji**:
 

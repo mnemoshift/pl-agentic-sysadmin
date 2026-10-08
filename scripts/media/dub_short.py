@@ -66,7 +66,33 @@ PHRASE_DICTIONARY = {
     "Wraz z Agentic SysAdmin nadeszła nowa era Linuksa. Całą sesję na żywo i otwarte repozytorium znajdziesz w filmie poniżej!":
         "With Agentic SysAdmin, a new era of Linux has arrived. Watch the full live session and get the open repo in the video below!",
 
-    # EP001 Short
+    # EP001 Short (Wersja 34s FINAL)
+    "Po 10 latach rzuciłem WSL2, powód: autonomiczni agenci AI.":
+        "After 10 years, I ditched WSL2. The reason: autonomous AI agents.",
+    "Po dziesięciu latach rzuciłem WSL-2, powód autonomicznie agencje AI.":
+        "After 10 years, I ditched WSL2. The reason: autonomous AI agents.",
+    "Na Windowsie agent w Antigravity dusił się w PowerShellu.":
+        "On Windows, the agent in Antigravity was suffocating inside PowerShell.",
+    "Nawin doł się, agent Van DeGravityi dłuśił się w powerszelu.":
+        "On Windows, the agent in Antigravity was suffocating inside PowerShell.",
+    "Drenaż tokenów, brak natywnych narzędzi Linuksa i koszmarny narzut.":
+        "Token drain, zero native Linux tools, and crippling overhead.",
+    "Dranasz Tokenów, brak natywny narzędzi Linuxa i koszmarny narzut.":
+        "Token drain, zero native Linux tools, and crippling overhead.",
+    "W samym WSL-u z kolei zablokowany Computer Use, brak dostępu do przeglądarki i ciągła walka z systemem plików.":
+        "Inside WSL, Computer Use was blocked, no browser access, and constant filesystem battles.",
+    "W samym WSL-u z kolei zablokowany, komputerius, brak dostępu do przywondarki i ciągła walka system plików.":
+        "Inside WSL, Computer Use was blocked, no browser access, and constant filesystem battles.",
+    "Mac ze zintegrowanym RAM-em był absurdalnie drogi, kupiłem więc dysk NVMe za tysiaka i postawiłem czystego Zorin OS.":
+        "A Mac with unified memory was absurdly expensive, so I bought a one-terabyte NVMe drive and installed bare-metal Zorin OS.",
+    "Mag, ze zintegrowanym ramem, był absurdalnie drogi, upiłem więc dysk, NVM dla tysiaka i postawiłem czystego Zorino S.":
+        "A Mac with unified memory was absurdly expensive, so I bought a one-terabyte NVMe drive and installed bare-metal Zorin OS.",
+    "Efekt: zero tarcia, natywny Linux i pełna swoboda dla agentów. Całą sesję i architekturę zobaczysz w filmie poniżej.":
+        "The result: zero friction, native Linux, and complete freedom for AI agents. Watch the full session and architecture in the video below.",
+    "Efekt, zerotarcia natywny Linux i pełna swoboda dla agentów. Cało sesję i architekturę zobaczysz w filmie poniżej.":
+        "The result: zero friction, native Linux, and complete freedom for AI agents. Watch the full session and architecture in the video below.",
+
+    # EP001 Short (Wersja archiwalna 102s)
     "Natomiast zgrzyt nastąpił dla mnie przy agentach AI.":
         "However, the real friction started for me with AI agents.",
     "Tutaj Antigravity, bo tego narzędzia używam, miało problemy: albo zostawaliśmy w Windows,":
@@ -85,6 +111,22 @@ PHRASE_DICTIONARY = {
         "The choice was clear: stay handcuffed to WSL and Windows, buy a Mac, or migrate to bare-metal Linux.",
     "WSL – jakoś już wirtualizacja mi się przejadła i nie chciałem dłużej z nią walczyć,":
         "With WSL, virtualization overhead wore me out and I refused to fight it any longer,",
+
+    # EP002 Długi Odcinek (Fragment porównawczy A/B)
+    "Komendy masz w man, pewnie że mam, a generalnie też ma.":
+        "You say commands are in man pages. Sure they are, but who wants to dig through miles of manuals?",
+    "Nie wiem czy chcę spędzać czas, aby przeglądać kilometry manuali.":
+        "I don't know if I want to waste hours browsing kilometers of manuals.",
+    "Pytacie, jak ustawiłem ten pulpit, z miłą chęcią wam pokażę, na żywym organizmie, wrócimy do ustawień domyślnych.":
+        "You ask how I configured this desktop. I'll gladly show you live: we will revert to defaults and rebuild it.",
+    "I zrobimy to jeszcze raz wspólnie, tak, abyście mogli to powtórzyć sami.":
+        "And we'll do it together so you can replicate it seamlessly on your own workstation.",
+    "Mówicie, że Zorin jest słabo konfigurowalny, może niektóre konfiguracje są gdzieś zaszyte.":
+        "People say Zorin isn't configurable, but with an AI agent, you can configure anything without friction.",
+    "Jednak z agentem udaje mi się zrobić to, co potrzebuję.":
+        "Yet with an agent, I get exactly what I need done in minutes.",
+    "W końcu to jest Linux pod spodem i fajnie to działa.":
+        "After all, it is bare-metal Linux underneath and it works amazingly well.",
 }
 
 
@@ -206,11 +248,13 @@ def parse_short_script_md(script_path: Path) -> list[dict]:
 
 def transcribe_with_whisper(audio_path: Path) -> list[dict]:
     log_info("Brak pliku scenariusza. Uruchamianie lokalnego modelu Whisper...")
+    scenes = []
+    
+    # Próba 1: faster-whisper z CUDA
     try:
         from faster_whisper import WhisperModel
         model = WhisperModel("base", device="cuda", compute_type="float16")
         segments, _ = model.transcribe(str(audio_path), beam_size=5, language="pl")
-        scenes = []
         for seg in segments:
             scenes.append({
                 "id": seg.id + 1,
@@ -218,17 +262,57 @@ def transcribe_with_whisper(audio_path: Path) -> list[dict]:
                 "end": round(seg.end, 2),
                 "text_pl": seg.text.strip()
             })
-        log_ok(f"Whisper wygenerował {len(scenes)} segmentów.")
-        return scenes
-    except Exception as e:
-        log_warn(f"Błąd uruchomienia Whisper w locie: {e}. Używam domyślnych segmentów awaryjnych.")
-        duration = get_audio_duration(audio_path)
-        return [{
-            "id": 1,
-            "start": 0.0,
-            "end": round(duration, 2),
-            "text_pl": "Nagranie lektorskie do zsynchronizowania."
-        }]
+        if scenes:
+            log_ok(f"Whisper (CUDA) wygenerował {len(scenes)} segmentów.")
+            return scenes
+    except Exception as e_cuda:
+        log_warn(f"Whisper (CUDA) niedostępny ({e_cuda}), próba na CPU...")
+
+    # Próba 2: faster-whisper na CPU
+    try:
+        from faster_whisper import WhisperModel
+        model = WhisperModel("base", device="cpu", compute_type="int8")
+        segments, _ = model.transcribe(str(audio_path), beam_size=5, language="pl")
+        for seg in segments:
+            scenes.append({
+                "id": seg.id + 1,
+                "start": round(seg.start, 2),
+                "end": round(seg.end, 2),
+                "text_pl": seg.text.strip()
+            })
+        if scenes:
+            log_ok(f"Whisper (CPU) wygenerował {len(scenes)} segmentów.")
+            return scenes
+    except Exception as e_cpu:
+        log_warn(f"Lokalny import faster-whisper nie powiódł się ({e_cpu}), próba przez uv...")
+
+    # Próba 3: Wywołanie przez uv ze stabilnym zestawem pakietów
+    try:
+        script = f"""
+import json
+from faster_whisper import WhisperModel
+model = WhisperModel('base', device='cpu', compute_type='int8')
+segments, _ = model.transcribe('{audio_path}', beam_size=5, language='pl')
+res = [{{'id': s.id + 1, 'start': round(s.start, 2), 'end': round(s.end, 2), 'text_pl': s.text.strip()}} for s in segments]
+print(json.dumps(res))
+"""
+        cmd = ["uv", "run", "--with", "faster-whisper", "--with", "av<14", "python3", "-c", script]
+        out = subprocess.check_output(cmd, text=True)
+        lines = [ln.strip() for ln in out.strip().splitlines() if ln.strip().startswith("[")]
+        if lines:
+            scenes = json.loads(lines[-1])
+            log_ok(f"Whisper (uv/CPU) wygenerował {len(scenes)} segmentów.")
+            return scenes
+    except Exception as e_uv:
+        log_warn(f"Błąd uruchomienia Whisper przez uv: {e_uv}. Używam domyślnych segmentów awaryjnych.")
+
+    duration = get_audio_duration(audio_path)
+    return [{
+        "id": 1,
+        "start": 0.0,
+        "end": round(duration, 2),
+        "text_pl": "Nagranie lektorskie do zsynchronizowania."
+    }]
 
 
 def translate_segment(text_pl: str) -> str:
@@ -305,24 +389,40 @@ def find_breeze_runner() -> tuple[Path | None, Path | None, Path | None]:
 def synthesize_breeze(text: str, out_wav: Path, ref_audio: Path, ref_transcript: str, instruction: str) -> bool:
     venv, infer, model = find_breeze_runner()
     if not (venv and infer and model):
+        log_warn("find_breeze_runner: Brak środowiska .venv, infer.py lub katalogu wag Breeze-TTS-2.")
         return False
         
     cmd = [
         str(venv), str(infer), str(model),
         "--text", text,
-        "--ref-audio", str(ref_audio),
+        "--ref-audio", str(ref_audio.resolve()),
         "--ref-text", ref_transcript,
-        "--output", str(out_wav),
+        "--output", str(out_wav.resolve()),
         "--cfg-scale", "4.0"
     ]
     if instruction:
         cmd.extend(["--instruction", instruction])
         
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(infer.parent)
+
     try:
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        log_info(f"Breeze-TTS-2: Synteza '{text[:45]}...' (ref: {ref_audio.name})")
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=str(infer.parent),
+            env=env,
+            text=True,
+            check=True
+        )
         return True
+    except subprocess.CalledProcessError as e:
+        log_err(f"Breeze-TTS-2 inference error (kod {e.returncode}):\n{e.stderr[-1000:] if e.stderr else e.stdout[-1000:]}")
+        return False
     except Exception as e:
-        log_warn(f"Breeze-TTS-2 inference error: {e}")
+        log_err(f"Breeze-TTS-2 execution error: {e}")
         return False
 
 
@@ -496,6 +596,15 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
             scenes = parse_srt(script_path)
         else:
             scenes = parse_short_script_md(script_path)
+
+        srt_duration = scenes[-1]["end"] if scenes else 0.0
+        if abs(srt_duration - total_duration) > 10.0:
+            log_warn(f"Wykryto rozbieżność czasu: scenariusz ma {srt_duration:.2f}s, a wideo ma {total_duration:.2f}s!")
+            if abs(srt_duration - total_duration) > 20.0:
+                log_warn("Plik scenariusza nie odpowiada czasowo wideo! Uruchamianie bezpośredniej transkrypcji audio za pomocą Whisper...")
+                whisper_scenes = transcribe_with_whisper(raw_audio)
+                if whisper_scenes:
+                    scenes = whisper_scenes
     else:
         log_info("Brak pliku scenariusza (.md/.srt) — uruchamianie automatycznej transkrypcji Whisper...")
         scenes = transcribe_with_whisper(raw_audio)
