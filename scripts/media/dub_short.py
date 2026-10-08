@@ -54,16 +54,26 @@ TECH_TERMS = {
 
 # Wzorcowe tłumaczenia zdań dla standaryzacji
 PHRASE_DICTIONARY = {
-    # EP002 Short
+    # EP002 Short (Wzorzec i warianty Whisper z bezpośredniej analizy wideo)
     "Przestań traktować AI jak zabawkę do pogaduszek. Oto Agentic SysAdmin.":
+        "Stop treating AI like a chatbot toy. Meet Agentic SysAdmin.",
+    "Przestań traktować AI jak zabawkę do pogeduszek o to Agent X admin.":
         "Stop treating AI like a chatbot toy. Meet Agentic SysAdmin.",
     "Zamiast marnować godziny na forach i dłubaniu w konfiguracji, dałem agentowi jedno proste zadanie:":
         "Instead of wasting hours on forums and tweaking configs, I gave the agent one simple goal:",
+    "Zamiast marnować godziny na forach i dłuba nią w konfiguracji, dałem agentowi jedno proste zadanie.":
+        "Instead of wasting hours on forums and tweaking configs, I gave the agent one simple goal:",
     "Przekształć domyślny pulpit Zorina w czyste środowisko w stylu macOS.":
+        "Transform default Zorin desktop into a clean, macOS-inspired workspace.",
+    "Przekształć domyślny pulpit z oryna w czyste środowisków z tylu MacOS.":
         "Transform default Zorin desktop into a clean, macOS-inspired workspace.",
     "Minuta roboty, audyt w tle i gotowy plan wdrożenia. Bez dotknięcia ani jednego pliku konfiguracyjnego.":
         "One minute of work, background audit, and a complete implementation plan. Without touching a single config file.",
+    "Minut haroboty, audyt w tle i gotowy plan wdrożenia, bez dotknięcia ani jednego pliku konfiguracyjnego.":
+        "One minute of work, background audit, and a complete implementation plan. Without touching a single config file.",
     "Wraz z Agentic SysAdmin nadeszła nowa era Linuksa. Całą sesję na żywo i otwarte repozytorium znajdziesz w filmie poniżej!":
+        "With Agentic SysAdmin, a new era of Linux has arrived. Watch the full live session and get the open repo in the video below!",
+    "Brace's Agent X admin na deszła Nowa Eralinuxa. Całą sesję na żywo i otwarte repozytorium znajdziesz w filmie w oniżej.":
         "With Agentic SysAdmin, a new era of Linux has arrived. Watch the full live session and get the open repo in the video below!",
 
     # EP001 Short (Wersja 34s FINAL)
@@ -188,6 +198,28 @@ def extract_voice_sample_clip(source_path: Path, start: str, end: str, output_wa
     log_ok(f"Zapisano próbkę głosu: {output_wav.name}")
 
 
+def sec_to_srt_time(sec: float) -> str:
+    sec = max(0.0, sec)
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = int(sec % 60)
+    ms = int(round((sec - int(sec)) * 1000))
+    if ms >= 1000:
+        s += 1
+        ms = 0
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def export_srt(scenes: list[dict], srt_path: Path, lang_key: str = "text_pl") -> None:
+    lines = []
+    for idx, sc in enumerate(scenes, start=1):
+        start_str = sec_to_srt_time(sc["start"])
+        end_str = sec_to_srt_time(sc["end"])
+        text = sc.get(lang_key, "").strip()
+        lines.append(f"{idx}\n{start_str} --> {end_str}\n{text}\n")
+    srt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def parse_srt(srt_path: Path) -> list[dict]:
     content = srt_path.read_text(encoding="utf-8")
     entries = re.split(r'\n\s*\n', content.strip())
@@ -286,7 +318,28 @@ def transcribe_with_whisper(audio_path: Path) -> list[dict]:
     except Exception as e_cpu:
         log_warn(f"Lokalny import faster-whisper nie powiódł się ({e_cpu}), próba przez uv...")
 
-    # Próba 3: Wywołanie przez uv ze stabilnym zestawem pakietów
+    # Próba 3: Wywołanie przez dedykowane środowisko .venv z faster-whisper
+    breeze_py = Path("/home/jarek/projects/ghostshift/exploration/experiments/breeze2-tts-local/.venv/bin/python3")
+    if breeze_py.exists():
+        try:
+            script = f"""
+import json
+from faster_whisper import WhisperModel
+model = WhisperModel('base', device='cpu', compute_type='int8')
+segments, _ = model.transcribe('{audio_path}', beam_size=5, language='pl')
+res = [{{'id': s.id + 1, 'start': round(s.start, 2), 'end': round(s.end, 2), 'text_pl': s.text.strip()}} for s in segments]
+print(json.dumps(res))
+"""
+            out = subprocess.check_output([str(breeze_py), "-c", script], text=True)
+            lines = [ln.strip() for ln in out.strip().splitlines() if ln.strip().startswith("[")]
+            if lines:
+                scenes = json.loads(lines[-1])
+                log_ok(f"Whisper (.venv/CPU) wygenerował {len(scenes)} segmentów.")
+                return scenes
+        except Exception as e_venv:
+            log_warn(f"Whisper (.venv) błąd ({e_venv}), próba przez uv...")
+
+    # Próba 4: Wywołanie przez uv ze stabilnym zestawem pakietów
     try:
         script = f"""
 import json
@@ -532,7 +585,7 @@ def auto_detect_input_video(work_dir: Path) -> Path | None:
     return max(mp4_files, key=lambda f: f.stat().st_size)
 
 
-def process_single_short(work_dir: Path, input_video: Path | None, script_path: Path | None, ref_audio: Path | None, ref_transcript: str, engine: str, instruction: str, output_video: bool) -> bool:
+def process_single_short(work_dir: Path, input_video: Path | None, script_path: Path | None, ref_audio: Path | None, ref_transcript: str, engine: str, instruction: str, output_video: bool, transcribe_only: bool = False) -> bool:
     work_dir = work_dir.resolve()
     short_id = work_dir.name
     output_dir = work_dir / "output"
@@ -624,6 +677,17 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
         json.dump(scenes, f, ensure_ascii=False, indent=2)
     log_ok(f"Zapisano transkrypcję segmentów: {transcript_json.name}")
 
+    # Wygenerowanie napisów SRT (PL z Whisper oraz EN po przekładzie inżynierskim)
+    srt_pl_file = output_dir / f"{short_id}_PL.srt"
+    srt_en_file = output_dir / f"{short_id}_EN.srt"
+    export_srt(scenes, srt_pl_file, lang_key="text_pl")
+    export_srt(scenes, srt_en_file, lang_key="text_en")
+    log_ok(f"Wygenerowano napisy SRT: {srt_pl_file.name} oraz {srt_en_file.name}")
+
+    if transcribe_only:
+        log_ok(f"Tryb --transcribe-only zakończony dla {short_id}. Wygenerowano komplet napisów i transkrypcji.")
+        return True
+
     # 4. Synteza mowy
     dub_parts_dir = output_dir / "dub_parts"
     dub_parts_dir.mkdir(parents=True, exist_ok=True)
@@ -670,6 +734,10 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
         if output_video:
             f.write(f"2. **Zdubbingowany film EN (Full Video + Dubbing):**\n")
             f.write(f"   `{output_video_file.name}` (obraz wideo + zsynchronizowany dubbing EN — do publikacji jako niezależny film na kanał anglojęzyczny lub Shorts).\n\n")
+        f.write(f"3. **Napisy w języku angielskim:**\n")
+        f.write(f"   `{srt_en_file.name}` (plik .srt wygenerowany w sesji pod YouTube / CC).\n\n")
+        f.write(f"4. **Napisy w języku polskim:**\n")
+        f.write(f"   `{srt_pl_file.name}` (plik .srt z bezpośredniej transkrypcji Whisper).\n\n")
         f.write("## Tabela Zsynchronizowanych Scen\n\n")
         f.write("| Scena | Zakres czasu | Oryginał PL | Kwestia EN |\n")
         f.write("| :---: | :---: | :--- | :--- |\n")
@@ -683,6 +751,8 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
     log_info(f"  1. [YouTube Audio Track]: {mastered_wav.name}")
     if output_video:
         log_info(f"  2. [Full Dubbed Video]:   {output_video_file.name}")
+    log_info(f"  3. [English Subtitles]:   {srt_en_file.name}")
+    log_info(f"  4. [Polish Subtitles]:    {srt_pl_file.name}")
     log_info("=" * 65)
     return True
 
@@ -705,6 +775,7 @@ def main():
     parser.add_argument("--engine", choices=["auto", "breeze", "kokoro", "edge"], default="auto", help="Silnik syntezy TTS")
     parser.add_argument("--instruction", type=str, default="Maintain a calm, confident, authoritative engineering delivery with clear cadence.", help="Instrukcja stylu mowy")
     parser.add_argument("--output-video", action="store_true", default=True, help="Wygeneruj zduplikowane wideo z dubbingiem EN")
+    parser.add_argument("--transcribe-only", action="store_true", default=False, help="Wygeneruj wyłącznie transkrypcję Whisper i napisy SRT/JSON (bez syntezy TTS)")
     args = parser.parse_args()
 
     # Obsługa próbki referencyjnej
@@ -741,7 +812,8 @@ def main():
                 ref_transcript=ref_transcript,
                 engine=args.engine,
                 instruction=args.instruction,
-                output_video=args.output_video
+                output_video=args.output_video,
+                transcribe_only=args.transcribe_only
             )
         return
 
@@ -764,7 +836,8 @@ def main():
         ref_transcript=ref_transcript,
         engine=args.engine,
         instruction=args.instruction,
-        output_video=args.output_video
+        output_video=args.output_video,
+        transcribe_only=args.transcribe_only
     )
 
 
