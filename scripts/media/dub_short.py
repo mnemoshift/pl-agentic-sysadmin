@@ -85,6 +85,8 @@ PHRASE_DICTIONARY = {
         "On Windows, the agent in Antigravity was suffocating inside PowerShell.",
     "Nawin doł się, agent Van DeGravityi dłuśił się w powerszelu.":
         "On Windows, the agent in Antigravity was suffocating inside PowerShell.",
+    "Nawin doł się, agent Van Degravity i dosił się w powerszelu.":
+        "On Windows, the agent in Antigravity was suffocating inside PowerShell.",
     "Drenaż tokenów, brak natywnych narzędzi Linuksa i koszmarny narzut.":
         "Token drain, zero native Linux tools, and crippling overhead.",
     "Dranasz Tokenów, brak natywny narzędzi Linuxa i koszmarny narzut.":
@@ -96,6 +98,8 @@ PHRASE_DICTIONARY = {
     "Mac ze zintegrowanym RAM-em był absurdalnie drogi, kupiłem więc dysk NVMe za tysiaka i postawiłem czystego Zorin OS.":
         "A Mac with unified memory was absurdly expensive, so I bought a one-terabyte NVMe drive and installed bare-metal Zorin OS.",
     "Mag, ze zintegrowanym ramem, był absurdalnie drogi, upiłem więc dysk, NVM dla tysiaka i postawiłem czystego Zorino S.":
+        "A Mac with unified memory was absurdly expensive, so I bought a one-terabyte NVMe drive and installed bare-metal Zorin OS.",
+    "Mag, ze zintegrowanym ramem, był absurdalnie drogi, upiłem więc dysk, NVME, dla tysiaka i postawiłem czystego Zorino S.":
         "A Mac with unified memory was absurdly expensive, so I bought a one-terabyte NVMe drive and installed bare-metal Zorin OS.",
     "Efekt: zero tarcia, natywny Linux i pełna swoboda dla agentów. Całą sesję i architekturę zobaczysz w filmie poniżej.":
         "The result: zero friction, native Linux, and complete freedom for AI agents. Watch the full session and architecture in the video below.",
