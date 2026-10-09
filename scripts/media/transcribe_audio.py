@@ -216,6 +216,6 @@ def transcribe(audio_path: Path, output_json: Path, output_md: Path, fast: bool,
 
 if __name__ == "__main__":
     args = parse_args()
-    out_json = args.output_json or (args.audio.parent / "EP002_Short_Transcript.json")
-    out_md = args.output_md or (args.audio.parent / "EP002_Short_Transcript.md")
+    out_json = args.output_json or (args.audio.parent / f"{args.audio.stem}_Transcript.json")
+    out_md = args.output_md or (args.audio.parent / f"{args.audio.stem}_Transcript.md")
     transcribe(args.audio, out_json, out_md, args.fast, args.model, args.script)

@@ -204,6 +204,32 @@ def group_whisper_segments(raw_segments, min_duration=12.0, max_duration=28.0) -
 # ==============================================================================
 # 3. LOKALNE TŁUMACZENIE I KOREKTA LLM (BIELIK / OLLAMA LUB MARIANMT)
 # ==============================================================================
+def clean_llm_translation(raw_text: str) -> str:
+    """Oczyszcza odpowiedź LLM z ewentualnych metadanych, nagłówków, cudzysłowów i notatek."""
+    text = raw_text.strip()
+    # Usunięcie bloków kodu markdown
+    text = re.sub(r"^```(?:[a-zA-Z]+)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    # Usunięcie typowych prefiksów generowanych przez LLM
+    prefixes = [
+        r"^(?:Here(?:'s| is) the (?:natural |fluent |idiomatic |spoken |English )?(?:translation|voiceover)[^:]*:\s*)",
+        r"^(?:English translation:\s*)",
+        r"^(?:Translation:\s*)",
+        r"^(?:Sure, here is[^:]*:\s*)",
+        r"^(?:Voiceover:\s*)",
+    ]
+    for p in prefixes:
+        text = re.sub(p, "", text, flags=re.IGNORECASE)
+    # Usunięcie wtrąceń w nawiasach kwadratowych/okrągłych typu [pause], (laughs), [Note: ...]
+    text = re.sub(r"\[(?:note|voiceover|audio|pause|sound|laughter|sigh)[^\]]*\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\((?:note|voiceover|audio|pause|laughter|sigh)[^\)]*\)", "", text, flags=re.IGNORECASE)
+    # Usunięcie zewnętrznych cudzysłowów
+    text = text.strip(' "”„\'`')
+    # Normalizacja białych znaków
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 class OllamaTranslator:
     def __init__(self, model_name: str = "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M", base_url: str = "http://localhost:11434"):
         self.model_name = model_name
@@ -219,7 +245,20 @@ class OllamaTranslator:
         except Exception:
             return False
 
-    def translate_scene(self, text_pl: str) -> str:
+    def translate_scene(self, text_pl: str, duration_sec: float | None = None) -> str:
+        timing_rules = ""
+        max_words = None
+        if duration_sec and duration_sec > 1.0:
+            target_words = max(5, int(duration_sec * 2.30))
+            max_words = max(7, int(duration_sec * 2.50))
+            timing_rules = (
+                f"\nTIMING BUDGET (CRITICAL for video synchronization):\n"
+                f"- Maximum spoken window on screen: {duration_sec:.1f} seconds.\n"
+                f"- Target word count: ~{target_words} words (strict upper limit: {max_words} words).\n"
+                f"- Condense the phrasing cleanly if needed. Do NOT add unnecessary words or filler.\n"
+                f"- Output ONLY the English speech text that fits comfortably within {duration_sec:.1f}s."
+            )
+
         system_prompt = (
             "You are a Principal Solutions Architect (22+ years experience) and senior technical translator "
             "adapting Polish engineering screencasts into authentic, fluent, idiomatic English for YouTube.\n\n"
@@ -236,9 +275,12 @@ class OllamaTranslator:
             "   - 'agentowy sysadmin' -> 'Agentic SysAdmin'\n"
             "3. Do NOT translate literally. Translate the natural engineering meaning into smooth, spoken English.\n"
             "4. Output ONLY the English translation. No explanations, no markdown quotes, no notes."
+            f"{timing_rules}"
         )
 
         user_prompt = f"Translate this Polish spoken chunk into natural English spoken voiceover:\n\n{text_pl}"
+        if max_words:
+            user_prompt += f"\n\n(Remember: Maximum {max_words} words for this {duration_sec:.1f}s scene)"
 
         payload = {
             "model": self.model_name,
@@ -261,7 +303,7 @@ class OllamaTranslator:
         with urllib.request.urlopen(req, timeout=90.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             translated = data.get("message", {}).get("content", "").strip()
-            translated = translated.strip('"\'`')
+            translated = clean_llm_translation(translated)
             return translated
 
     def unload(self) -> None:
@@ -327,10 +369,14 @@ def translate_scenes_batch(scenes: list[dict], translator=None, llm_model: str =
     if ollama_trans.is_available():
         log_info(f"Inżynierskie tłumaczenie semantyczne przez model Bielik LLM ({target_llm})...")
         t0 = time.time()
-        for idx, sc in enumerate(scenes, 1):
-            log_info(f"Bielik: Tłumaczenie sceny {sc['id']}/{len(scenes)}: '{sc['text_pl'][:45]}...'")
+        for idx, sc in enumerate(scenes):
+            if idx + 1 < len(scenes):
+                window_dur = scenes[idx + 1]["start"] - sc["start"]
+            else:
+                window_dur = sc["end"] - sc["start"]
+            log_info(f"Bielik: Tłumaczenie sceny {sc['id']}/{len(scenes)} (okno: {window_dur:.1f}s): '{sc['text_pl'][:42]}...'")
             try:
-                sc["text_en"] = ollama_trans.translate_scene(sc["text_pl"])
+                sc["text_en"] = ollama_trans.translate_scene(sc["text_pl"], duration_sec=window_dur)
             except Exception as e_ollama:
                 log_warn(f"Błąd Ollama dla sceny {sc['id']} ({e_ollama}), użycie MarianMT...")
                 if translator is None:
@@ -353,7 +399,7 @@ def translate_scenes_batch(scenes: list[dict], translator=None, llm_model: str =
 
     # Krok 3: Dodatkowa standaryzacja pojęć inżynierskich IT
     for sc in scenes:
-        cleaned_en = sc.get("text_en", "")
+        cleaned_en = clean_llm_translation(sc.get("text_en", ""))
         for pl_term, en_term in tech_terms.items():
             cleaned_en = re.sub(re.escape(pl_term), en_term, cleaned_en, flags=re.IGNORECASE)
         sc["text_en"] = cleaned_en
@@ -524,11 +570,13 @@ def sec_to_srt_time(sec: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def export_srt(scenes: list[dict], srt_path: Path, lang_key: str = "text_pl") -> None:
+def export_srt(scenes: list[dict], srt_path: Path, lang_key: str = "text_pl", use_synced: bool = False) -> None:
     lines = []
     for idx, sc in enumerate(scenes, start=1):
-        start_str = sec_to_srt_time(sc["start"])
-        end_str = sec_to_srt_time(sc["end"])
+        s_start = sc.get("start_synced", sc["start"]) if use_synced else sc["start"]
+        s_end = sc.get("end_synced", sc["end"]) if use_synced else sc["end"]
+        start_str = sec_to_srt_time(s_start)
+        end_str = sec_to_srt_time(s_end)
         text = sc.get(lang_key, "").strip()
         lines.append(f"{idx}\n{start_str} --> {end_str}\n{text}\n")
     srt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -644,26 +692,57 @@ def time_sync_and_master(
     total_duration: float,
     output_wav: Path,
     target_lufs: float = -14.0,
-    target_tp: float = -1.0
+    target_tp: float = -1.0,
+    max_speed_factor: float = 1.08,
+    relax_factor: float = 0.94,
+    min_inter_gap: float = 0.15
 ) -> None:
     log_info(f"Synchronizacja segmentów i mastering EBU R128 ({target_lufs} LUFS)...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
         adjusted_wavs = []
+        actual_starts = []
+
+        prev_end = 0.0
 
         for idx, (scene, seg_wav) in enumerate(zip(scenes, segment_wavs)):
             seg_dur = get_audio_duration(seg_wav)
+            nominal_start = scene["start"]
+
+            # Elastic Anchor: zabezpieczenie przed nakładaniem się mowy
+            actual_start = max(nominal_start, prev_end + min_inter_gap if idx > 0 else nominal_start)
+
             if idx + 1 < len(scenes):
-                max_window = scenes[idx + 1]["start"] - scene["start"]
+                next_nominal = scenes[idx + 1]["start"]
+                avail_window = max(0.5, next_nominal - actual_start)
             else:
-                max_window = total_duration - scene["start"]
+                avail_window = max(0.5, total_duration - actual_start)
 
             out_seg = tmp_path / f"synced_{idx:03d}.wav"
 
-            if seg_dur > max_window and max_window > 0.5:
-                speed_factor = min(seg_dur / max_window, 1.25)
-                log_info(f"Dopasowanie tempa dla sceny {scene['id']}: x{speed_factor:.2f}")
+            if seg_dur > avail_window:
+                # Wypowiedź dłuższa niż okno — łagodne przyspieszenie (clamp do max 1.08x)
+                raw_factor = seg_dur / avail_window
+                speed_factor = min(raw_factor, max_speed_factor)
+                adj_dur = seg_dur / speed_factor
+                log_info(f"Dopasowanie tempa (kompresja) dla sceny {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {adj_dur:.2f}s, okno: {avail_window:.2f}s)")
+                cmd = [
+                    "ffmpeg", "-y", "-i", str(seg_wav),
+                    "-filter:a", f"atempo={speed_factor:.3f}",
+                    "-ar", "48000", "-ac", "1",
+                    str(out_seg)
+                ]
+            elif (avail_window - seg_dur) > 3.5:
+                # Nadmiarowa martwa cisza (>3.5s) — łagodna relaksacja tempa (zwolnienie o 6%)
+                speed_factor = relax_factor
+                adj_dur = seg_dur / speed_factor
+                excess_gap = avail_window - adj_dur
+                if excess_gap > 2.0:
+                    offset = min(1.2, excess_gap * 0.25)
+                    actual_start += offset
+                    avail_window -= offset
+                log_info(f"Dopasowanie tempa (relaksacja ciszy) dla sceny {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {adj_dur:.2f}s, luka: {excess_gap:.1f}s)")
                 cmd = [
                     "ffmpeg", "-y", "-i", str(seg_wav),
                     "-filter:a", f"atempo={speed_factor:.3f}",
@@ -671,19 +750,27 @@ def time_sync_and_master(
                     str(out_seg)
                 ]
             else:
+                speed_factor = 1.0
+                adj_dur = seg_dur
                 cmd = [
                     "ffmpeg", "-y", "-i", str(seg_wav),
                     "-ar", "48000", "-ac", "1",
                     str(out_seg)
                 ]
+
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             adjusted_wavs.append(out_seg)
+            actual_starts.append(actual_start)
+            prev_end = actual_start + adj_dur
+
+            scene["start_synced"] = round(actual_start, 2)
+            scene["end_synced"] = round(actual_start + adj_dur, 2)
 
         # Montaż na osi czasu z adelay
         filter_complex = []
         mix_inputs = []
-        for idx, (scene, adj_wav) in enumerate(zip(scenes, adjusted_wavs)):
-            delay_ms = int(scene["start"] * 1000)
+        for idx, (scene, adj_wav, act_start) in enumerate(zip(scenes, adjusted_wavs, actual_starts)):
+            delay_ms = int(act_start * 1000)
             filter_complex.append(f"[{idx}:a]adelay={delay_ms}|{delay_ms}[d{idx}]")
             mix_inputs.append(f"[d{idx}]")
 
@@ -895,6 +982,11 @@ def process_single_short(
     mastered_wav = output_dir / f"{short_id}_VoiceOver_EN_CLEAN.wav"
     time_sync_and_master(scenes, segment_wavs, total_duration, mastered_wav, target_lufs=-14.0, target_tp=-1.0)
 
+    # Aktualizacja napisów SRT i transkrypcji o precyzyjnie zsynchronizowane znaczniki czasowe
+    export_srt(scenes, srt_en_file, lang_key="text_en", use_synced=True)
+    with open(transcript_json, "w", encoding="utf-8") as f:
+        json.dump(scenes, f, ensure_ascii=False, indent=2)
+
     # 6. Finalny montaż wideo EN
     if output_video:
         output_video_file = output_dir / f"{short_id}_FINAL_EN_DUBBED.mp4"
@@ -931,7 +1023,9 @@ def process_single_short(
         f.write("| Scena | Zakres czasu | Oryginał PL | Kwestia EN |\n")
         f.write("| :---: | :---: | :--- | :--- |\n")
         for sc in scenes:
-            f.write(f"| {sc['id']} | `{sc['start']:.2f}s - {sc['end']:.2f}s` | {sc['text_pl']} | **{sc['text_en']}** |\n")
+            start_t = sc.get("start_synced", sc["start"])
+            end_t = sc.get("end_synced", sc["end"])
+            f.write(f"| {sc['id']} | `{start_t:.2f}s - {end_t:.2f}s` | {sc['text_pl']} | **{sc['text_en']}** |\n")
 
     log_ok(f"Zapisano raport podsumowujący: {summary_md.name}")
     log_info("=" * 65)
