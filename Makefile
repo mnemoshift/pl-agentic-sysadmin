@@ -188,9 +188,15 @@ media-dub-short:
 	@chmod +x scripts/media/dub_short.py
 	@./scripts/media/dub_short.py -w "$(WORKSPACE)" $(if $(INPUT),-i "$(INPUT)") $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
 
-media-dub-ep002:
+media-dub-ep002-short:
 	@chmod +x scripts/media/dub_short.py
 	@./scripts/media/dub_short.py -w work/EP002_Short $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+
+media-dub-ep002-long:
+	@chmod +x scripts/media/dub_short.py
+	@./scripts/media/dub_short.py -w work/EP002 $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+
+media-dub-ep002: media-dub-ep002-short
 
 media-dub-ep001:
 	@chmod +x scripts/media/dub_short.py
