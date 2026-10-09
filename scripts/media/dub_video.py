@@ -236,9 +236,9 @@ def clean_llm_translation(raw_text: str) -> str:
     ]
     for p in prefixes:
         text = re.sub(p, "", text, flags=re.IGNORECASE)
-    # Usunięcie wtrąceń w nawiasach kwadratowych/okrągłych typu [pause], (laughs), [Note: ...]
-    text = re.sub(r"\[(?:note|voiceover|audio|pause|sound|laughter|sigh)[^\]]*\]", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\((?:note|voiceover|audio|pause|laughter|sigh)[^\)]*\)", "", text, flags=re.IGNORECASE)
+    # Usunięcie wtrąceń w nawiasach kwadratowych/okrągłych typu [pause], (laughs), [Note: ...], (Note: ...)
+    text = re.sub(r"\[(?:note|voiceover|audio|pause|sound|laughter|sigh|target)[^\]]*\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\((?:note|voiceover|audio|pause|laughter|sigh|target|natural|articulate)[^\)]*\)", "", text, flags=re.IGNORECASE)
     # Usunięcie zewnętrznych cudzysłowów
     text = text.strip(' "”„\'`')
     # Normalizacja białych znaków
@@ -264,45 +264,39 @@ class OllamaTranslator:
     def translate_scene(self, text_pl: str, duration_sec: float | None = None, orig_pause: float = 0.0) -> str:
         pl_words = len(text_pl.split())
         timing_guidance = ""
-        user_hint = ""
 
         if duration_sec and duration_sec > 1.0:
-            # Jeśli w oryginale była intencjonalna pauza > 2.0s (np. prezentacja ekranowa), szanujemy ją
             if orig_pause > 2.0:
                 speech_target_sec = max(2.0, duration_sec - orig_pause)
             else:
                 speech_target_sec = max(2.0, duration_sec - 1.2)
 
-            target_words = max(6, int(speech_target_sec * 3.3))
+            target_words = max(6, int(speech_target_sec * 3.1))
             is_dense = (pl_words / speech_target_sec) > 2.6
 
             if is_dense:
                 timing_guidance = (
-                    f"\nTIMING & PACING BUDGET (Fast-paced scene, voice window: {speech_target_sec:.1f}s):\n"
+                    f"\nTIMING BUDGET (Fast-paced scene, window: {speech_target_sec:.1f}s):\n"
                     f"- The Polish speech was dense. Keep the English translation crisp, direct, and concise (~{target_words} words).\n"
-                    f"- Avoid wordy filler or redundant clauses, but maintain natural spoken fluency."
+                    f"- Avoid wordy filler or redundant clauses, while maintaining natural spoken fluency."
                 )
-                user_hint = f"\n\n(Note: Keep crisp and concise, ~{target_words} words for this {speech_target_sec:.1f}s window)"
             else:
                 timing_guidance = (
-                    f"\nTIMING & PACING BUDGET (Continuous voiceover, voice window: {speech_target_sec:.1f}s):\n"
-                    f"- Target voiceover length: ~{target_words} words to comfortably fill {speech_target_sec:.1f}s with fluent narration.\n"
-                    f"- DO NOT use clipped or telegraphic shorthand. Express thoughts with natural conversational fullness and complete sentences.\n"
-                    f"- Connect clauses smoothly so the voiceover flows continuously throughout the scene without dying down early."
+                    f"\nTIMING BUDGET (Comfortable scene, window: {speech_target_sec:.1f}s):\n"
+                    f"- Target voiceover length: ~{target_words} words to fit comfortably in {speech_target_sec:.1f}s.\n"
+                    f"- Do not use clipped shorthand. Express thoughts with natural conversational flow and complete sentences.\n"
+                    f"- CRITICAL FIDELITY: Translate ONLY what is present in the source. DO NOT invent extra paragraphs, essays, or hypothetical workflows not in the text."
                 )
-                user_hint = f"\n\n(Note: Natural articulate flow, target ~{target_words} words for this {speech_target_sec:.1f}s window)"
 
         system_prompt = (
             "You are a Principal Solutions Architect (22+ years experience) recording an authentic YouTube screencast voiceover in English based on Polish audio.\n\n"
             "Key Requirements:\n"
             "1. Tone: Senior architect talking to peer engineer. Pragmatic, direct, articulate, zero corporate buzzwords.\n"
-            "2. Spoken Voiceover Delivery:\n"
-            "   - Produce grammatically flawless, natural spoken English.\n"
-            "   - Connect clauses naturally so the voiceover has broadcast momentum and flow, avoiding abrupt stops.\n"
+            "2. Natural Spoken Fluency:\n"
+            "   - Produce grammatically flawless, natural spoken English with smooth transitions.\n"
             "   - Never use broken, clipped, or telegraphic phrasing (e.g. say 'welcome to newcomers', NEVER 'newcomers to others').\n"
-            "3. Pacing & Flow Alignment:\n"
-            "   - Follow the TIMING & PACING BUDGET provided below.\n"
-            "   - When given comfortable time, do not over-condense into minimal fragments; provide full, clear explanations.\n"
+            "3. Strict Fidelity (NO HALLUCINATIONS):\n"
+            "   - Translate strictly what is stated in the Polish source. Do NOT extrapolate or add new paragraphs or essays.\n"
             "4. IT Terminology:\n"
             "   - 'man pages', 'dotfiles', 'Obsidian vault', 'Antigravity', 'Claude Code', 'mount point', 'VRAM footprint', 'bare metal', 'zero-guessing principle'.\n"
             "   - 'na żywym organizmie' -> 'on a live system'\n"
@@ -313,11 +307,12 @@ class OllamaTranslator:
             "   - 'bebechy Linuxa' -> 'the internal plumbing of Linux'\n"
             "   - 'agentowy sysadmin' -> 'Agentic SysAdmin'\n"
             "   - 'Kdenlive' -> 'Kdenlive'\n"
-            "5. Output ONLY the spoken English translation. No explanations, no quotes, no markdown notes."
+            "5. Output Format:\n"
+            "   - Output ONLY the plain spoken English voiceover text. No notes, no explanations, no quotes, no commentary."
             f"{timing_guidance}"
         )
 
-        user_prompt = f"Translate this Polish spoken chunk into natural English spoken voiceover:\n\n{text_pl}{user_hint}"
+        user_prompt = f"Translate this Polish spoken chunk into natural spoken voiceover:\n\n{text_pl}"
 
         payload = {
             "model": self.model_name,
@@ -682,17 +677,17 @@ def time_sync_and_master(
                     str(out_seg)
                 ]
             elif (avail_window - seg_dur) > desired_pause + 0.4:
-                # Nadmiarowa martwa cisza — dynamiczna relaksacja tempa (do 0.78), aby wypełnić okno mową
+                # Nadmiarowa martwa cisza — subtelna relaksacja tempa mowy (bezpieczny zakres [0.92, 0.98])
+                # Używamy transparentnego filtru atempo (WSOLA w dziedzinie czasu) eliminującego metaliczny pogłos i drżenie
                 raw_speed = seg_dur / target_dur
-                speed_factor = max(0.78, min(0.98, raw_speed))
+                speed_factor = max(0.92, min(0.98, raw_speed))
                 adj_dur = seg_dur / speed_factor
                 actual_gap = avail_window - adj_dur
                 scene["pacing_status"] = f"x{speed_factor:.2f} (Spokojne)"
                 log_info(f"Dopasowanie tempa (relaksacja ciszy) dla sceny {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {adj_dur:.2f}s, luka: {actual_gap:.2f}s, orig_gap: {orig_pause:.2f}s)")
-                # Najwyższej jakości time-stretch przez librubberband (z fallbackiem do atempo)
                 cmd = [
                     "ffmpeg", "-y", "-i", str(seg_wav),
-                    "-filter:a", f"rubberband=tempo={speed_factor:.3f}",
+                    "-filter:a", f"atempo={speed_factor:.3f}",
                     "-ar", "48000", "-ac", "1",
                     str(out_seg)
                 ]
@@ -706,17 +701,7 @@ def time_sync_and_master(
                     str(out_seg)
                 ]
 
-            try:
-                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-            except subprocess.CalledProcessError:
-                # Fallback dla filtrów audio
-                fallback_cmd = [
-                    "ffmpeg", "-y", "-i", str(seg_wav),
-                    "-filter:a", f"atempo={speed_factor:.3f}",
-                    "-ar", "48000", "-ac", "1",
-                    str(out_seg)
-                ]
-                subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
             adjusted_wavs.append(out_seg)
             actual_starts.append(actual_start)
