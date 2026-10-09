@@ -215,6 +215,15 @@ media-dub-batch:
 	@chmod +x scripts/media/dub_video.py
 	@./scripts/media/dub_video.py --batch work/EP002_Short work/EP001_Short $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
 
+media-voiceover:
+	@if [ -z "$(SCRIPT)" ]; then \
+		echo "[BŁĄD] Wymagany parametr SCRIPT. Przykład:"; \
+		echo "  make media-voiceover SCRIPT=/path/to/voiceover_read_script.md [WORK_DIR=work/EP004] [SECTION='WIESZAK 1']"; \
+		exit 1; \
+	fi
+	@chmod +x scripts/media/generate_voiceover.py
+	@./scripts/media/generate_voiceover.py -s "$(SCRIPT)" $(if $(WORK_DIR),-w "$(WORK_DIR)") $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(SECTION),--section "$(SECTION)") $(if $(LIMIT),--limit "$(LIMIT)")
+
 media-dub-clean:
 	@echo "Czyszczenie wygenerowanych artefaktów dubbingu w work/..."
 	@rm -rf work/voice_sample work/*/output work/*/assets 2>/dev/null || true
