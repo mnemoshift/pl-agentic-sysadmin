@@ -261,41 +261,48 @@ class OllamaTranslator:
         except Exception:
             return False
 
-    def translate_scene(self, text_pl: str, duration_sec: float | None = None) -> str:
+    def translate_scene(self, text_pl: str, duration_sec: float | None = None, orig_pause: float = 0.0) -> str:
         pl_words = len(text_pl.split())
         timing_guidance = ""
         user_hint = ""
 
         if duration_sec and duration_sec > 1.0:
-            target_words = max(5, int(duration_sec * 2.30))
-            is_dense = (pl_words / duration_sec) > 2.2
+            # Jeśli w oryginale była intencjonalna pauza > 2.0s (np. prezentacja ekranowa), szanujemy ją
+            if orig_pause > 2.0:
+                speech_target_sec = max(2.0, duration_sec - orig_pause)
+            else:
+                speech_target_sec = max(2.0, duration_sec - 1.2)
+
+            target_words = max(6, int(speech_target_sec * 3.3))
+            is_dense = (pl_words / speech_target_sec) > 2.6
 
             if is_dense:
                 timing_guidance = (
-                    f"\nTIMING BUDGET (Fast-paced scene, window: {duration_sec:.1f}s):\n"
+                    f"\nTIMING & PACING BUDGET (Fast-paced scene, voice window: {speech_target_sec:.1f}s):\n"
                     f"- The Polish speech was dense. Keep the English translation crisp, direct, and concise (~{target_words} words).\n"
-                    f"- Avoid wordy clauses or filler, but ensure the English remains 100% grammatically correct and natural."
+                    f"- Avoid wordy filler or redundant clauses, but maintain natural spoken fluency."
                 )
-                user_hint = f"\n\n(Note: Keep concise, ~{target_words} words for this {duration_sec:.1f}s scene)"
+                user_hint = f"\n\n(Note: Keep crisp and concise, ~{target_words} words for this {speech_target_sec:.1f}s window)"
             else:
                 timing_guidance = (
-                    f"\nTIMING BUDGET (Ample time, window: {duration_sec:.1f}s):\n"
-                    f"- This scene has comfortable time. Translate fully, articulately, and fluently without dropping ideas or over-condensing."
+                    f"\nTIMING & PACING BUDGET (Continuous voiceover, voice window: {speech_target_sec:.1f}s):\n"
+                    f"- Target voiceover length: ~{target_words} words to comfortably fill {speech_target_sec:.1f}s with fluent narration.\n"
+                    f"- DO NOT use clipped or telegraphic shorthand. Express thoughts with natural conversational fullness and complete sentences.\n"
+                    f"- Connect clauses smoothly so the voiceover flows continuously throughout the scene without dying down early."
                 )
+                user_hint = f"\n\n(Note: Natural articulate flow, target ~{target_words} words for this {speech_target_sec:.1f}s window)"
 
         system_prompt = (
-            "You are a Principal Solutions Architect (22+ years experience) and senior technical translator "
-            "adapting Polish engineering screencasts into authentic, fluent, idiomatic English for YouTube.\n\n"
+            "You are a Principal Solutions Architect (22+ years experience) recording an authentic YouTube screencast voiceover in English based on Polish audio.\n\n"
             "Key Requirements:\n"
-            "1. Tone: Senior engineer talking to peer engineer. Pragmatic, direct, articulate, zero corporate buzzwords.\n"
-            "2. Natural Spoken Fluency (CRITICAL):\n"
+            "1. Tone: Senior architect talking to peer engineer. Pragmatic, direct, articulate, zero corporate buzzwords.\n"
+            "2. Spoken Voiceover Delivery:\n"
             "   - Produce grammatically flawless, natural spoken English.\n"
+            "   - Connect clauses naturally so the voiceover has broadcast momentum and flow, avoiding abrupt stops.\n"
             "   - Never use broken, clipped, or telegraphic phrasing (e.g. say 'welcome to newcomers', NEVER 'newcomers to others').\n"
-            "   - Translate complete thoughts into natural sentences without dropping essential words.\n"
-            "3. Active, Concise Engineering Style:\n"
-            "   - Use crisp, active phrasing without wordy filler or redundant clauses.\n"
-            "   - Example: Instead of 'which contains instructions on how to work with the agent to achieve the target state we see on the screen', say: 'with instructions on working with the agent to reach the target state on screen'.\n"
-            "   - Example: Instead of 'This report is now available for review, both now and in the future', say: 'It is a report for review now and in the future'.\n"
+            "3. Pacing & Flow Alignment:\n"
+            "   - Follow the TIMING & PACING BUDGET provided below.\n"
+            "   - When given comfortable time, do not over-condense into minimal fragments; provide full, clear explanations.\n"
             "4. IT Terminology:\n"
             "   - 'man pages', 'dotfiles', 'Obsidian vault', 'Antigravity', 'Claude Code', 'mount point', 'VRAM footprint', 'bare metal', 'zero-guessing principle'.\n"
             "   - 'na żywym organizmie' -> 'on a live system'\n"
@@ -306,7 +313,7 @@ class OllamaTranslator:
             "   - 'bebechy Linuxa' -> 'the internal plumbing of Linux'\n"
             "   - 'agentowy sysadmin' -> 'Agentic SysAdmin'\n"
             "   - 'Kdenlive' -> 'Kdenlive'\n"
-            "5. Output ONLY the English translation. No explanations, no markdown quotes, no notes."
+            "5. Output ONLY the spoken English translation. No explanations, no quotes, no markdown notes."
             f"{timing_guidance}"
         )
 
@@ -402,11 +409,13 @@ def translate_scenes_batch(scenes: list[dict], translator=None, llm_model: str =
         for idx, sc in enumerate(scenes):
             if idx + 1 < len(scenes):
                 window_dur = scenes[idx + 1]["start"] - sc["start"]
+                orig_pause = max(0.0, scenes[idx + 1]["start"] - sc["end"])
             else:
                 window_dur = sc["end"] - sc["start"]
-            log_info(f"Bielik: Tłumaczenie sceny {sc['id']}/{len(scenes)} (okno: {window_dur:.1f}s): '{sc['text_pl'][:42]}...'")
+                orig_pause = 0.0
+            log_info(f"Bielik: Tłumaczenie sceny {sc['id']}/{len(scenes)} (okno: {window_dur:.1f}s, luka: {orig_pause:.1f}s): '{sc['text_pl'][:42]}...'")
             try:
-                sc["text_en"] = ollama_trans.translate_scene(sc["text_pl"], duration_sec=window_dur)
+                sc["text_en"] = ollama_trans.translate_scene(sc["text_pl"], duration_sec=window_dur, orig_pause=orig_pause)
             except Exception as e_ollama:
                 log_warn(f"Błąd Ollama dla sceny {sc['id']} ({e_ollama}), użycie MarianMT...")
                 if translator is None:
@@ -637,15 +646,25 @@ def time_sync_and_master(
             seg_dur = get_audio_duration(seg_wav)
             nominal_start = scene["start"]
 
-            # Elastic Anchor: gwarantowany oddech (min_inter_gap), jeśli poprzednia scena wypełniła slot
+            # Anchor: start exactly at nominal_start (or immediately after prev_end + min_inter_gap if previous ran over)
             actual_start = max(nominal_start, prev_end + min_inter_gap if idx > 0 else nominal_start)
 
             if idx + 1 < len(scenes):
                 next_nominal = scenes[idx + 1]["start"]
+                orig_pause = max(0.0, scenes[idx + 1]["start"] - scene["end"])
                 avail_window = max(0.5, next_nominal - actual_start)
             else:
+                next_nominal = total_duration
+                orig_pause = max(0.0, total_duration - scene["end"])
                 avail_window = max(0.5, total_duration - actual_start)
 
+            # Intencjonalna pauza w oryginale (>2.0s np. demonstracja na ekranie) vs mowa ciągła (oddech 0.8s-1.3s)
+            if orig_pause > 2.0:
+                desired_pause = orig_pause
+            else:
+                desired_pause = min(1.3, max(0.8, orig_pause + 0.4))
+
+            target_dur = max(seg_dur, avail_window - desired_pause)
             out_seg = tmp_path / f"synced_{idx:03d}.wav"
 
             if seg_dur > avail_window:
@@ -662,23 +681,18 @@ def time_sync_and_master(
                     "-ar", "48000", "-ac", "1",
                     str(out_seg)
                 ]
-            elif (avail_window - seg_dur) > 3.0:
-                # Nadmiarowa martwa cisza (>3.0s) — dynamiczna relaksacja tempa (od 0.90 do 0.96)
-                target_dur = max(seg_dur, avail_window - 2.5)
+            elif (avail_window - seg_dur) > desired_pause + 0.4:
+                # Nadmiarowa martwa cisza — dynamiczna relaksacja tempa (do 0.78), aby wypełnić okno mową
                 raw_speed = seg_dur / target_dur
-                speed_factor = max(0.90, min(0.96, raw_speed))
+                speed_factor = max(0.78, min(0.98, raw_speed))
                 adj_dur = seg_dur / speed_factor
-                excess_gap = avail_window - adj_dur
-                offset = 0.0
-                if excess_gap > 1.5:
-                    offset = min(2.0, excess_gap * 0.35)
-                    actual_start += offset
-                    avail_window -= offset
+                actual_gap = avail_window - adj_dur
                 scene["pacing_status"] = f"x{speed_factor:.2f} (Spokojne)"
-                log_info(f"Dopasowanie tempa (relaksacja ciszy) dla sceny {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {adj_dur:.2f}s, offset: +{offset:.2f}s, luka: {avail_window - adj_dur:.1f}s)")
+                log_info(f"Dopasowanie tempa (relaksacja ciszy) dla sceny {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {adj_dur:.2f}s, luka: {actual_gap:.2f}s, orig_gap: {orig_pause:.2f}s)")
+                # Najwyższej jakości time-stretch przez librubberband (z fallbackiem do atempo)
                 cmd = [
                     "ffmpeg", "-y", "-i", str(seg_wav),
-                    "-filter:a", f"atempo={speed_factor:.3f}",
+                    "-filter:a", f"rubberband=tempo={speed_factor:.3f}",
                     "-ar", "48000", "-ac", "1",
                     str(out_seg)
                 ]
@@ -692,7 +706,18 @@ def time_sync_and_master(
                     str(out_seg)
                 ]
 
-            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            try:
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            except subprocess.CalledProcessError:
+                # Fallback dla filtrów audio
+                fallback_cmd = [
+                    "ffmpeg", "-y", "-i", str(seg_wav),
+                    "-filter:a", f"atempo={speed_factor:.3f}",
+                    "-ar", "48000", "-ac", "1",
+                    str(out_seg)
+                ]
+                subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+
             adjusted_wavs.append(out_seg)
             actual_starts.append(actual_start)
             prev_end = actual_start + adj_dur
