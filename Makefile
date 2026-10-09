@@ -179,32 +179,41 @@ media-extract-sample:
 	@chmod +x scripts/media/extract_voice_sample.py
 	@./scripts/media/extract_voice_sample.py -i "$(INPUT)" -s "$(START)" -e "$(END)" -o "$(OUTPUT)" $(if $(TRANSCRIPT),-t "$(TRANSCRIPT)")
 
+media-dub-video:
+	@if [ -z "$(WORKSPACE)" ]; then \
+		echo "[BŁĄD] Wymagany parametr WORKSPACE. Przykład:"; \
+		echo "  make media-dub-video WORKSPACE=work/EP002 [INPUT=work/EP002/input/video.mp4] [REF_AUDIO=work/sample.wav]"; \
+		exit 1; \
+	fi
+	@chmod +x scripts/media/dub_video.py
+	@./scripts/media/dub_video.py -w "$(WORKSPACE)" $(if $(INPUT),-i "$(INPUT)") $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+
 media-dub-short:
 	@if [ -z "$(WORKSPACE)" ]; then \
 		echo "[BŁĄD] Wymagany parametr WORKSPACE. Przykład:"; \
 		echo "  make media-dub-short WORKSPACE=work/EP002_Short [INPUT=work/EP002_Short/input/video.mp4] [REF_AUDIO=work/sample.wav]"; \
 		exit 1; \
 	fi
-	@chmod +x scripts/media/dub_short.py
-	@./scripts/media/dub_short.py -w "$(WORKSPACE)" $(if $(INPUT),-i "$(INPUT)") $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+	@chmod +x scripts/media/dub_video.py
+	@./scripts/media/dub_video.py -w "$(WORKSPACE)" $(if $(INPUT),-i "$(INPUT)") $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
 
 media-dub-ep002-short:
-	@chmod +x scripts/media/dub_short.py
-	@./scripts/media/dub_short.py -w work/EP002_Short $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+	@chmod +x scripts/media/dub_video.py
+	@./scripts/media/dub_video.py -w work/EP002_Short $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
 
 media-dub-ep002-long:
-	@chmod +x scripts/media/dub_short.py
-	@./scripts/media/dub_short.py -w work/EP002 $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+	@chmod +x scripts/media/dub_video.py
+	@./scripts/media/dub_video.py -w work/EP002 $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
 
 media-dub-ep002: media-dub-ep002-short
 
 media-dub-ep001:
-	@chmod +x scripts/media/dub_short.py
-	@./scripts/media/dub_short.py -w work/EP001_Short $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+	@chmod +x scripts/media/dub_video.py
+	@./scripts/media/dub_video.py -w work/EP001_Short $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
 
 media-dub-batch:
-	@chmod +x scripts/media/dub_short.py
-	@./scripts/media/dub_short.py --batch work/EP002_Short work/EP001_Short $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+	@chmod +x scripts/media/dub_video.py
+	@./scripts/media/dub_video.py --batch work/EP002_Short work/EP001_Short $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
 
 media-dub-clean:
 	@echo "Czyszczenie wygenerowanych artefaktów dubbingu w work/..."
