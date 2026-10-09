@@ -319,7 +319,7 @@ def clean_llm_translation(raw_text: str) -> str:
     text = re.sub(r"\s*```$", "", text)
     # Usunięcie typowych prefiksów generowanych przez LLM
     prefixes = [
-        r"^(?:Here(?:'s| is) the (?:natural |fluent |idiomatic |spoken |English )?(?:translation|voiceover)[^:]*:\s*)",
+        r"^(?:Here(?:'s| is) (?:a |the )?(?:(?:natural|fluent|idiomatic|spoken|English|revised|plain)\s+)*(?:translation|voiceover)[^:]*:\s*)",
         r"^(?:English translation:\s*)",
         r"^(?:Translation:\s*)",
         r"^(?:Sure, here is[^:]*:\s*)",
@@ -327,6 +327,7 @@ def clean_llm_translation(raw_text: str) -> str:
     ]
     for p in prefixes:
         text = re.sub(p, "", text, flags=re.IGNORECASE)
+
     # Usunięcie wtrąceń w nawiasach kwadratowych/okrągłych typu [pause], (Word count: 14), [Note: ...], itp.
     text = re.sub(r"\[(?:word count|words?|count|note|voiceover|audio|pause|sound|laughter|sigh|target)[^\]]*\]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\((?:word count|words?|count|note|voiceover|audio|pause|laughter|sigh|target|natural|articulate|approximately)[^\)]*\)", "", text, flags=re.IGNORECASE)
