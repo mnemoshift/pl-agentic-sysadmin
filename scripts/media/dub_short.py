@@ -82,8 +82,33 @@ try:
     from breeze_infer.templates import get_template, prepare_inputs, select_template_name
     from models.fast_streaming import FastBreezeStreamingRuntime, FastStreamingConfig
     BREEZE_AVAILABLE = True
-except Exception as e_breeze_import:
+except Exception:
     BREEZE_AVAILABLE = False
+
+try:
+    from qwen_tts import Qwen3TTSModel
+    QWEN_AVAILABLE = True
+except Exception:
+    QWEN_AVAILABLE = False
+
+KOKOCLONE_TOOL_DIR = REPO_ROOT / "tools" / "kokoclone"
+if KOKOCLONE_TOOL_DIR.exists() and str(KOKOCLONE_TOOL_DIR) not in sys.path:
+    sys.path.insert(0, str(KOKOCLONE_TOOL_DIR))
+
+try:
+    from core.cloner import KokoClone
+    KOKOCLONE_AVAILABLE = True
+except Exception:
+    KOKOCLONE_AVAILABLE = False
+
+CHATTERBOX_PYTHON = None
+for cand in [
+    REPO_ROOT / ".venv-chatterbox" / "bin" / "python",
+    Path.home() / "workspaces" / "pl-agentic-sysadmin-work" / ".venv" / "bin" / "python",
+]:
+    if cand.exists():
+        CHATTERBOX_PYTHON = cand
+        break
 
 
 def log_info(msg: str):
@@ -505,6 +530,105 @@ class BreezeTTSInProcess:
             log_err(f"Błąd syntezy segmentu przez Breeze-TTS-2: {e}")
             import traceback
             traceback.print_exc()
+            return False
+
+
+class QwenTTSInProcess:
+    def __init__(self, model_id: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"):
+        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        self.dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+        log_info(f"Ładowanie modelu Qwen3-TTS ({model_id}) do {self.device}...")
+        from qwen_tts import Qwen3TTSModel
+        self.model = Qwen3TTSModel.from_pretrained(model_id, device_map=self.device, dtype=self.dtype)
+        self.cached_prompt = None
+        self.cached_ref_audio = None
+        log_ok("Zainicjalizowano model Qwen3-TTS w pamięci GPU.")
+
+    def get_prompt(self, ref_audio: Path, ref_text: str):
+        ref_path_str = str(ref_audio.resolve())
+        if self.cached_prompt is None or self.cached_ref_audio != ref_path_str:
+            self.cached_prompt = self.model.create_voice_clone_prompt(
+                ref_audio=ref_path_str,
+                ref_text=ref_text.strip(),
+                x_vector_only_mode=False
+            )
+            self.cached_ref_audio = ref_path_str
+        return self.cached_prompt
+
+    def synthesize(self, text: str, out_wav: Path, ref_audio: Path, ref_transcript: str = "") -> bool:
+        try:
+            prompt = self.get_prompt(ref_audio, ref_transcript)
+            wavs, sr = self.model.generate_voice_clone(
+                text=text,
+                language="English",
+                voice_clone_prompt=prompt,
+            )
+            out_wav.parent.mkdir(parents=True, exist_ok=True)
+            sf.write(str(out_wav), wavs[0], sr)
+            return True
+        except Exception as e:
+            log_err(f"Błąd syntezy przez Qwen3-TTS: {e}")
+            return False
+
+
+class KokoCloneInProcess:
+    def __init__(self):
+        log_info("Ładowanie silnika KokoClone (Kokoro-ONNX + Kanade Zero-Shot)...")
+        from core.cloner import KokoClone
+        self.cloner = KokoClone()
+        log_ok("Zainicjalizowano silnik KokoClone.")
+
+    def synthesize(self, text: str, out_wav: Path, ref_audio: Path) -> bool:
+        try:
+            out_wav.parent.mkdir(parents=True, exist_ok=True)
+            self.cloner.generate(
+                text=text,
+                lang="en",
+                reference_audio=str(ref_audio.resolve()),
+                output_path=str(out_wav)
+            )
+            return True
+        except Exception as e:
+            log_err(f"Błąd syntezy przez KokoClone: {e}")
+            return False
+
+
+class ChatterboxRunner:
+    def __init__(self):
+        self.in_process = False
+        self.model = None
+        try:
+            from chatterbox.tts_turbo import ChatterboxTurboTTS
+            self.model = ChatterboxTurboTTS.from_pretrained(device="cuda" if torch.cuda.is_available() else "cpu")
+            self.in_process = True
+            log_ok("Zainicjalizowano silnik Chatterbox-Turbo w procesie.")
+        except Exception:
+            self.python_bin = CHATTERBOX_PYTHON or sys.executable
+            log_info(f"Chatterbox będzie wykonywany przez środowisko: {self.python_bin}")
+
+    def synthesize(self, text: str, out_wav: Path, ref_audio: Path) -> bool:
+        try:
+            out_wav.parent.mkdir(parents=True, exist_ok=True)
+            if self.in_process and self.model:
+                import torchaudio as ta
+                wav = self.model.generate(text, audio_prompt_path=str(ref_audio.resolve()))
+                ta.save(str(out_wav), wav, self.model.sr)
+                return True
+            else:
+                code = (
+                    "import torchaudio as ta\n"
+                    "from chatterbox.tts_turbo import ChatterboxTurboTTS\n"
+                    "model = ChatterboxTurboTTS.from_pretrained(device='cuda')\n"
+                    f"wav = model.generate({repr(text)}, audio_prompt_path={repr(str(ref_audio.resolve()))})\n"
+                    f"ta.save({repr(str(out_wav))}, wav, model.sr)\n"
+                )
+                res = subprocess.run([str(self.python_bin), "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                if res.returncode != 0:
+                    log_err(f"Chatterbox subprocess error: {res.stderr.strip()}")
+                    return False
+                return True
+        except Exception as e:
+            log_err(f"Błąd syntezy przez Chatterbox: {e}")
             return False
 
 
@@ -981,27 +1105,72 @@ def process_single_short(
         log_ok(f"Tryb --transcribe-only zakończony dla {short_id}.")
         return True
 
-    # 4. Synteza mowy w procesie (Breeze-TTS w VRAM lub Edge-TTS)
+    # 4. Inicjalizacja wybranego silnika syntezy (Qwen3-TTS / Chatterbox / KokoClone / Breeze / Edge)
     dub_parts_dir = output_dir / "dub_parts"
     dub_parts_dir.mkdir(parents=True, exist_ok=True)
     segment_wavs = []
 
-    # Inicjalizacja silnika Breeze-TTS w pamięci GPU (jeśli nie przekazano zainicjalizowanego)
-    if breeze_engine is None and engine in ("breeze", "auto") and BREEZE_AVAILABLE:
-        model_dir = find_breeze_model_dir()
-        if model_dir and ref_audio and ref_audio.exists():
-            try:
-                breeze_engine = BreezeTTSInProcess(model_dir)
-            except Exception as e_load:
-                log_warn(f"Nie udało się załadować Breeze-TTS-2 ({e_load}), fallback do Edge-TTS...")
+    # Rozstrzygnięcie silnika
+    selected_engine = engine
+    if selected_engine == "auto":
+        if QWEN_AVAILABLE and ref_audio and ref_audio.exists():
+            selected_engine = "qwen"
+        elif KOKOCLONE_AVAILABLE and ref_audio and ref_audio.exists():
+            selected_engine = "kokoro"
+        elif CHATTERBOX_PYTHON and ref_audio and ref_audio.exists():
+            selected_engine = "chatterbox"
+        elif breeze_engine or (BREEZE_AVAILABLE and find_breeze_model_dir() and ref_audio and ref_audio.exists()):
+            selected_engine = "breeze"
+        else:
+            selected_engine = "edge"
 
-    log_info("Generowanie mowy dla poszczególnych scen...")
+    active_engine_instance = None
     active_engine_name = "unknown"
+
+    if selected_engine == "qwen":
+        try:
+            active_engine_instance = QwenTTSInProcess()
+            active_engine_name = "Qwen3-TTS (Apache 2.0 Zero-Shot Clone)"
+        except Exception as e_qwen:
+            log_warn(f"Nie udało się załadować Qwen3-TTS ({e_qwen}), fallback do Edge-TTS...")
+            selected_engine = "edge"
+
+    elif selected_engine == "kokoro":
+        try:
+            active_engine_instance = KokoCloneInProcess()
+            active_engine_name = "KokoClone (Kokoro-ONNX + Kanade Zero-Shot)"
+        except Exception as e_koko:
+            log_warn(f"Nie udało się załadować KokoClone ({e_koko}), fallback do Edge-TTS...")
+            selected_engine = "edge"
+
+    elif selected_engine == "chatterbox":
+        try:
+            active_engine_instance = ChatterboxRunner()
+            active_engine_name = "Chatterbox-Turbo (MIT Zero-Shot Clone)"
+        except Exception as e_chat:
+            log_warn(f"Nie udało się załadować Chatterbox ({e_chat}), fallback do Edge-TTS...")
+            selected_engine = "edge"
+
+    elif selected_engine == "breeze":
+        if breeze_engine is None and BREEZE_AVAILABLE:
+            model_dir = find_breeze_model_dir()
+            if model_dir and ref_audio and ref_audio.exists():
+                try:
+                    breeze_engine = BreezeTTSInProcess(model_dir)
+                except Exception as e_load:
+                    log_warn(f"Nie udało się załadować Breeze-TTS-2 ({e_load}), fallback do Edge-TTS...")
+        if breeze_engine:
+            active_engine_instance = breeze_engine
+            active_engine_name = "Breeze-TTS-2 (Zero-Shot Clone)"
+        else:
+            selected_engine = "edge"
+
+    log_info(f"Generowanie mowy dla poszczególnych scen (silnik: {selected_engine.upper()})...")
     for sc in scenes:
         part_wav = dub_parts_dir / f"scene_{sc['id']:03d}.wav"
         txt_marker = part_wav.with_suffix(".txt")
         engine_marker = part_wav.with_suffix(".engine")
-        expected_engine = "breeze" if (breeze_engine and ref_audio and ref_audio.exists()) else "edge"
+        expected_engine = selected_engine
 
         # Inteligentne wznawianie: użyj istniejącego pliku tylko jeśli tekst angielski jest identyczny ORAZ silnik jest zgodny
         if (
@@ -1012,26 +1181,30 @@ def process_single_short(
             and (not engine_marker.exists() or engine_marker.read_text(encoding="utf-8").strip() == expected_engine)
         ):
             segment_wavs.append(part_wav)
-            active_engine_name = "Breeze-TTS-2 (Zero-Shot Clone)" if expected_engine == "breeze" else "Edge-TTS"
             continue
 
         synth_ok = False
-        if breeze_engine and ref_audio and ref_audio.exists():
+        if selected_engine == "qwen" and active_engine_instance:
+            log_info(f"Qwen3-TTS: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...'")
+            synth_ok = active_engine_instance.synthesize(sc["text_en"], part_wav, ref_audio, ref_transcript)
+        elif selected_engine == "kokoro" and active_engine_instance:
+            log_info(f"KokoClone: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...'")
+            synth_ok = active_engine_instance.synthesize(sc["text_en"], part_wav, ref_audio)
+        elif selected_engine == "chatterbox" and active_engine_instance:
+            log_info(f"Chatterbox: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...'")
+            synth_ok = active_engine_instance.synthesize(sc["text_en"], part_wav, ref_audio)
+        elif selected_engine == "breeze" and active_engine_instance:
             log_info(f"Breeze-TTS-2: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...'")
-            synth_ok = breeze_engine.synthesize(sc["text_en"], part_wav, ref_audio, ref_transcript, instruction)
-            if synth_ok:
-                active_engine_name = "Breeze-TTS-2 (Zero-Shot Clone)"
-                engine_marker.write_text("breeze\n", encoding="utf-8")
-            elif engine == "breeze":
-                log_err(f"Błąd syntezy sceny {sc['id']} przez Breeze-TTS-2 (wymuszony silnik breeze). Przerywanie.")
-                return False
+            synth_ok = active_engine_instance.synthesize(sc["text_en"], part_wav, ref_audio, ref_transcript, instruction)
 
-        if not synth_ok:
-            if engine == "breeze":
-                log_err(f"Brak możliwości syntezy przez Breeze-TTS-2 dla sceny {sc['id']} (wymuszony silnik breeze).")
+        if synth_ok:
+            engine_marker.write_text(f"{selected_engine}\n", encoding="utf-8")
+        else:
+            if selected_engine in ("qwen", "kokoro", "chatterbox", "breeze") and engine != "auto":
+                log_err(f"Błąd syntezy sceny {sc['id']} przez wymuszony silnik {selected_engine}.")
                 return False
             voice_to_use = edge_voice or "en-US-ChristopherNeural"
-            prefix = "Edge-TTS" if engine == "edge" else "Edge-TTS Fallback"
+            prefix = "Edge-TTS" if selected_engine == "edge" else "Edge-TTS Fallback"
             log_info(f"{prefix}: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...' (voice: {voice_to_use})")
             synthesize_edge_tts(sc["text_en"], part_wav, voice=voice_to_use)
             active_engine_name = f"Edge-TTS ({voice_to_use})"
@@ -1123,7 +1296,7 @@ def main():
     parser.add_argument("--ref-end", type=str, default="00:00:20.300", help="Koniec wycinka próbki")
 
     # Silnik i styl
-    parser.add_argument("--engine", choices=["auto", "breeze", "edge", "kokoro"], default="auto", help="Silnik syntezy TTS")
+    parser.add_argument("--engine", choices=["auto", "qwen", "kokoro", "chatterbox", "breeze", "edge"], default="auto", help="Silnik syntezy TTS")
     parser.add_argument("--llm-model", type=str, default="auto", help="Model LLM w Ollama do inżynierskiego tłumaczenia (np. auto, bielik, none)")
     parser.add_argument("--accent", choices=["default", "us", "uk", "neutral"], default="default", help="Wybór stylu akcentu lektora (us, uk, neutral, default)")
     parser.add_argument("--edge-voice", type=str, default=None, help="Opcjonalny głos dla silnika Edge-TTS (np. en-US-AndrewMultilingualNeural, en-GB-RyanNeural)")
