@@ -81,9 +81,11 @@ Repozytorium wykorzystuje dwupoziomowy, bezkolizyjny system skilli dla agentów 
 ## 4. INTERFEJS OPERACYJNY (MAKEFILE)
 
 Główne operacje stacji roboczej wywołuj poprzez ustandaryzowane komendy:
+- `make setup-env` — inicjalizacja środowiska Python (.venv) przez `uv sync`,
+- `make media-setup-models` — pobranie wag modeli AI (Breeze-TTS-2, MarianMT) do `models/` lub podpięcie lokalnego cache,
 - `make desktop-studio` — wdrożenie profilu Cyber Studio (MnemoShift Cyber-Blueprint, Top Bar Emission HUD, Conky HUD, Plank HUD),
 - `make desktop-macos` — wdrożenie profilu emisyjnego macOS (WhiteSur, kropki po lewej, Plank, CSD fix),
-- `make desktop-reset` — natychmiastowe przywrócenie stanu fabrycznego pulpitu Zorin OS,
+- `make desktop-reset` — natychmiastowe przywrócenie stanu fabryczny pulpitu Zorin OS,
 - `make desktop-status` — podgląd aktywnego stanu motywów, paska, kontrolek, doku i telemetrii,
 - `make audit` — audyt fizycznego sprzętu (CPU, RAM, GPU, monitory, audio, kamery),
 - `make inventory` — audyt zainstalowanego oprogramowania i usług,
@@ -94,12 +96,30 @@ Główne operacje stacji roboczej wywołuj poprzez ustandaryzowane komendy:
 - `make media-karaoke` — generowanie dynamicznych napisów ASS (CapCut Karaoke) z lokalnym Whisperem,
 - `make media-build-short` — automatyczny montaż wertykalnego projektu Kdenlive 9:16 (kaskada rozmycia + napisy),
 - `make media-extract-sample` — wycięcie 3-10s próbki referencyjnej głosu lektora ze wskazanego nagrania w `work/`,
-- `make media-dub-short` — automatyczny dubbing i mastering shorta (Whisper + inżynierskie tłumaczenie PL->EN + synteza mowy + mastering -14 LUFS).
-
+- `make media-dub-short` — automatyczny dubbing i mastering shorta (Whisper + inżynierskie tłumaczenie PL->EN + synteza mowy Breeze-TTS + mastering -14 LUFS).
 
 ---
 
-## 5. STANDARDY BEZPIECZEŃSTWA I PROTOKÓŁ UPRAWNIEŃ (USER-SPACE VS SUDO)
+## 5. AUTONOMIA ŚRODOWISKA URUCHOMIENIOWEGO I POTOKÓW AI
+
+1. **Pełna autonomia repozytorium:**
+   - Repozytorium zarządza własnym środowiskiem wirtualnym `.venv` za pośrednictwem `uv` (`pyproject.toml`, `uv.lock`).
+   - Wszystkie zależności i silniki generatywne (m.in. vendored Breeze-TTS-2 w `tools/breeze_tts/`) są samowystarczalne.
+   - **Zakaz odwołań zewnętrznych:** Żaden skrypt ani konfiguracja nie może odwoływać się do ścieżek innych projektów (np. `/projects/ghostshift/...`).
+   - Modele AI przechowywane są w `models/` (z obsługą symlinków do lokalnego cache Hugging Face w celu oszczędzania dysku).
+
+2. **In-Process AI Pipeline (Zero Niepotrzebnych Subprocessów):**
+   - Transkrypcja (Faster-Whisper), neuronowy przekład techniczny (MarianMT) oraz synteza mowy z klonowaniem głosu (Breeze-TTS-2) wykonują się bezpośrednio w procesie Pythona.
+   - Wagi GPU ładowane są do VRAM jednorazowo na całą sesję generowania, eliminując wielokrotne przeładowywanie z dysku.
+   - Skrypty CLI posiadają mechanizm self-bootstrappingu (automatyczne przełączanie na interpreter `.venv/bin/python`).
+
+3. **Zero Hardcodingu Transkrypcji:**
+   - W repozytorium zabrania się umieszczania na sztywno transkrypcji, zdań czy ręcznych słowników tłumaczeń.
+   - Przekład jest zawsze generowany w locie przez model językowy/tłumaczeniowy, a specyficzne reguły terminologii inżynierskiej przechowywane są w pliku konfiguracyjnym `config/tech_terms.json`.
+
+---
+
+## 6. STANDARDY BEZPIECZEŃSTWA I PROTOKÓŁ UPRAWNIEŃ (USER-SPACE VS SUDO)
 
 1. **User-Space by Default (Minimalny Promień Rażenia / Blast Radius):**
    - Wszystko, co dotyczy konfiguracji użytkownika, środowisk uruchomieniowych (`uv`, venv, nvm, cargo), skryptów CLI (`~/.local/bin`), aplikacji desktopowych (`flatpak --user`), usług sesyjnych (`systemctl --user`) oraz modyfikacji pulpitu/motywów (`gsettings`, `dconf`, `~/.local/share/themes`), Agent wykonuje autonomicznie w przestrzeni użytkownika bez podnoszenia uprawnień do roota.

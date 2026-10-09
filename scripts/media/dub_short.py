@@ -1,180 +1,88 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "faster-whisper",
-#     "av<14",
-#     "edge-tts",
-#     "soundfile",
-# ]
-# ///
 """
-Workstation Hub: Autonomiczny, w pełni sparametryzowany potok lokalnego dubbingu wideo (Shorts / Screencasts).
-Obsługuje pojedyncze projekty oraz przetwarzanie wsadowe zestawu wideo (np. najpierw EP002, potem EP001).
-Wszystkie pliki użytkownika i materiały źródłowe są przetwarzane wyłącznie w katalogu roboczym (work/).
-
-Kroki potoku:
-1. Opcjonalna ekstrakcja próbki referencyjnej głosu (--ref-source / --ref-start / --ref-end).
-2. Wykrycie lub przyjęcie wideo źródłowego w work/<ID>/input/.
-3. Ekstrakcja czystego audio ze źródłowego pliku wideo (WAV 24kHz mono).
-4. Segmentacja i ekstrakcja znaczników czasowych (scenariusz MD / SRT lub Whisper).
-5. Tłumaczenie inżynierskie PL -> EN ze słownikiem technicznym IT i rygorem okna czasowego.
-6. Synteza mowy: Zero-shot Breeze-TTS-2 (próbka referencyjna) lub szybki lektor (Kokoro / Edge-TTS).
-7. Time-syncing, padding ciszy i mastering EBU R128 (-14 LUFS / True Peak -1.0 dBFS).
-8. Złożenie pliku wideo z podmienioną ścieżką audio EN.
+Workstation Hub: Autonomiczny, w pełni lokalny potok dubbingu AI (Shorts / Screencasts).
+Wszystkie komponenty działają w 100% lokalnie i offline w dedykowanym środowisku repozytorium (.venv):
+- Ekstrakcja czystego strumienia mowy (ffmpeg)
+- Lokalna transkrypcja znaczników czasu (faster-whisper GPU/CPU)
+- Neuronowe tłumaczenie maszynowe (MarianMT Helsinki-NLP/opus-mt-pl-en na CPU)
+- Inżynierski słownik pojęć IT (config/tech_terms.json)
+- Zero-shot synteza i klonowanie głosu referencyjnego (Breeze-TTS-2 w GPU VRAM)
+- Time-syncing, padding ciszy i mastering EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS)
+- Generowanie podwójnego pakietu produkcyjnego: WAV (YouTube Studio) oraz MP4 (Full Video EN)
 """
 
-import argparse
-import asyncio
-import json
 import os
-import re
+import sys
 import shutil
 import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
-# Słownik terminów inżynierskich IT
-TECH_TERMS = {
-    "Agentic SysAdmin": "Agentic SysAdmin",
-    "agentowego syzadmina": "Agentic SysAdmin",
-    "agentowym syzadminie": "Agentic SysAdmin",
-    "agent sizadmin": "Agentic SysAdmin",
-    "antygrawitii": "Antigravity",
-    "klot-code": "Claude Code",
-    "Zorin OS": "Zorin OS",
-    "Antigravity": "Antigravity",
-    "punkt montowania": "mount point",
-    "narzut pamięci VRAM": "VRAM footprint",
-    "szyna PCIe": "PCIe bus",
-    "montaż cięty": "ripple edit",
-    "ścieżka na osi czasu": "timeline track",
-    "pliki konfiguracyjne": "configuration files",
-    "plan wdrożenia": "implementation plan",
-    "otwarte repozytorium": "open-source repo",
-    "pulpit": "desktop",
-    "dok": "dock",
-}
+# ==============================================================================
+# 0. SELF-BOOTSTRAPPING: Automatyczne przełączanie na środowisko .venv repozytorium
+# ==============================================================================
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 
-# Wzorcowe tłumaczenia zdań dla standaryzacji
-PHRASE_DICTIONARY = {
-    # EP002 Pełnometrażowy (Wzorzec ElevenLabs dla scen 1-13 pod bezpośrednie porównanie 1:1)
-    "Cześć, witam wszystkich, niektórych z was ponownie, niektórych po raz pierwszy.":
-        "Hello, and a warm welcome to you all. It is great to see some of you returning, and a pleasure to greet those joining me for the first time.",
-    "Dziękuję za wszystkich komentarzy pod poprzednim filmem, na wszystkie odpowiedziałem i odpowiem na kolejne.":
-        "I want to express my gratitude for all the comments on my previous video. I have replied to every one of them, and I will continue to reply to more.",
-    "Chciałem się odnieść w tym filmie do niektórych z nich, a tak naprawdę pomysł na ten film już miałem.":
-        "I considered addressing some of those points here, but in truth, I had already planned the concept for this video well in advance.",
-    "I tak się składa, że rzeczywiście na niektóre z tych komentarzy jest on odpowiedział.":
-        "And as it turns out, this really does serve as a direct answer to quite a few of those comments we've been receiving lately.",
-    "Komendy masz man, pewnie że mam, a generalnież ma, nie wiem czy chce pędzać czas, aby przeglądać kilometry manuali, byłem tam i wracamy do Windowsa.":
-        "Do you happen to have access to the man commands? Well, sure I do, of course, and the agent has them available as well. But honestly, I'm not entirely sure if I really want to spend all the time digging through miles and miles of those dense technical manuals. I have been in that exact position myself, and I ended up going back to Windows.",
-    "Pytacie, jak ustawiłem ten pulpit, miło hędział wam pokażę, narziałem organizmie, wrócimy do ustawień.":
-        "Are you curious about how I managed to set up this specific desktop? I would be more than happy to demonstrate that for you on a live system.",
-    "Do myślnych i zrobimy to jeszcze raz wspólnie, tak, abyście mogli to powtórzyć sami.":
-        "We will revert to the default settings and walk through it together so you can repeat the process yourselves.",
-    "Mówicie, że Zorin jest słabo konfigurowalny, może niektóre konfiguracje są gdzieś za szyte, jednak z agentem udaje mi się zrobić to, co potrzebuje.":
-        "You claim that Zorin is not particularly configurable? Hmm, perhaps. Perhaps there are some configurations hidden away somewhere, but with the agent, I am able to accomplish what I need to do.",
-    "W końcu to jest linuk z podspodem i fajnie to działa.":
-        "After all, it is Linux running underneath, and it works perfectly.",
-    "Siedajże zdarzamy tutaj dwie epoki, jedna, do której jesteśmy przyzwyczajeni od lat.":
-        "It seems to me that we are clashing two different eras here. It is a system that we have been accustomed to working with for many years now.",
-    "Jesteśmy zadowoleni z tego, że potrafimy operować na linuk się znamy konfigurację.":
-        "We are certainly very pleased that we are able to operate our systems on Linux. We are already quite familiar with the underlying configuration.",
-    "Natomiast nadchodzi mi się do epokalinuksa, gdzie nie musimy znać bebechów linuksa, aby dobrze go skonfigurować, wystarczy wykorzystanie agenta.":
-        "However, I believe we are approaching a new era for Linux, one where we will no longer need to understand the complex inner workings of the system to configure it effectively. Instead, simply utilizing an automated agent will be more than sufficient.",
-    "I dzisiaj sobie porozmawiamy właśnie o takim agentowym syzadminie, który każdy z nas może sobie zostawić antygrawitii albo w klot-code lub kodek się, jeżeli macie dostęp do takiego.":
-        "And today, we are going to be discussing a truly highly capable and agentic system administrator that every single one of us can easily set up within Antigravity, or perhaps in Claude Code, or even Codex if you have access to that.",
+if sys.executable != str(VENV_PYTHON) and VENV_PYTHON.exists() and os.access(str(VENV_PYTHON), os.X_OK):
+    os.execv(str(VENV_PYTHON), [str(VENV_PYTHON)] + sys.argv)
+elif sys.executable != str(VENV_PYTHON) and not VENV_PYTHON.exists():
+    if shutil.which("uv"):
+        print("[INFO] Wykryto brak środowiska .venv w repozytorium. Automatyczna inicjalizacja przez 'uv sync'...")
+        subprocess.run(["uv", "sync"], cwd=str(REPO_ROOT), check=True)
+        if VENV_PYTHON.exists():
+            os.execv(str(VENV_PYTHON), [str(VENV_PYTHON)] + sys.argv)
 
-    # EP002 Short (Wzorzec i warianty Whisper z bezpośredniej analizy wideo)
-    "Przestań traktować AI jak zabawkę do pogaduszek. Oto Agentic SysAdmin.":
-        "Stop treating AI like a chatbot toy. Meet Agentic SysAdmin.",
-    "Przestań traktować AI jak zabawkę do pogeduszek o to Agent X admin.":
-        "Stop treating AI like a chatbot toy. Meet Agentic SysAdmin.",
-    "Zamiast marnować godziny na forach i dłubaniu w konfiguracji, dałem agentowi jedno proste zadanie:":
-        "Instead of wasting hours on forums and tweaking configs, I gave the agent one simple goal:",
-    "Zamiast marnować godziny na forach i dłuba nią w konfiguracji, dałem agentowi jedno proste zadanie.":
-        "Instead of wasting hours on forums and tweaking configs, I gave the agent one simple goal:",
-    "Przekształć domyślny pulpit Zorina w czyste środowisko w stylu macOS.":
-        "Transform default Zorin desktop into a clean, macOS-inspired workspace.",
-    "Przekształć domyślny pulpit z oryna w czyste środowisków z tylu MacOS.":
-        "Transform default Zorin desktop into a clean, macOS-inspired workspace.",
-    "Minuta roboty, audyt w tle i gotowy plan wdrożenia. Bez dotknięcia ani jednego pliku konfiguracyjnego.":
-        "One minute of work, background audit, and a complete implementation plan. Without touching a single config file.",
-    "Minut haroboty, audyt w tle i gotowy plan wdrożenia, bez dotknięcia ani jednego pliku konfiguracyjnego.":
-        "One minute of work, background audit, and a complete implementation plan. Without touching a single config file.",
-    "Wraz z Agentic SysAdmin nadeszła nowa era Linuksa. Całą sesję na żywo i otwarte repozytorium znajdziesz w filmie poniżej!":
-        "With Agentic SysAdmin, a new era of Linux has arrived. Watch the full live session and get the open repo in the video below!",
-    "Brace's Agent X admin na deszła Nowa Eralinuxa. Całą sesję na żywo i otwarte repozytorium znajdziesz w filmie w oniżej.":
-        "With Agentic SysAdmin, a new era of Linux has arrived. Watch the full live session and get the open repo in the video below!",
+# ==============================================================================
+# 1. BEZPOŚREDNIE IMPORTY BIBLIOTEK W PROCESIE (DIRECT IN-PROCESS IMPORTS)
+# ==============================================================================
+import argparse
+import json
+import re
+import tempfile
+import time
 
-    # EP001 Short (Wersja 34s FINAL)
-    "Po 10 latach rzuciłem WSL2, powód: autonomiczni agenci AI.":
-        "After 10 years, I ditched WSL2. The reason: autonomous AI agents.",
-    "Po dziesięciu latach rzuciłem WSL-2, powód autonomicznie agencje AI.":
-        "After 10 years, I ditched WSL2. The reason: autonomous AI agents.",
-    "Na Windowsie agent w Antigravity dusił się w PowerShellu.":
-        "On Windows, the agent in Antigravity was suffocating inside PowerShell.",
-    "Nawin doł się, agent Van DeGravityi dłuśił się w powerszelu.":
-        "On Windows, the agent in Antigravity was suffocating inside PowerShell.",
-    "Nawin doł się, agent Van Degravity i dosił się w powerszelu.":
-        "On Windows, the agent in Antigravity was suffocating inside PowerShell.",
-    "Drenaż tokenów, brak natywnych narzędzi Linuksa i koszmarny narzut.":
-        "Token drain, zero native Linux tools, and crippling overhead.",
-    "Dranasz Tokenów, brak natywny narzędzi Linuxa i koszmarny narzut.":
-        "Token drain, zero native Linux tools, and crippling overhead.",
-    "W samym WSL-u z kolei zablokowany Computer Use, brak dostępu do przeglądarki i ciągła walka z systemem plików.":
-        "Inside WSL, Computer Use was blocked, no browser access, and constant filesystem battles.",
-    "W samym WSL-u z kolei zablokowany, komputerius, brak dostępu do przywondarki i ciągła walka system plików.":
-        "Inside WSL, Computer Use was blocked, no browser access, and constant filesystem battles.",
-    "Mac ze zintegrowanym RAM-em był absurdalnie drogi, kupiłem więc dysk NVMe za tysiaka i postawiłem czystego Zorin OS.":
-        "A Mac with unified memory was absurdly expensive, so I bought a one-terabyte NVMe drive and installed bare-metal Zorin OS.",
-    "Mag, ze zintegrowanym ramem, był absurdalnie drogi, upiłem więc dysk, NVM dla tysiaka i postawiłem czystego Zorino S.":
-        "A Mac with unified memory was absurdly expensive, so I bought a one-terabyte NVMe drive and installed bare-metal Zorin OS.",
-    "Mag, ze zintegrowanym ramem, był absurdalnie drogi, upiłem więc dysk, NVME, dla tysiaka i postawiłem czystego Zorino S.":
-        "A Mac with unified memory was absurdly expensive, so I bought a one-terabyte NVMe drive and installed bare-metal Zorin OS.",
-    "Efekt: zero tarcia, natywny Linux i pełna swoboda dla agentów. Całą sesję i architekturę zobaczysz w filmie poniżej.":
-        "The result: zero friction, native Linux, and complete freedom for AI agents. Watch the full session and architecture in the video below.",
-    "Efekt, zerotarcia natywny Linux i pełna swoboda dla agentów. Cało sesję i architekturę zobaczysz w filmie poniżej.":
-        "The result: zero friction, native Linux, and complete freedom for AI agents. Watch the full session and architecture in the video below.",
+# Preload bibliotek CUDA (libcublas) dla akceleracji CTranslate2 / faster-whisper jeśli dostępne
+try:
+    import ctypes
+    for cublas_candidate in [
+        "/usr/local/lib/ollama/cuda_v12/libcublas.so.12",
+        "/usr/local/cuda/lib64/libcublas.so.12",
+    ]:
+        if Path(cublas_candidate).exists():
+            ctypes.CDLL(cublas_candidate)
+            break
+    for cublaslt_candidate in [
+        "/usr/local/lib/ollama/cuda_v12/libcublasLt.so.12",
+        "/usr/local/cuda/lib64/libcublasLt.so.12",
+    ]:
+        if Path(cublaslt_candidate).exists():
+            ctypes.CDLL(cublaslt_candidate)
+            break
+except Exception:
+    pass
 
-    # EP001 Short (Wersja archiwalna 102s)
-    "Natomiast zgrzyt nastąpił dla mnie przy agentach AI.":
-        "However, the real friction started for me with AI agents.",
-    "Tutaj Antigravity, bo tego narzędzia używam, miało problemy: albo zostawaliśmy w Windows,":
-        "Here Antigravity, the tool I rely on, faced bottlenecks: either we stayed inside Windows,",
-    "uruchamialiśmy Antigravity jako desktopową aplikację i kończyło się to tym,":
-        "running Antigravity as a desktop app, which meant",
-    "że Antigravity miało PowerShell jako runtime,":
-        "Antigravity was locked into PowerShell as its runtime,",
-    "brak dostępu do narzędzi linuksowych albo bardzo utrudnione, zwiększona ilość tokenów, kosztów, wolniejsze działanie – nie podobało mi się to.":
-        "no native access to Linux tooling, inflated token consumption, higher costs, and slower execution.",
-    "Zostając w WSL, agent nie miał dostępu do – albo przynajmniej nie udało mi się tego rozwiązać – nie miał dostępu do przeglądarki, Computer Use też był utrudniony,":
-        "Staying inside WSL, the agent lacked access to the host browser, making Computer Use awkward and brittle,",
-    "a agent produkując teraz dużo większe ilości zasobów, kodu czy dokumentów, chciałem je mieć dostępne od razu w Windowsie i tutaj też był zgrzyt, bo jednak to jest inny system plików.":
-        "and with the agent producing large volumes of assets and docs, cross-filesystem I/O between WSL and Windows became a constant bottleneck.",
-    "Decyzja, jaką musiałem podjąć to albo zostać na WSL i na Windowsie, albo kupić Maca, albo zaryzykować czystego Linuksa.":
-        "The choice was clear: stay handcuffed to WSL and Windows, buy a Mac, or migrate to bare-metal Linux.",
-    "WSL – jakoś już wirtualizacja mi się przejadła i nie chciałem dłużej z nią walczyć,":
-        "With WSL, virtualization overhead wore me out and I refused to fight it any longer,",
+import soundfile as sf
+import torch
+from faster_whisper import WhisperModel
+from transformers import MarianMTModel, MarianTokenizer
 
-    # EP002 Długi Odcinek (Fragment porównawczy A/B)
-    "Komendy masz w man, pewnie że mam, a generalnie też ma.":
-        "You say commands are in man pages. Sure they are, but who wants to dig through miles of manuals?",
-    "Nie wiem czy chcę spędzać czas, aby przeglądać kilometry manuali.":
-        "I don't know if I want to waste hours browsing kilometers of manuals.",
-    "Pytacie, jak ustawiłem ten pulpit, z miłą chęcią wam pokażę, na żywym organizmie, wrócimy do ustawień domyślnych.":
-        "You ask how I configured this desktop. I'll gladly show you live: we will revert to defaults and rebuild it.",
-    "I zrobimy to jeszcze raz wspólnie, tak, abyście mogli to powtórzyć sami.":
-        "And we'll do it together so you can replicate it seamlessly on your own workstation.",
-    "Mówicie, że Zorin jest słabo konfigurowalny, może niektóre konfiguracje są gdzieś zaszyte.":
-        "People say Zorin isn't configurable, but with an AI agent, you can configure anything without friction.",
-    "Jednak z agentem udaje mi się zrobić to, co potrzebuję.":
-        "Yet with an agent, I get exactly what I need done in minutes.",
-    "W końcu to jest Linux pod spodem i fajnie to działa.":
-        "After all, it is bare-metal Linux underneath and it works amazingly well.",
-}
+# Rejestracja vendored narzędzia Breeze-TTS w sys.path
+BREEZE_TOOL_DIR = REPO_ROOT / "tools" / "breeze_tts"
+if BREEZE_TOOL_DIR.exists() and str(BREEZE_TOOL_DIR) not in sys.path:
+    sys.path.insert(0, str(BREEZE_TOOL_DIR))
+
+try:
+    from breeze_infer.runtime import (
+        load_runtime,
+        resolve_device,
+        set_all_seeds,
+        update_generation_config_for_breeze,
+    )
+    from breeze_infer.templates import get_template, prepare_inputs, select_template_name
+    from models.fast_streaming import FastBreezeStreamingRuntime, FastStreamingConfig
+    BREEZE_AVAILABLE = True
+except Exception as e_breeze_import:
+    BREEZE_AVAILABLE = False
 
 
 def log_info(msg: str):
@@ -190,6 +98,200 @@ def log_err(msg: str):
     print(f"\033[1;31m[ERROR]\033[0m {msg}", file=sys.stderr)
 
 
+# ==============================================================================
+# 2. SŁOWNIK INŻYNIERSKI IT (DYNAMICZNY Z CONFIG/TECH_TERMS.JSON)
+# ==============================================================================
+def load_tech_terms() -> dict[str, str]:
+    config_path = REPO_ROOT / "config" / "tech_terms.json"
+    if config_path.exists():
+        try:
+            return json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            log_warn(f"Nie udało się odczytać {config_path}: {e}")
+    # Domyślny zestaw uniwersalnych terminów inżynierskich IT
+    return {
+        "Agentic SysAdmin": "Agentic SysAdmin",
+        "agentowego syzadmina": "Agentic SysAdmin",
+        "agentowym syzadminie": "Agentic SysAdmin",
+        "agent sizadmin": "Agentic SysAdmin",
+        "agentowego sizadmina": "Agentic SysAdmin",
+        "antygrawitii": "Antigravity",
+        "antygrawiti": "Antigravity",
+        "klot-code": "Claude Code",
+        "kodek": "Codex",
+        "Zorin OS": "Zorin OS",
+        "Antigravity": "Antigravity",
+        "punkt montowania": "mount point",
+        "narzut pamięci VRAM": "VRAM footprint",
+        "szyna PCIe": "PCIe bus",
+        "montaż cięty": "ripple edit",
+        "ścieżka na osi czasu": "timeline track",
+        "pliki konfiguracyjne": "configuration files",
+        "plan wdrożenia": "implementation plan",
+        "otwarte repozytorium": "open-source repo",
+        "pulpit": "desktop",
+        "dok": "dock",
+    }
+
+
+# ==============================================================================
+# 3. LOKALNE TŁUMACZENIE NEURONOWE (MARIANMT NA CPU)
+# ==============================================================================
+class LocalMarianTranslator:
+    def __init__(self, model_name: str = "Helsinki-NLP/opus-mt-pl-en"):
+        self.model_name = model_name
+        self.tokenizer = None
+        self.model = None
+
+    def _ensure_loaded(self):
+        if self.model is None:
+            log_info(f"Inicjalizacja lokalnego modelu tłumaczeniowego {self.model_name} (CPU)...")
+            self.tokenizer = MarianTokenizer.from_pretrained(self.model_name)
+            self.model = MarianMTModel.from_pretrained(self.model_name)
+            log_ok("Zainicjalizowano model tłumaczeniowy MarianMT w pamięci.")
+
+    def translate_batch(self, texts_pl: list[str], batch_size: int = 16) -> list[str]:
+        self._ensure_loaded()
+        translated_results = []
+        for i in range(0, len(texts_pl), batch_size):
+            chunk = texts_pl[i:i + batch_size]
+            encoded = self.tokenizer(chunk, return_tensors="pt", padding=True, truncation=True)
+            with torch.no_grad():
+                generated = self.model.generate(**encoded)
+            decoded = self.tokenizer.batch_decode(generated, skip_special_tokens=True)
+            translated_results.extend(decoded)
+        return translated_results
+
+
+def translate_scenes_batch(scenes: list[dict], translator: LocalMarianTranslator) -> None:
+    """
+    Tłumaczy listę scen z języka polskiego na angielski.
+    1. Przeprowadza wsadowy przekład neuronowy przez model MarianMT w pamięci procesu.
+    2. Stosuje słownik pojęć inżynierskich IT (config/tech_terms.json).
+    """
+    if not scenes:
+        return
+
+    tech_terms = load_tech_terms()
+    pl_texts = [sc.get("text_pl", "").strip(' „"”') for sc in scenes]
+
+    log_info(f"Lokalny model tłumaczeniowy MarianMT: Tłumaczenie wsadowe {len(pl_texts)} segmentów...")
+    t0 = time.time()
+    translated_en = translator.translate_batch(pl_texts, batch_size=16)
+    dt = time.time() - t0
+    log_ok(f"Przetłumaczono {len(scenes)} segmentów w {dt:.2f}s.")
+
+    for sc, text_en in zip(scenes, translated_en):
+        cleaned_en = text_en
+        for pl_term, en_term in tech_terms.items():
+            cleaned_en = re.sub(re.escape(pl_term), en_term, cleaned_en, flags=re.IGNORECASE)
+        sc["text_en"] = cleaned_en
+
+
+# ==============================================================================
+# 4. LOKALNY SILNIK SYNTEZY I KLONOWANIA GŁOSU (BREEZE-TTS-2 W VRAM)
+# ==============================================================================
+class BreezeTTSInProcess:
+    def __init__(self, model_dir: Path):
+        self.model_dir = model_dir
+        self.device = resolve_device()
+        log_info(f"Ładowanie wag Breeze-TTS-2 do {self.device} (jednorazowa alokacja VRAM)...")
+        self.tokenizer, self.model, self.audio_tokenizer = load_runtime(
+            model_dir,
+            device=self.device,
+            attn_implementation="eager",
+        )
+        update_generation_config_for_breeze(self.model)
+        self.config = FastStreamingConfig(
+            max_new_tokens=1500,
+            max_seq_len=2048,
+            repetition_penalty=1.1,
+        )
+        self.runtime = FastBreezeStreamingRuntime(
+            self.model, self.audio_tokenizer, self.config, tokenizer=self.tokenizer
+        )
+        log_ok("Zainicjalizowano model Breeze-TTS-2 w pamięci GPU.")
+
+    def synthesize(self, text: str, out_wav: Path, ref_audio: Path, ref_transcript: str, instruction: str = "", seed: int = 42) -> bool:
+        try:
+            set_all_seeds(seed)
+            request = {
+                "id": "single-request",
+                "text": text,
+                "speaker": "S0",
+                "ref_audio_path": str(ref_audio.resolve()),
+                "ref_text": ref_transcript.strip(),
+            }
+            if instruction:
+                request["instruction"] = instruction.strip()
+            template_name = select_template_name(request)
+            inputs = prepare_inputs(
+                self.tokenizer,
+                self.audio_tokenizer,
+                self.model,
+                [request],
+                get_template(template_name),
+                guidance_scale=1.0,
+            )
+
+            out_wav.parent.mkdir(parents=True, exist_ok=True)
+            with sf.SoundFile(
+                str(out_wav),
+                mode="w",
+                samplerate=self.runtime.sample_rate,
+                channels=1,
+                subtype="PCM_16",
+            ) as output_file:
+                for chunk in self.runtime.iter_audio_chunks(
+                    inputs, request_id="single-request", seed=seed
+                ):
+                    output_file.write(chunk.audio)
+            return True
+        except Exception as e:
+            log_err(f"Błąd syntezy segmentu przez Breeze-TTS-2: {e}")
+            return False
+
+
+def synthesize_edge_tts(text: str, out_wav: Path, voice: str = "en-US-ChristopherNeural") -> None:
+    temp_mp3 = out_wav.with_suffix(".mp3")
+    edge_bin = shutil.which("edge-tts")
+    if not edge_bin:
+        edge_bin = str(VENV_PYTHON.parent / "edge-tts")
+
+    cmd = [
+        edge_bin,
+        "--text", text,
+        "--voice", voice,
+        "--rate=+2%",
+        "--pitch=-2Hz",
+        f"--write-media={temp_mp3}"
+    ]
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+
+    cmd_wav = [
+        "ffmpeg", "-y", "-i", str(temp_mp3),
+        "-acodec", "pcm_s16le", "-ar", "24000", "-ac", "1",
+        str(out_wav)
+    ]
+    subprocess.run(cmd_wav, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    if temp_mp3.exists():
+        temp_mp3.unlink()
+
+
+def find_breeze_model_dir() -> Path | None:
+    candidates = [
+        REPO_ROOT / "models" / "Breeze-TTS-2",
+        Path.home() / ".cache" / "huggingface" / "hub" / "models--MediaTek-Research--Breeze-TTS-2",
+    ]
+    for cand in candidates:
+        if cand.exists() and (cand / "config.json").exists():
+            return cand
+    return None
+
+
+# ==============================================================================
+# 5. AUDIO & VIDEO UTILITIES (FFMPEG / FFPROBE / WHISPER)
+# ==============================================================================
 def get_audio_duration(file_path: Path) -> float:
     cmd = [
         "ffprobe", "-v", "error",
@@ -261,7 +363,7 @@ def parse_srt(srt_path: Path) -> list[dict]:
     content = srt_path.read_text(encoding="utf-8")
     entries = re.split(r'\n\s*\n', content.strip())
     scenes = []
-    
+
     def time_to_sec(t_str):
         h, m, s_ms = t_str.strip().split(':')
         s, ms = s_ms.split(',')
@@ -288,24 +390,21 @@ def parse_short_script_md(script_path: Path) -> list[dict]:
     content = script_path.read_text(encoding="utf-8")
     scenes = []
     blocks = re.split(r'(?m)^#{3,4}\s+Scena\s+(\d+)', content)
-    
+
     for i in range(1, len(blocks), 2):
         scene_num = int(blocks[i])
         block = blocks[i+1]
-        
-        # Czas, np. [0:00 - 0:05]
         time_match = re.search(r'\[(\d+):(\d+(?:\.\d+)?)\s*-\s*(\d+):(\d+(?:\.\d+)?)\]', block[:120])
         start_sec, end_sec = 0.0, 0.0
         if time_match:
             sm, ss, em, es = time_match.groups()
             start_sec = float(sm) * 60 + float(ss)
             end_sec = float(em) * 60 + float(es)
-            
-        # Kwestia lektora
+
         text_match = re.search(r'\*\s*\*\*Kwestia lektora:\*\*\s*(?:\n\s*)?[*„"“](.*?)[*"”]', block, re.DOTALL)
         text_pl = text_match.group(1).strip() if text_match else ""
         text_pl = re.sub(r'\s+', ' ', text_pl)
-        
+
         scenes.append({
             "id": scene_num,
             "start": round(start_sec, 2),
@@ -318,16 +417,9 @@ def parse_short_script_md(script_path: Path) -> list[dict]:
 def transcribe_with_whisper(audio_path: Path) -> list[dict]:
     log_info("Brak pliku scenariusza. Uruchamianie lokalnego modelu Whisper...")
     scenes = []
-    
-    # Próba 1: faster-whisper z CUDA
+
+    # 1. Próba na CUDA (FP16)
     try:
-        try:
-            import ctypes
-            ctypes.CDLL("/usr/local/lib/ollama/cuda_v12/libcublas.so.12")
-            ctypes.CDLL("/usr/local/lib/ollama/cuda_v12/libcublasLt.so.12")
-        except Exception:
-            pass
-        from faster_whisper import WhisperModel
         model = WhisperModel("base", device="cuda", compute_type="float16")
         segments, _ = model.transcribe(str(audio_path), beam_size=5, language="pl")
         for seg in segments:
@@ -341,11 +433,10 @@ def transcribe_with_whisper(audio_path: Path) -> list[dict]:
             log_ok(f"Whisper (CUDA) wygenerował {len(scenes)} segmentów.")
             return scenes
     except Exception as e_cuda:
-        log_warn(f"Whisper (CUDA) niedostępny ({e_cuda}), próba na CPU...")
+        log_warn(f"Whisper (CUDA) niedostępny ({e_cuda}), uruchamianie na CPU...")
 
-    # Próba 2: faster-whisper na CPU
+    # 2. Próba na CPU (INT8)
     try:
-        from faster_whisper import WhisperModel
         model = WhisperModel("base", device="cpu", compute_type="int8")
         segments, _ = model.transcribe(str(audio_path), beam_size=5, language="pl")
         for seg in segments:
@@ -359,56 +450,7 @@ def transcribe_with_whisper(audio_path: Path) -> list[dict]:
             log_ok(f"Whisper (CPU) wygenerował {len(scenes)} segmentów.")
             return scenes
     except Exception as e_cpu:
-        log_warn(f"Lokalny import faster-whisper nie powiódł się ({e_cpu}), próba przez uv...")
-
-    # Próba 3: Wywołanie przez dedykowane środowisko .venv z faster-whisper
-    breeze_py = Path("/home/jarek/projects/ghostshift/exploration/experiments/breeze2-tts-local/.venv/bin/python3")
-    if breeze_py.exists():
-        try:
-            script = f"""
-import json, ctypes
-try:
-    ctypes.CDLL("/usr/local/lib/ollama/cuda_v12/libcublas.so.12")
-    ctypes.CDLL("/usr/local/lib/ollama/cuda_v12/libcublasLt.so.12")
-except Exception:
-    pass
-from faster_whisper import WhisperModel
-try:
-    model = WhisperModel('base', device='cuda', compute_type='float16')
-except Exception:
-    model = WhisperModel('base', device='cpu', compute_type='int8')
-segments, _ = model.transcribe('{audio_path}', beam_size=5, language='pl')
-res = [{{'id': s.id + 1, 'start': round(s.start, 2), 'end': round(s.end, 2), 'text_pl': s.text.strip()}} for s in segments]
-print(json.dumps(res))
-"""
-            out = subprocess.check_output([str(breeze_py), "-c", script], text=True)
-            lines = [ln.strip() for ln in out.strip().splitlines() if ln.strip().startswith("[")]
-            if lines:
-                scenes = json.loads(lines[-1])
-                log_ok(f"Whisper (.venv) wygenerował {len(scenes)} segmentów.")
-                return scenes
-        except Exception as e_venv:
-            log_warn(f"Whisper (.venv) błąd ({e_venv}), próba przez uv...")
-
-    # Próba 4: Wywołanie przez uv ze stabilnym zestawem pakietów
-    try:
-        script = f"""
-import json
-from faster_whisper import WhisperModel
-model = WhisperModel('base', device='cpu', compute_type='int8')
-segments, _ = model.transcribe('{audio_path}', beam_size=5, language='pl')
-res = [{{'id': s.id + 1, 'start': round(s.start, 2), 'end': round(s.end, 2), 'text_pl': s.text.strip()}} for s in segments]
-print(json.dumps(res))
-"""
-        cmd = ["uv", "run", "--with", "faster-whisper", "--with", "av<14", "python3", "-c", script]
-        out = subprocess.check_output(cmd, text=True)
-        lines = [ln.strip() for ln in out.strip().splitlines() if ln.strip().startswith("[")]
-        if lines:
-            scenes = json.loads(lines[-1])
-            log_ok(f"Whisper (uv/CPU) wygenerował {len(scenes)} segmentów.")
-            return scenes
-    except Exception as e_uv:
-        log_warn(f"Błąd uruchomienia Whisper przez uv: {e_uv}. Używam domyślnych segmentów awaryjnych.")
+        log_err(f"Błąd uruchomienia Whisper na CPU: {e_cpu}")
 
     duration = get_audio_duration(audio_path)
     return [{
@@ -417,248 +459,6 @@ print(json.dumps(res))
         "end": round(duration, 2),
         "text_pl": "Nagranie lektorskie do zsynchronizowania."
     }]
-
-
-def translate_segment(text_pl: str) -> str:
-    cleaned = text_pl.strip(' „"”')
-    if cleaned in PHRASE_DICTIONARY:
-        return PHRASE_DICTIONARY[cleaned]
-    for pl_key, en_val in PHRASE_DICTIONARY.items():
-        if pl_key.lower() in cleaned.lower():
-            return en_val
-
-    translated = cleaned
-    for pl_term, en_term in TECH_TERMS.items():
-        translated = re.sub(re.escape(pl_term), en_term, translated, flags=re.IGNORECASE)
-    return translated
-
-
-def translate_scenes_batch(scenes: list[dict]) -> None:
-    """
-    Tłumaczy listę scen z polskiego na angielski.
-    1. Sprawdza słownik wzorcowy PHRASE_DICTIONARY (dokładne i częściowe dopasowania).
-    2. Dla brakujących segmentów uruchamia lokalny neuronowy model tłumaczeniowy
-       Helsinki-NLP/opus-mt-pl-en (CPU) przez dedykowane środowisko .venv lub transformers.
-    3. Stosuje słownik pojęć inżynierskich TECH_TERMS.
-    """
-    untranslated_indices = []
-
-    for idx, sc in enumerate(scenes):
-        text_pl = sc.get("text_pl", "").strip(' „"”')
-        matched_en = None
-        if text_pl in PHRASE_DICTIONARY:
-            matched_en = PHRASE_DICTIONARY[text_pl]
-        else:
-            for pl_key, en_val in PHRASE_DICTIONARY.items():
-                if pl_key.lower() == text_pl.lower():
-                    matched_en = en_val
-                    break
-
-        if matched_en:
-            sc["text_en"] = matched_en
-        else:
-            untranslated_indices.append(idx)
-
-    if untranslated_indices:
-        log_info(f"Lokalny model tłumaczeniowy MarianMT (CPU): Tłumaczenie {len(untranslated_indices)} segmentów...")
-        pl_texts_to_translate = [scenes[i]["text_pl"] for i in untranslated_indices]
-        translated_en = []
-
-        # Próba 1: Bezpośredni import transformers w bieżącym procesie
-        try:
-            from transformers import pipeline
-            pipe = pipeline('translation', model='Helsinki-NLP/opus-mt-pl-en', device='cpu')
-            results = pipe(pl_texts_to_translate, batch_size=16)
-            translated_en = [r['translation_text'] for r in results]
-        except Exception:
-            pass
-
-        # Próba 2: Uruchomienie przez dedykowane środowisko .venv z transformers
-        if not translated_en:
-            venv, _, _ = find_breeze_runner()
-            venv_py = venv if venv else Path("/home/jarek/projects/ghostshift/exploration/experiments/breeze2-tts-local/.venv/bin/python3")
-            if venv_py and venv_py.exists():
-                try:
-                    script = """
-import sys, json
-from transformers import pipeline
-pipe = pipeline('translation', model='Helsinki-NLP/opus-mt-pl-en', device='cpu')
-inputs = json.loads(sys.stdin.read())
-results = pipe(inputs, batch_size=16)
-outputs = [r['translation_text'] for r in results]
-print(json.dumps(outputs, ensure_ascii=False))
-"""
-                    res = subprocess.run(
-                        [str(venv_py), "-c", script],
-                        input=json.dumps(pl_texts_to_translate, ensure_ascii=False),
-                        text=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        check=True
-                    )
-                    lines = [ln.strip() for ln in res.stdout.strip().splitlines() if ln.strip().startswith("[")]
-                    if lines:
-                        translated_en = json.loads(lines[-1])
-                except Exception as e_venv:
-                    log_warn(f"Tłumaczenie przez .venv nie powiodło się ({e_venv}), próba przez uv...")
-
-        # Próba 3: Wywołanie przez uv
-        if not translated_en:
-            try:
-                script = """
-import sys, json
-from transformers import pipeline
-pipe = pipeline('translation', model='Helsinki-NLP/opus-mt-pl-en', device='cpu')
-inputs = json.loads(sys.stdin.read())
-results = pipe(inputs, batch_size=16)
-outputs = [r['translation_text'] for r in results]
-print(json.dumps(outputs, ensure_ascii=False))
-"""
-                res = subprocess.run(
-                    ["uv", "run", "--with", "transformers", "--with", "sentencepiece", "--with", "sacremoses", "python3", "-c", script],
-                    input=json.dumps(pl_texts_to_translate, ensure_ascii=False),
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=True
-                )
-                lines = [ln.strip() for ln in res.stdout.strip().splitlines() if ln.strip().startswith("[")]
-                if lines:
-                    translated_en = json.loads(lines[-1])
-            except Exception as e_uv:
-                log_err(f"Błąd tłumaczenia wsadowego: {e_uv}")
-
-        if translated_en and len(translated_en) == len(untranslated_indices):
-            for idx_in_untrans, orig_idx in enumerate(untranslated_indices):
-                scenes[orig_idx]["text_en"] = translated_en[idx_in_untrans]
-        else:
-            log_warn("Fallback: Nie udało się przetłumaczyć neuronowo wszystkich zdań.")
-            for orig_idx in untranslated_indices:
-                scenes[orig_idx]["text_en"] = scenes[orig_idx]["text_pl"]
-
-    # Post-processing ze słownikiem terminów inżynierskich IT
-    for sc in scenes:
-        txt = sc.get("text_en", "")
-        for pl_term, en_term in TECH_TERMS.items():
-            txt = re.sub(re.escape(pl_term), en_term, txt, flags=re.IGNORECASE)
-        sc["text_en"] = txt
-
-
-def synthesize_edge_tts(text: str, out_wav: Path, voice: str = "en-US-ChristopherNeural") -> None:
-    temp_mp3 = out_wav.with_suffix(".mp3")
-    edge_bin = None
-    for cand in [
-        shutil.which("edge-tts"),
-        str(Path.home() / ".local" / "share" / "ghostshift-tts" / "venv" / "bin" / "edge-tts"),
-        str(Path.home() / ".local" / "bin" / "edge-tts"),
-    ]:
-        if cand and Path(cand).exists():
-            edge_bin = cand
-            break
-            
-    if edge_bin:
-        cmd = [
-            edge_bin,
-            "--text", text,
-            "--voice", voice,
-            "--rate=+2%",
-            "--pitch=-2Hz",
-            f"--write-media={temp_mp3}"
-        ]
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-    else:
-        cmd = [
-            "uv", "run", "--with", "edge-tts", "edge-tts",
-            "--text", text,
-            "--voice", voice,
-            "--rate=+2%",
-            "--pitch=-2Hz",
-            f"--write-media={temp_mp3}"
-        ]
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        
-    cmd_wav = [
-        "ffmpeg", "-y", "-i", str(temp_mp3),
-        "-acodec", "pcm_s16le", "-ar", "24000", "-ac", "1",
-        str(out_wav)
-    ]
-    subprocess.run(cmd_wav, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-    if temp_mp3.exists():
-        temp_mp3.unlink()
-
-
-def find_breeze_runner() -> tuple[Path | None, Path | None, Path | None]:
-    candidates = [
-        Path("/home/jarek/projects/ghostshift/exploration/experiments/breeze2-tts-local"),
-        Path("/home/jarek/workspaces/breeze2-tts-local"),
-        Path.home() / "projects" / "ghostshift" / "exploration" / "experiments" / "breeze2-tts-local",
-        Path.home() / "workspaces" / "breeze2-tts-local",
-    ]
-    for base in candidates:
-        model = base / "models" / "Breeze-TTS-2"
-        infer = base / "src" / "breeze-tts" / "infer.py"
-        venv = base / ".venv" / "bin" / "python"
-        if model.exists() and infer.exists() and venv.exists():
-            return venv, infer, model
-    return None, None, None
-
-
-def synthesize_breeze(text: str, out_wav: Path, ref_audio: Path, ref_transcript: str, instruction: str) -> bool:
-    venv, infer, model = find_breeze_runner()
-    if not (venv and infer and model):
-        log_warn("find_breeze_runner: Brak środowiska .venv, infer.py lub katalogu wag Breeze-TTS-2.")
-        return False
-        
-    cmd = [
-        str(venv), str(infer), str(model),
-        "--text", text,
-        "--ref-audio", str(ref_audio.resolve()),
-        "--ref-text", ref_transcript,
-        "--output", str(out_wav.resolve()),
-    ]
-    if instruction:
-        cmd.extend(["--instruction", instruction])
-        
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(infer.parent)
-    local_bin = str(Path.home() / ".local" / "bin")
-    env["PATH"] = f"{local_bin}:{env.get('PATH', '')}"
-
-    try:
-        log_info(f"Breeze-TTS-2: Synteza '{text[:45]}...' (ref: {ref_audio.name})")
-        res = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=str(infer.parent),
-            env=env,
-            text=True,
-            check=True
-        )
-        return True
-    except subprocess.CalledProcessError as e:
-        log_err(f"Breeze-TTS-2 inference error (kod {e.returncode}):\n{e.stderr[-1000:] if e.stderr else e.stdout[-1000:]}")
-        return False
-    except Exception as e:
-        log_err(f"Breeze-TTS-2 execution error: {e}")
-        return False
-
-
-def synthesize_segment(text_en: str, out_wav: Path, engine: str, ref_audio: Path | None, ref_transcript: str, instruction: str) -> str:
-    used_engine = engine
-    if engine in ("breeze", "auto"):
-        if ref_audio and ref_audio.exists() and synthesize_breeze(text_en, out_wav, ref_audio, ref_transcript, instruction):
-            return "Breeze-TTS-2 (Zero-Shot Clone)"
-        else:
-            if engine == "breeze":
-                log_warn("Wagi Breeze-TTS-2 nie są jeszcze w pełni zainicjalizowane, używam bezpiecznego fallbacku Edge-TTS...")
-            used_engine = "edge"
-            
-    if used_engine in ("edge", "auto", "kokoro"):
-        synthesize_edge_tts(text_en, out_wav)
-        return "Edge-TTS (en-US-ChristopherNeural)"
-
-    raise RuntimeError(f"Nieobsługiwany silnik TTS: {engine}")
 
 
 def time_sync_and_master(
@@ -670,22 +470,20 @@ def time_sync_and_master(
     target_tp: float = -1.0
 ) -> None:
     log_info(f"Synchronizacja segmentów i mastering EBU R128 ({target_lufs} LUFS)...")
-    
+
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
         adjusted_wavs = []
-        
+
         for idx, (scene, seg_wav) in enumerate(zip(scenes, segment_wavs)):
             seg_dur = get_audio_duration(seg_wav)
-            avail_dur = scene["end"] - scene["start"]
-            
             if idx + 1 < len(scenes):
                 max_window = scenes[idx + 1]["start"] - scene["start"]
             else:
                 max_window = total_duration - scene["start"]
-                
+
             out_seg = tmp_path / f"synced_{idx:03d}.wav"
-            
+
             if seg_dur > max_window and max_window > 0.5:
                 speed_factor = min(seg_dur / max_window, 1.25)
                 log_info(f"Dopasowanie tempa dla sceny {scene['id']}: x{speed_factor:.2f}")
@@ -711,14 +509,14 @@ def time_sync_and_master(
             delay_ms = int(scene["start"] * 1000)
             filter_complex.append(f"[{idx}:a]adelay={delay_ms}|{delay_ms}[d{idx}]")
             mix_inputs.append(f"[d{idx}]")
-            
+
         filter_complex.append(f"{''.join(mix_inputs)}amix=inputs={len(scenes)}:dropout_transition=0:normalize=0[mixed]")
         filter_complex.append(f"[mixed]loudnorm=I={target_lufs}:TP={target_tp}:LRA=11[mastered]")
-        
+
         cmd = ["ffmpeg", "-y"]
         for adj_wav in adjusted_wavs:
             cmd.extend(["-i", str(adj_wav)])
-            
+
         cmd.extend([
             "-filter_complex", ";".join(filter_complex),
             "-map", "[mastered]",
@@ -734,22 +532,33 @@ def auto_detect_input_video(work_dir: Path) -> Path | None:
     if not input_dir.exists():
         return None
 
-    mp4_files = [f for f in input_dir.glob("*.mp4") if not f.name.startswith("footage_") and not f.name.startswith("raw_voiceover")]
-    if not mp4_files:
-        mp4_files = list(input_dir.glob("*.mp4"))
+    mp4_files = [f for f in input_dir.glob("*.mp4") if not f.name.startswith("raw_voiceover")]
     if not mp4_files:
         return None
 
-    # Preferencja dla FIXED lub FINAL
     for pref in ["FIXED", "FINAL", "Karaoke"]:
         for f in mp4_files:
             if pref in f.name:
                 return f
-    # Największy plik jako fallback
     return max(mp4_files, key=lambda f: f.stat().st_size)
 
 
-def process_single_short(work_dir: Path, input_video: Path | None, script_path: Path | None, ref_audio: Path | None, ref_transcript: str, engine: str, instruction: str, output_video: bool, transcribe_only: bool = False) -> bool:
+# ==============================================================================
+# 6. GŁÓWNY POTOK PRZETWARZANIA (SINGLE SHORT / EPISODE)
+# ==============================================================================
+def process_single_short(
+    work_dir: Path,
+    input_video: Path | None,
+    script_path: Path | None,
+    ref_audio: Path | None,
+    ref_transcript: str,
+    engine: str,
+    instruction: str,
+    output_video: bool,
+    transcribe_only: bool = False,
+    translator: LocalMarianTranslator | None = None,
+    breeze_engine: BreezeTTSInProcess | None = None,
+) -> bool:
     work_dir = work_dir.resolve()
     short_id = work_dir.name
     output_dir = work_dir / "output"
@@ -771,13 +580,13 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
     log_info(f"Katalog roboczy:  {work_dir}")
     log_info(f"Silnik TTS:       {engine.upper()}")
 
-    # 1. Ekstrakcja czystego audio lub wykorzystanie dedykowanego pliku lektorskiego z input/
+    # 1. Ekstrakcja czystego audio ze źródła lub dedykowany plik lektorski
     raw_audio = output_dir / f"{short_id}_VoiceOver_RAW_24k.wav"
     input_voiceover = None
     input_dir = work_dir / "input"
     if input_dir.exists():
         for vo_cand in sorted(input_dir.glob("*.wav")):
-            if "voiceover" in vo_cand.name.lower() or "voice_over" in vo_cand.name.lower() or "clean" in vo_cand.name.lower():
+            if "voiceover" in vo_cand.name.lower() or "clean" in vo_cand.name.lower():
                 input_voiceover = vo_cand
                 break
 
@@ -801,7 +610,6 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
             work_dir / f"{short_id}.srt",
             input_video.with_suffix(".srt"),
         ]
-        # Dodatkowe poszukiwanie dowolnego .srt w input/
         candidates.extend(list((work_dir / "input").glob("*.srt")))
         for cand in candidates:
             if cand.exists():
@@ -816,13 +624,11 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
             scenes = parse_short_script_md(script_path)
 
         srt_duration = scenes[-1]["end"] if scenes else 0.0
-        if abs(srt_duration - total_duration) > 10.0:
-            log_warn(f"Wykryto rozbieżność czasu: scenariusz ma {srt_duration:.2f}s, a wideo ma {total_duration:.2f}s!")
-            if abs(srt_duration - total_duration) > 20.0:
-                log_warn("Plik scenariusza nie odpowiada czasowo wideo! Uruchamianie bezpośredniej transkrypcji audio za pomocą Whisper...")
-                whisper_scenes = transcribe_with_whisper(raw_audio)
-                if whisper_scenes:
-                    scenes = whisper_scenes
+        if abs(srt_duration - total_duration) > 20.0:
+            log_warn("Scenariusz nie odpowiada czasowo wideo! Uruchamianie bezpośredniej transkrypcji Whisper...")
+            whisper_scenes = transcribe_with_whisper(raw_audio)
+            if whisper_scenes:
+                scenes = whisper_scenes
     else:
         log_info("Brak pliku scenariusza (.md/.srt) — uruchamianie automatycznej transkrypcji Whisper...")
         scenes = transcribe_with_whisper(raw_audio)
@@ -831,16 +637,16 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
         log_err(f"Nie udało się wyodrębnić segmentów do dubbingu dla {short_id}.")
         return False
 
-    # 3. Tłumaczenie inżynierskie
-    log_info("Tłumaczenie segmentów na język angielski (wzorzec + lokalny MarianMT + słownik IT)...")
-    translate_scenes_batch(scenes)
+    # 3. Dynamiczne tłumaczenie maszynowe (MarianMT na CPU + Tech Terms)
+    if translator is None:
+        translator = LocalMarianTranslator()
+    translate_scenes_batch(scenes, translator)
 
     transcript_json = output_dir / f"{short_id}_Dubbing_Transcript_EN.json"
     with open(transcript_json, "w", encoding="utf-8") as f:
         json.dump(scenes, f, ensure_ascii=False, indent=2)
     log_ok(f"Zapisano transkrypcję segmentów: {transcript_json.name}")
 
-    # Wygenerowanie napisów SRT (PL z Whisper oraz EN po przekładzie inżynierskim)
     srt_pl_file = output_dir / f"{short_id}_PL.srt"
     srt_en_file = output_dir / f"{short_id}_EN.srt"
     export_srt(scenes, srt_pl_file, lang_key="text_pl")
@@ -848,26 +654,47 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
     log_ok(f"Wygenerowano napisy SRT: {srt_pl_file.name} oraz {srt_en_file.name}")
 
     if transcribe_only:
-        log_ok(f"Tryb --transcribe-only zakończony dla {short_id}. Wygenerowano komplet napisów i transkrypcji.")
+        log_ok(f"Tryb --transcribe-only zakończony dla {short_id}.")
         return True
 
-    # 4. Synteza mowy
+    # 4. Synteza mowy w procesie (Breeze-TTS w VRAM lub Edge-TTS)
     dub_parts_dir = output_dir / "dub_parts"
     dub_parts_dir.mkdir(parents=True, exist_ok=True)
     segment_wavs = []
-    
+
+    # Inicjalizacja silnika Breeze-TTS w pamięci GPU (jeśli nie przekazano zainicjalizowanego)
+    if breeze_engine is None and engine in ("breeze", "auto") and BREEZE_AVAILABLE:
+        model_dir = find_breeze_model_dir()
+        if model_dir and ref_audio and ref_audio.exists():
+            try:
+                breeze_engine = BreezeTTSInProcess(model_dir)
+            except Exception as e_load:
+                log_warn(f"Nie udało się załadować Breeze-TTS-2 ({e_load}), fallback do Edge-TTS...")
+
     log_info("Generowanie mowy dla poszczególnych scen...")
     active_engine_name = "unknown"
     for sc in scenes:
         part_wav = dub_parts_dir / f"scene_{sc['id']:03d}.wav"
         txt_marker = part_wav.with_suffix(".txt")
-        # Wznawianie: Jeśli segment WAV już istnieje i odpowiada aktualnemu tekstowi angielskiemu
+
+        # Inteligentne wznawianie: użyj istniejącego pliku tylko jeśli tekst angielski jest identyczny
         if part_wav.exists() and part_wav.stat().st_size > 1000 and txt_marker.exists() and txt_marker.read_text(encoding="utf-8").strip() == sc["text_en"].strip():
             segment_wavs.append(part_wav)
-            active_engine_name = "Breeze-TTS-2 (Zero-Shot Clone)"
+            active_engine_name = "Breeze-TTS-2 (Zero-Shot Clone)" if breeze_engine else "Edge-TTS"
             continue
 
-        active_engine_name = synthesize_segment(sc["text_en"], part_wav, engine, ref_audio, ref_transcript, instruction)
+        synth_ok = False
+        if breeze_engine and ref_audio and ref_audio.exists():
+            log_info(f"Breeze-TTS-2: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...'")
+            synth_ok = breeze_engine.synthesize(sc["text_en"], part_wav, ref_audio, ref_transcript, instruction)
+            if synth_ok:
+                active_engine_name = "Breeze-TTS-2 (Zero-Shot Clone)"
+
+        if not synth_ok:
+            log_info(f"Edge-TTS: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...'")
+            synthesize_edge_tts(sc["text_en"], part_wav)
+            active_engine_name = "Edge-TTS (en-US-ChristopherNeural)"
+
         if part_wav.exists() and part_wav.stat().st_size > 1000:
             txt_marker.write_text(sc["text_en"].strip() + "\n", encoding="utf-8")
         segment_wavs.append(part_wav)
@@ -879,7 +706,7 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
     # 6. Finalny montaż wideo EN
     if output_video:
         output_video_file = output_dir / f"{short_id}_FINAL_EN_DUBBED.mp4"
-        log_info(f"Generowanie zduplikowanego wideo z angielską ścieżką dźwiękową: {output_video_file.name}...")
+        log_info(f"Generowanie filmu z angielską ścieżką dźwiękową: {output_video_file.name}...")
         cmd = [
             "ffmpeg", "-y",
             "-i", str(input_video),
@@ -902,14 +729,12 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
         f.write(f"- **Standard emisyjny audio:** `EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS)`\n\n")
         f.write("## Wygenerowane Pliki Produkcyjne (Deliverables)\n\n")
         f.write(f"1. **Plik dźwiękowy lektora (YouTube Multi-Language Audio):**\n")
-        f.write(f"   `{mastered_wav.name}` (WAV 48kHz stereo, -14.0 LUFS — do bezpośredniego wrzucenia w YouTube Studio jako alternatywna ścieżka językowa do istniejącego filmu).\n\n")
+        f.write(f"   `{mastered_wav.name}` (WAV 48kHz stereo, -14.0 LUFS — do wrzucenia w YouTube Studio jako alternatywna ścieżka językowa).\n\n")
         if output_video:
             f.write(f"2. **Zdubbingowany film EN (Full Video + Dubbing):**\n")
-            f.write(f"   `{output_video_file.name}` (obraz wideo + zsynchronizowany dubbing EN — do publikacji jako niezależny film na kanał anglojęzyczny lub Shorts).\n\n")
-        f.write(f"3. **Napisy w języku angielskim:**\n")
-        f.write(f"   `{srt_en_file.name}` (plik .srt wygenerowany w sesji pod YouTube / CC).\n\n")
-        f.write(f"4. **Napisy w języku polskim:**\n")
-        f.write(f"   `{srt_pl_file.name}` (plik .srt z bezpośredniej transkrypcji Whisper).\n\n")
+            f.write(f"   `{output_video_file.name}` (wideo + zsynchronizowany dubbing EN).\n\n")
+        f.write(f"3. **Napisy w języku angielskim:** `{srt_en_file.name}`\n")
+        f.write(f"4. **Napisy w języku polskim:** `{srt_pl_file.name}`\n\n")
         f.write("## Tabela Zsynchronizowanych Scen\n\n")
         f.write("| Scena | Zakres czasu | Oryginał PL | Kwestia EN |\n")
         f.write("| :---: | :---: | :--- | :--- |\n")
@@ -929,14 +754,17 @@ def process_single_short(work_dir: Path, input_video: Path | None, script_path: 
     return True
 
 
+# ==============================================================================
+# 7. PUNKT WEJŚCIA CLI
+# ==============================================================================
 def main():
     parser = argparse.ArgumentParser(description="Generyczny autonomiczny potok dubbingu wideo (pojedynczy lub zestaw).")
-    parser.add_argument("-i", "--input", type=Path, default=None, help="Opcjonalny bezpośredni plik wideo źródłowego (MP4)")
+    parser.add_argument("-i", "--input", type=Path, default=None, help="Opcjonalny plik wideo źródłowego (MP4)")
     parser.add_argument("-w", "--work-dir", type=Path, default=None, help="Katalog roboczy projektu (np. work/EP002_Short)")
     parser.add_argument("-s", "--script", type=Path, default=None, help="Opcjonalny plik scenariusza (MD lub SRT)")
-    parser.add_argument("--batch", nargs="+", help="Lista katalogów projektów do przetworzenia wsadowego (np. work/EP002_Short work/EP001_Short)")
-    
-    # Parametry próbki głosu
+    parser.add_argument("--batch", nargs="+", help="Lista katalogów projektów do przetworzenia wsadowego")
+
+    # Próbka głosu
     parser.add_argument("--ref-audio", type=Path, default=None, help="Ścieżka do gotowej próbki referencyjnej WAV")
     parser.add_argument("--ref-transcript", type=str, default="", help="Transkrypcja próbki referencyjnej")
     parser.add_argument("--ref-source", type=Path, default=None, help="Plik źródłowy do wycięcia próbki w locie")
@@ -944,22 +772,23 @@ def main():
     parser.add_argument("--ref-end", type=str, default="00:00:20.300", help="Koniec wycinka próbki")
 
     # Silnik i styl
-    parser.add_argument("--engine", choices=["auto", "breeze", "kokoro", "edge"], default="auto", help="Silnik syntezy TTS")
+    parser.add_argument("--engine", choices=["auto", "breeze", "edge", "kokoro"], default="auto", help="Silnik syntezy TTS")
     parser.add_argument("--instruction", type=str, default="Maintain a calm, confident, authoritative engineering delivery with clear cadence.", help="Instrukcja stylu mowy")
     parser.add_argument("--output-video", action="store_true", default=True, help="Wygeneruj zduplikowane wideo z dubbingiem EN")
-    parser.add_argument("--transcribe-only", action="store_true", default=False, help="Wygeneruj wyłącznie transkrypcję Whisper i napisy SRT/JSON (bez syntezy TTS)")
+    parser.add_argument("--transcribe-only", action="store_true", default=False, help="Wygeneruj wyłącznie transkrypcję Whisper i napisy SRT (bez syntezy TTS)")
     args = parser.parse_args()
 
-    # Obsługa próbki referencyjnej
+    # Wycięcie próbki referencyjnej w locie jeśli wskazano --ref-source
     ref_audio = args.ref_audio
     ref_transcript = args.ref_transcript
     if args.ref_source and args.ref_source.exists():
-        sample_out = Path("work/voice_sample/ref_voice_sample.wav")
+        sample_out = REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample.wav"
         extract_voice_sample_clip(args.ref_source, args.ref_start, args.ref_end, sample_out, ref_transcript)
         ref_audio = sample_out
 
     if not ref_audio:
         candidates = [
+            REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample.wav",
             Path("work/voice_sample/ref_voice_sample.wav"),
             Path("work/ref_voice_sample.wav"),
         ]
@@ -971,7 +800,18 @@ def main():
                     ref_transcript = txt_cand.read_text(encoding="utf-8").strip()
                 break
 
-    # Tryb wsadowy (zestaw wideo)
+    # Współdzielone instancje w procesie (In-Process Singletons)
+    shared_translator = LocalMarianTranslator()
+    shared_breeze = None
+    if args.engine in ("breeze", "auto") and not args.transcribe_only and BREEZE_AVAILABLE:
+        model_dir = find_breeze_model_dir()
+        if model_dir and ref_audio and ref_audio.exists():
+            try:
+                shared_breeze = BreezeTTSInProcess(model_dir)
+            except Exception as e:
+                log_warn(f"Nie udało się zainicjalizować Breeze-TTS-2 ({e}), fallback do Edge-TTS...")
+
+    # Tryb wsadowy
     if args.batch:
         log_info(f"Uruchamianie przetwarzania zestawu wideo ({len(args.batch)} projektów)...")
         for b_dir in args.batch:
@@ -985,14 +825,15 @@ def main():
                 engine=args.engine,
                 instruction=args.instruction,
                 output_video=args.output_video,
-                transcribe_only=args.transcribe_only
+                transcribe_only=args.transcribe_only,
+                translator=shared_translator,
+                breeze_engine=shared_breeze,
             )
         return
 
     # Tryb pojedynczy
     work_dir = args.work_dir
     input_video = args.input.resolve() if args.input else None
-
     if not work_dir and input_video:
         work_dir = input_video.parent.parent
 
@@ -1009,7 +850,9 @@ def main():
         engine=args.engine,
         instruction=args.instruction,
         output_video=args.output_video,
-        transcribe_only=args.transcribe_only
+        transcribe_only=args.transcribe_only,
+        translator=shared_translator,
+        breeze_engine=shared_breeze,
     )
 
 

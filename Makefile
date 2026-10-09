@@ -1,4 +1,4 @@
-.PHONY: help audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-studio desktop-cyber-hud desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short media-clean-work media-prepare-demo gdrive-status gdrive-install gdrive-auth gdrive-list gdrive-folders gdrive-add gdrive-remove gdrive-sync gdrive-timer-enable gdrive-timer-disable gdrive-mount gdrive-unmount tts-status tts-install tts-config tts-test tts-uninstall
+.PHONY: help setup-env media-setup-models audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-studio desktop-cyber-hud desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short media-clean-work media-prepare-demo media-extract-sample media-dub-short media-dub-ep002 media-dub-ep001 media-dub-batch media-dub-clean gdrive-status gdrive-install gdrive-auth gdrive-list gdrive-folders gdrive-add gdrive-remove gdrive-sync gdrive-timer-enable gdrive-timer-disable gdrive-mount gdrive-unmount tts-status tts-install tts-config tts-test tts-uninstall
 
 # Domyślny cel
 help:
@@ -6,6 +6,7 @@ help:
 	@echo "  WORKSTATION HUB — SYSTEM CONTROL INTERFACE"
 	@echo "=========================================================="
 	@echo "Dostępne komendy:"
+	@echo "  make setup-env       - Inicjalizuje środowisko Python (.venv) przez uv sync"
 	@echo "  make audit           - Wykonuje audyt fizycznego sprzętu (CPU, RAM, Storage, GPU, Audio, Kamery)"
 	@echo "  make inventory       - Wykonuje inwentaryzację oprogramowania (APT, Flatpak, Repozytoria, Runtimes)"
 	@echo "  make all-audits      - Uruchamia pełny zestaw audytów (sprzęt + oprogramowanie)"
@@ -26,9 +27,12 @@ help:
 	@echo "  --- Narzędzia Wideo & Audio (Kdenlive & Studio) ---"
 	@echo "  make media-check-mcp - Sprawdza stan Kdenlive, wrapperów CLI i serwera MCP"
 	@echo "  make media-setup-mcp - Instaluje Kdenlive (Flatpak user) i konfiguruje serwer MCP"
+	@echo "  make media-setup-models - Przygotowuje lokalne wagi modeli AI (Breeze-TTS-2, MarianMT)"
 	@echo "  make media-clean-audio INPUT=... OUTPUT=... [START=...] [END=...] [LUFS=-14.0]"
 	@echo "  make media-karaoke AUDIO=... OUTPUT=... [FAST=1] [FONT=...]"
 	@echo "  make media-build-short WORKSPACE=... [NAME=EP002_Short]"
+	@echo "  make media-extract-sample INPUT=... START=... END=... OUTPUT=..."
+	@echo "  make media-dub-short WORKSPACE=... [INPUT=...] [REF_AUDIO=...]"
 	@echo "  make media-clean-work - Czyści wygenerowane artefakty (assets, .kdenlive), zachowując input/"
 	@echo "  make media-prepare-demo - Inicjalizuje/odnawia pliki wejściowe w work/EP002_Short/input/"
 	@echo "  --- Google Drive Selektywna Synchronizacja (rclone) ---"
@@ -45,6 +49,12 @@ help:
 	@echo "  make gdrive-mount [REMOTE_PATH=...] [MOUNTPOINT=...] - Montuje dysk VFS z lokalnym cache"
 	@echo "  make gdrive-unmount [MOUNTPOINT=...] - Odmontowuje dysk VFS"
 	@echo "=========================================================="
+
+setup-env:
+	@echo "Inicjalizacja środowiska wirtualnego Python (.venv) przez uv..."
+	@command -v uv >/dev/null 2>&1 || { echo "[BŁĄD] Wymagane narzędzie 'uv'. Zainstaluj: curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
+	@uv sync
+	@echo "[OK] Środowisko .venv gotowe do użycia."
 
 audit:
 	@chmod +x scripts/audit_hardware.sh
@@ -155,6 +165,10 @@ media-prepare-demo:
 	@./scripts/media/prepare_demo.sh
 
 # --- Autonomiczny Potok Dubbingu i Voiceoveru AI (Whisper / TTS / EBU R128) ---
+
+media-setup-models:
+	@chmod +x scripts/media/setup_models.sh
+	@./scripts/media/setup_models.sh
 
 media-extract-sample:
 	@if [ -z "$(INPUT)" ] || [ -z "$(START)" ] || [ -z "$(END)" ] || [ -z "$(OUTPUT)" ]; then \

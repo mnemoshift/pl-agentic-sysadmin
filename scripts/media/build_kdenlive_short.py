@@ -79,14 +79,8 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
     content = ref_kdenlive.read_text(encoding="utf-8")
 
     # Podmieniamy root projektu
-    old_roots = [
-        "/home/jarek/projects/ghostshift/mnemoshift-channel/episodes/EP002_agentic_sysadmin_desktop/01_youtube",
-        str(workspace.resolve())
-    ]
     new_root = str(workspace.resolve())
-
-    for r in old_roots:
-        content = content.replace(f'root="{r}"', f'root="{new_root}"')
+    content = re.sub(r'root="[^"]*"', f'root="{new_root}"', content)
 
     # Dynamiczne dopasowanie ścieżki do pliku lektora (WAV)
     candidate_wavs = list(assets_dir.glob("*.wav")) + list((workspace / "input").glob("*.wav"))

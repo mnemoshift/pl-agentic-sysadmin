@@ -18,48 +18,9 @@ import re
 import sys
 from pathlib import Path
 
-DEFAULT_SCENES = [
-    {
-        "scene": 1,
-        "title": "PRZESTAŃ TRAKTOWAĆ AI JAK ZABAWKĘ",
-        "text": "Przestań traktować AI jak zabawkę do pogaduszek. Oto Agentic SysAdmin.",
-        "visual": "Kadr pionowy 9:16 (Cybernetyczny rdzeń decyzyjny AI)",
-        "start": 0.0,
-        "end": 5.1
-    },
-    {
-        "scene": 2,
-        "title": "KONIEC Z MARNOWANIEM CZASU NA FORACH",
-        "text": "Zamiast marnować godziny na forach i dłubaniu w konfiguracji, dałem agentowi jedno proste zadanie:",
-        "visual": "Kadr pionowy 9:16 (Chaos w plikach konfiguracyjnych i dotfiles)",
-        "start": 5.1,
-        "end": 11.85
-    },
-    {
-        "scene": 3,
-        "title": "ZORIN OS W STYLU MACOS",
-        "text": "Przekształć domyślny pulpit Zorina w czyste środowisko w stylu macOS.",
-        "visual": "Kadr pionowy 9:16 (Minimalistyczny pulpit macOS na Zorin OS)",
-        "start": 11.85,
-        "end": 16.14
-    },
-    {
-        "scene": 4,
-        "title": "MINUTA ROBOTY BEZ DOTKNIĘCIA PLIKÓW",
-        "text": "Minuta roboty, audyt w tle i gotowy plan wdrożenia. Bez dotknięcia ani jednego pliku konfiguracyjnego.",
-        "visual": "Wycinek wideo 1 (Wykonanie planu wdrożenia w Antigravity)",
-        "start": 16.14,
-        "end": 22.8
-    },
-    {
-        "scene": 5,
-        "title": "NOWA ERA LINUKSA Z AGENTIC SYSADMIN",
-        "text": "Wraz z Agentic SysAdmin nadeszła nowa era Linuksa. Całą sesję na żywo i otwarte repozytorium znajdziesz w filmie poniżej!",
-        "visual": "Wycinek wideo 2 (Repozytorium GitHub i zaproszenie do filmu)",
-        "start": 22.8,
-        "end": 30.4
-    }
-]
+# Domyślny pusty szablon scen (brak sztucznego hardcodingu tekstów)
+DEFAULT_SCENES = []
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Transkrypcja i synchronizacja scen audio Whisper.")
@@ -170,7 +131,7 @@ def transcribe(audio_path: Path, output_json: Path, output_md: Path, fast: bool,
     if parsed_scenes and not all(s.get("is_placeholder", False) for s in parsed_scenes):
         scenes = [dict(s) for s in parsed_scenes]
     else:
-        scenes = [dict(s) for s in DEFAULT_SCENES]
+        scenes = []
 
     whisper_success = False
     if not fast:
@@ -183,15 +144,23 @@ def transcribe(audio_path: Path, output_json: Path, output_md: Path, fast: bool,
 
             if seg_list:
                 whisper_success = True
-                # Jeśli mamy określoną liczbę scen, dopasowujemy segmenty
-                if len(seg_list) >= len(scenes):
+                if not scenes:
+                    for idx, seg in enumerate(seg_list, 1):
+                        scenes.append({
+                            "scene": idx,
+                            "title": f"SCENA {idx}",
+                            "text": seg.text.strip(),
+                            "visual": "Kadr wideo",
+                            "start": round(seg.start, 2),
+                            "end": round(seg.end, 2)
+                        })
+                elif len(seg_list) >= len(scenes):
                     for idx in range(len(scenes)):
                         scenes[idx]["start"] = round(seg_list[idx].start, 2)
                         scenes[idx]["end"] = round(seg_list[idx].end, 2)
                         if not scenes[idx]["text"]:
                             scenes[idx]["text"] = seg_list[idx].text.strip()
                 else:
-                    # Jeśli segmentów jest mniej niż scen
                     for idx, seg in enumerate(seg_list):
                         if idx < len(scenes):
                             scenes[idx]["start"] = round(seg.start, 2)
@@ -199,7 +168,11 @@ def transcribe(audio_path: Path, output_json: Path, output_md: Path, fast: bool,
                             if not scenes[idx]["text"]:
                                 scenes[idx]["text"] = seg.text.strip()
         except Exception as e:
-            print(f"[Whisper Info] Użyto zweryfikowanych znaczników referencyjnych (fallback: {e})")
+            print(f"[Whisper Info] Błąd transkrypcji Whisper: {e}")
+
+    if not scenes:
+        print(f"[BŁĄD] Nie udało się wygenerować scen (brak scenariusza oraz brak transkrypcji).", file=sys.stderr)
+        sys.exit(1)
 
     if not whisper_success and not fast:
         print(f"[Whisper Info] Użyto znaczników ze scenariusza lub bazy referencyjnej.")
