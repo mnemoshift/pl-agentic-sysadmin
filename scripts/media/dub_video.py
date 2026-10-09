@@ -808,6 +808,35 @@ def process_single_short(
     log_info(f"Katalog roboczy:  {work_dir}")
     log_info(f"Silnik TTS:       {engine.upper()}")
 
+    # Walidacja i automatyczna detekcja próbki referencyjnej głosu
+    if ref_audio:
+        ref_audio = Path(ref_audio).resolve()
+        if not ref_audio.exists():
+            log_warn(f"Podana próbka referencyjna nie istnieje ({ref_audio}). Szukanie w domyślnych lokalizacjach...")
+            ref_audio = None
+
+    if not ref_audio:
+        candidates = [
+            REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample.wav",
+            REPO_ROOT / "voice" / "jarek_clean_reference.wav",
+            REPO_ROOT / "voice" / "ref_voice_sample.wav",
+            work_dir / "input" / "ref_voice_sample.wav",
+            Path("work/voice_sample/ref_voice_sample.wav").resolve(),
+            Path("voice/jarek_clean_reference.wav").resolve(),
+        ]
+        for cand in candidates:
+            if cand.exists():
+                ref_audio = cand.resolve()
+                break
+
+    if ref_audio and not ref_transcript:
+        txt_cand = ref_audio.with_suffix(".txt")
+        if txt_cand.exists():
+            ref_transcript = txt_cand.read_text(encoding="utf-8").strip()
+
+    if ref_audio:
+        log_info(f"Próbka głosu:     {ref_audio.name} ({'z transkrypcją' if ref_transcript else 'bez transkrypcji'})")
+
     # 1. Ekstrakcja czystego audio ze źródła lub dedykowany plik lektorski
     raw_audio = output_dir / f"{short_id}_VoiceOver_RAW_24k.wav"
     input_voiceover = None
@@ -1056,10 +1085,17 @@ def main():
         extract_voice_sample_clip(args.ref_source, args.ref_start, args.ref_end, sample_out, ref_transcript)
         ref_audio = sample_out
 
+    if ref_audio and not ref_audio.exists():
+        log_warn(f"Podana próbka referencyjna nie istnieje ({ref_audio}). Szukanie w domyślnych lokalizacjach...")
+        ref_audio = None
+
     if not ref_audio:
         candidates = [
             REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample.wav",
+            REPO_ROOT / "voice" / "jarek_clean_reference.wav",
+            REPO_ROOT / "voice" / "ref_voice_sample.wav",
             Path("work/voice_sample/ref_voice_sample.wav"),
+            Path("voice/jarek_clean_reference.wav"),
             Path("work/ref_voice_sample.wav"),
         ]
         for cand in candidates:

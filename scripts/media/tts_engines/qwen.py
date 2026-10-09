@@ -44,10 +44,16 @@ class QwenTTSEngine(BaseTTSEngine):
         ref_path_str = str(ref_audio.resolve())
         if self.cached_prompt is None or self.cached_ref_audio != ref_path_str:
             self._ensure_model()
+            if not ref_text.strip():
+                txt_file = ref_audio.with_suffix(".txt")
+                if txt_file.exists():
+                    ref_text = txt_file.read_text(encoding="utf-8").strip()
+
+            use_xvector = not bool(ref_text.strip())
             self.cached_prompt = self._model.create_voice_clone_prompt(
                 ref_audio=ref_path_str,
-                ref_text=ref_text.strip(),
-                x_vector_only_mode=False,
+                ref_text=ref_text.strip() if not use_xvector else None,
+                x_vector_only_mode=use_xvector,
             )
             self.cached_ref_audio = ref_path_str
         return self.cached_prompt
