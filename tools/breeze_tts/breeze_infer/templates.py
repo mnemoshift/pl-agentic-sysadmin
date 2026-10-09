@@ -289,9 +289,9 @@ def prepare_inputs(
     requests: list[Request],
     template: TemplateSpec,
     *,
-    guidance_scale: float,
-    guidance_scale_ref: float | None,
-    guidance_scale_ins: float | None,
+    guidance_scale: float = 1.0,
+    guidance_scale_ref: float | None = None,
+    guidance_scale_ins: float | None = None,
 ) -> dict[str, torch.Tensor | None | float]:
     for request in requests:
         missing = []

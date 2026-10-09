@@ -232,6 +232,8 @@ class BreezeTTSInProcess:
                 [request],
                 get_template(template_name),
                 guidance_scale=1.0,
+                guidance_scale_ref=None,
+                guidance_scale_ins=None,
             )
 
             out_wav.parent.mkdir(parents=True, exist_ok=True)
@@ -249,6 +251,8 @@ class BreezeTTSInProcess:
             return True
         except Exception as e:
             log_err(f"Błąd syntezy segmentu przez Breeze-TTS-2: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
 
@@ -676,11 +680,19 @@ def process_single_short(
     for sc in scenes:
         part_wav = dub_parts_dir / f"scene_{sc['id']:03d}.wav"
         txt_marker = part_wav.with_suffix(".txt")
+        engine_marker = part_wav.with_suffix(".engine")
+        expected_engine = "breeze" if (breeze_engine and ref_audio and ref_audio.exists()) else "edge"
 
-        # Inteligentne wznawianie: użyj istniejącego pliku tylko jeśli tekst angielski jest identyczny
-        if part_wav.exists() and part_wav.stat().st_size > 1000 and txt_marker.exists() and txt_marker.read_text(encoding="utf-8").strip() == sc["text_en"].strip():
+        # Inteligentne wznawianie: użyj istniejącego pliku tylko jeśli tekst angielski jest identyczny ORAZ silnik jest zgodny
+        if (
+            part_wav.exists()
+            and part_wav.stat().st_size > 1000
+            and txt_marker.exists()
+            and txt_marker.read_text(encoding="utf-8").strip() == sc["text_en"].strip()
+            and (not engine_marker.exists() or engine_marker.read_text(encoding="utf-8").strip() == expected_engine)
+        ):
             segment_wavs.append(part_wav)
-            active_engine_name = "Breeze-TTS-2 (Zero-Shot Clone)" if breeze_engine else "Edge-TTS"
+            active_engine_name = "Breeze-TTS-2 (Zero-Shot Clone)" if expected_engine == "breeze" else "Edge-TTS"
             continue
 
         synth_ok = False
@@ -689,11 +701,19 @@ def process_single_short(
             synth_ok = breeze_engine.synthesize(sc["text_en"], part_wav, ref_audio, ref_transcript, instruction)
             if synth_ok:
                 active_engine_name = "Breeze-TTS-2 (Zero-Shot Clone)"
+                engine_marker.write_text("breeze\n", encoding="utf-8")
+            elif engine == "breeze":
+                log_err(f"Błąd syntezy sceny {sc['id']} przez Breeze-TTS-2 (wymuszony silnik breeze). Przerywanie.")
+                return False
 
         if not synth_ok:
-            log_info(f"Edge-TTS: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...'")
+            if engine == "breeze":
+                log_err(f"Brak możliwości syntezy przez Breeze-TTS-2 dla sceny {sc['id']} (wymuszony silnik breeze).")
+                return False
+            log_warn(f"Edge-TTS Fallback: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...'")
             synthesize_edge_tts(sc["text_en"], part_wav)
             active_engine_name = "Edge-TTS (en-US-ChristopherNeural)"
+            engine_marker.write_text("edge\n", encoding="utf-8")
 
         if part_wav.exists() and part_wav.stat().st_size > 1000:
             txt_marker.write_text(sc["text_en"].strip() + "\n", encoding="utf-8")
