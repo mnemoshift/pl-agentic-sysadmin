@@ -152,6 +152,27 @@ def apply_asr_corrections(text: str) -> str:
     return text
 
 
+# Profile akcentu lektora (instrukcje stylu dla Breeze-TTS oraz dedykowane głosy Edge-TTS)
+ACCENT_PRESETS = {
+    "default": {
+        "instruction": "Maintain a calm, confident, authoritative engineering delivery with clear cadence.",
+        "edge_voice": "en-US-ChristopherNeural",
+    },
+    "us": {
+        "instruction": "Speak in a fluent, natural American English accent with clear articulation and confident engineering delivery.",
+        "edge_voice": "en-US-AndrewMultilingualNeural",
+    },
+    "uk": {
+        "instruction": "Speak in a calm, articulate British English accent with measured pace and authoritative tone.",
+        "edge_voice": "en-GB-RyanNeural",
+    },
+    "neutral": {
+        "instruction": "Speak in a polished, neutral international English accent with smooth cadence, clear vowels and articulate pronunciation.",
+        "edge_voice": "en-US-AndrewMultilingualNeural",
+    },
+}
+
+
 def group_whisper_segments(raw_segments, min_duration=12.0, max_duration=28.0) -> list[dict]:
     """
     Łączy drobne segmenty ASR w spójne grupy zdań/paragrafów (15-25s),
@@ -708,10 +729,10 @@ def time_sync_and_master(
     target_lufs: float = -14.0,
     target_tp: float = -1.0,
     max_speed_factor: float = 1.08,
-    relax_factor: float = 0.94,
-    min_inter_gap: float = 0.15
+    min_inter_gap: float = 0.35,
+    enable_room_tone: bool = True
 ) -> None:
-    log_info(f"Synchronizacja segmentów i mastering EBU R128 ({target_lufs} LUFS)...")
+    log_info(f"Synchronizacja segmentów i mastering EBU R128 ({target_lufs} LUFS, oddech: {int(min_inter_gap*1000)}ms)...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
@@ -724,7 +745,7 @@ def time_sync_and_master(
             seg_dur = get_audio_duration(seg_wav)
             nominal_start = scene["start"]
 
-            # Elastic Anchor: zabezpieczenie przed nakładaniem się mowy
+            # Elastic Anchor: gwarantowany oddech (min_inter_gap), jeśli poprzednia scena wypełniła slot
             actual_start = max(nominal_start, prev_end + min_inter_gap if idx > 0 else nominal_start)
 
             if idx + 1 < len(scenes):
@@ -736,10 +757,12 @@ def time_sync_and_master(
             out_seg = tmp_path / f"synced_{idx:03d}.wav"
 
             if seg_dur > avail_window:
-                # Wypowiedź dłuższa niż okno — łagodne przyspieszenie (clamp do max 1.08x)
-                raw_factor = seg_dur / avail_window
+                # Wypowiedź dłuższa niż okno — przyspieszamy z zachowaniem min_inter_gap na oddech
+                effective_window = max(0.5, avail_window - min_inter_gap)
+                raw_factor = seg_dur / effective_window
                 speed_factor = min(raw_factor, max_speed_factor)
                 adj_dur = seg_dur / speed_factor
+                scene["pacing_status"] = f"x{speed_factor:.2f} (Kompresja)"
                 log_info(f"Dopasowanie tempa (kompresja) dla sceny {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {adj_dur:.2f}s, okno: {avail_window:.2f}s)")
                 cmd = [
                     "ffmpeg", "-y", "-i", str(seg_wav),
@@ -759,6 +782,7 @@ def time_sync_and_master(
                     offset = min(2.0, excess_gap * 0.35)
                     actual_start += offset
                     avail_window -= offset
+                scene["pacing_status"] = f"x{speed_factor:.2f} (Spokojne)"
                 log_info(f"Dopasowanie tempa (relaksacja ciszy) dla sceny {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {adj_dur:.2f}s, offset: +{offset:.2f}s, luka: {avail_window - adj_dur:.1f}s)")
                 cmd = [
                     "ffmpeg", "-y", "-i", str(seg_wav),
@@ -769,6 +793,7 @@ def time_sync_and_master(
             else:
                 speed_factor = 1.0
                 adj_dur = seg_dur
+                scene["pacing_status"] = "1.00x (Płynne)"
                 cmd = [
                     "ffmpeg", "-y", "-i", str(seg_wav),
                     "-ar", "48000", "-ac", "1",
@@ -783,6 +808,15 @@ def time_sync_and_master(
             scene["start_synced"] = round(actual_start, 2)
             scene["end_synced"] = round(actual_start + adj_dur, 2)
 
+        # Wyliczenie pauzy po każdej scenie dla raportu
+        for idx, sc in enumerate(scenes):
+            if idx + 1 < len(scenes):
+                gap = scenes[idx + 1]["start_synced"] - sc["end_synced"]
+                sc["post_pause_str"] = f"{gap:.2f}s"
+            else:
+                gap = total_duration - sc["end_synced"]
+                sc["post_pause_str"] = f"{gap:.2f}s (Outro)"
+
         # Montaż na osi czasu z adelay
         filter_complex = []
         mix_inputs = []
@@ -791,8 +825,17 @@ def time_sync_and_master(
             filter_complex.append(f"[{idx}:a]adelay={delay_ms}|{delay_ms}[d{idx}]")
             mix_inputs.append(f"[d{idx}]")
 
-        filter_complex.append(f"{''.join(mix_inputs)}amix=inputs={len(scenes)}:dropout_transition=0:normalize=0[mixed]")
-        filter_complex.append(f"[mixed]loudnorm=I={target_lufs}:TP={target_tp}:LRA=11[mastered]")
+        filter_complex.append(f"{''.join(mix_inputs)}amix=inputs={len(scenes)}:dropout_transition=0:normalize=0[vo_raw]")
+
+        if enable_room_tone:
+            # Subtelny, ciepły szum tła (room tone) na poziomie -58 dB eliminujący cyfrową próżnię w pauzach
+            filter_complex.append(f"anoisesrc=d={total_duration:.2f}:c=pink:r=48000:a=0.0005,lowpass=f=3500,highpass=f=120,volume=-58dB[roomtone]")
+            filter_complex.append(f"[vo_raw][roomtone]amix=inputs=2:dropout_transition=0:normalize=0[mixed]")
+        else:
+            filter_complex.append(f"[vo_raw]acopy[mixed]")
+
+        # Broadcast Presence EQ (odcięcie subsoniczne 70Hz + blask 8kHz) + emisyjny standard EBU R128
+        filter_complex.append(f"[mixed]highpass=f=70,treble=g=1.5:f=8000,loudnorm=I={target_lufs}:TP={target_tp}:LRA=11[mastered]")
 
         cmd = ["ffmpeg", "-y"]
         for adj_wav in adjusted_wavs:
@@ -805,7 +848,7 @@ def time_sync_and_master(
             str(output_wav)
         ])
         subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        log_ok(f"Zapisano zmasterowany plik audio: {output_wav.name}")
+        log_ok(f"Zapisano zmasterowany plik audio z Broadcast EQ i Room Tone: {output_wav.name}")
 
 
 def auto_detect_input_video(work_dir: Path) -> Path | None:
@@ -838,6 +881,7 @@ def process_single_short(
     output_video: bool,
     transcribe_only: bool = False,
     llm_model: str = "auto",
+    edge_voice: str | None = None,
     translator: LocalMarianTranslator | None = None,
     breeze_engine: BreezeTTSInProcess | None = None,
 ) -> bool:
@@ -986,9 +1030,11 @@ def process_single_short(
             if engine == "breeze":
                 log_err(f"Brak możliwości syntezy przez Breeze-TTS-2 dla sceny {sc['id']} (wymuszony silnik breeze).")
                 return False
-            log_warn(f"Edge-TTS Fallback: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...'")
-            synthesize_edge_tts(sc["text_en"], part_wav)
-            active_engine_name = "Edge-TTS (en-US-ChristopherNeural)"
+            voice_to_use = edge_voice or "en-US-ChristopherNeural"
+            prefix = "Edge-TTS" if engine == "edge" else "Edge-TTS Fallback"
+            log_info(f"{prefix}: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...' (voice: {voice_to_use})")
+            synthesize_edge_tts(sc["text_en"], part_wav, voice=voice_to_use)
+            active_engine_name = f"Edge-TTS ({voice_to_use})"
             engine_marker.write_text("edge\n", encoding="utf-8")
 
         if part_wav.exists() and part_wav.stat().st_size > 1000:
@@ -1037,12 +1083,14 @@ def process_single_short(
         f.write(f"3. **Napisy w języku angielskim:** `{srt_en_file.name}`\n")
         f.write(f"4. **Napisy w języku polskim:** `{srt_pl_file.name}`\n\n")
         f.write("## Tabela Zsynchronizowanych Scen\n\n")
-        f.write("| Scena | Zakres czasu | Oryginał PL | Kwestia EN |\n")
-        f.write("| :---: | :---: | :--- | :--- |\n")
+        f.write("| Scena | Zakres czasu | Pacing / Status | Pauza po scenie | Oryginał PL | Kwestia EN |\n")
+        f.write("| :---: | :---: | :---: | :---: | :--- | :--- |\n")
         for sc in scenes:
             start_t = sc.get("start_synced", sc["start"])
             end_t = sc.get("end_synced", sc["end"])
-            f.write(f"| {sc['id']} | `{start_t:.2f}s - {end_t:.2f}s` | {sc['text_pl']} | **{sc['text_en']}** |\n")
+            pacing = sc.get("pacing_status", "1.00x (Płynne)")
+            pause_str = sc.get("post_pause_str", "-")
+            f.write(f"| {sc['id']} | `{start_t:.2f}s - {end_t:.2f}s` | `{pacing}` | `{pause_str}` | {sc['text_pl']} | **{sc['text_en']}** |\n")
 
     log_ok(f"Zapisano raport podsumowujący: {summary_md.name}")
     log_info("=" * 65)
@@ -1077,10 +1125,19 @@ def main():
     # Silnik i styl
     parser.add_argument("--engine", choices=["auto", "breeze", "edge", "kokoro"], default="auto", help="Silnik syntezy TTS")
     parser.add_argument("--llm-model", type=str, default="auto", help="Model LLM w Ollama do inżynierskiego tłumaczenia (np. auto, bielik, none)")
+    parser.add_argument("--accent", choices=["default", "us", "uk", "neutral"], default="default", help="Wybór stylu akcentu lektora (us, uk, neutral, default)")
+    parser.add_argument("--edge-voice", type=str, default=None, help="Opcjonalny głos dla silnika Edge-TTS (np. en-US-AndrewMultilingualNeural, en-GB-RyanNeural)")
     parser.add_argument("--instruction", type=str, default="Maintain a calm, confident, authoritative engineering delivery with clear cadence.", help="Instrukcja stylu mowy")
     parser.add_argument("--output-video", action="store_true", default=True, help="Wygeneruj zduplikowane wideo z dubbingiem EN")
     parser.add_argument("--transcribe-only", action="store_true", default=False, help="Wygeneruj wyłącznie transkrypcję Whisper i napisy SRT (bez syntezy TTS)")
     args = parser.parse_args()
+
+    # Wybór presetów akcentu i głosu
+    accent_cfg = ACCENT_PRESETS.get(args.accent, ACCENT_PRESETS["default"])
+    active_instruction = args.instruction
+    if active_instruction == parser.get_default("instruction") and args.accent != "default":
+        active_instruction = accent_cfg["instruction"]
+    active_edge_voice = args.edge_voice or accent_cfg["edge_voice"]
 
     # Wycięcie próbki referencyjnej w locie jeśli wskazano --ref-source
     ref_audio = args.ref_audio
@@ -1120,10 +1177,11 @@ def main():
                 ref_audio=ref_audio,
                 ref_transcript=ref_transcript,
                 engine=args.engine,
-                instruction=args.instruction,
+                instruction=active_instruction,
                 output_video=args.output_video,
                 transcribe_only=args.transcribe_only,
                 llm_model=args.llm_model,
+                edge_voice=active_edge_voice,
                 translator=shared_translator,
                 breeze_engine=shared_breeze,
             )
@@ -1146,10 +1204,11 @@ def main():
         ref_audio=ref_audio,
         ref_transcript=ref_transcript,
         engine=args.engine,
-        instruction=args.instruction,
+        instruction=active_instruction,
         output_video=args.output_video,
         transcribe_only=args.transcribe_only,
         llm_model=args.llm_model,
+        edge_voice=active_edge_voice,
         translator=shared_translator,
         breeze_engine=shared_breeze,
     )
