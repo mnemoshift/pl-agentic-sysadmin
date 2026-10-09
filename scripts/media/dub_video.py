@@ -93,6 +93,14 @@ def log_warn(msg: str):
 def log_err(msg: str):
     print(f"\033[1;31m[ERROR]\033[0m {msg}", file=sys.stderr)
 
+def log_pacing(msg: str):
+    print(f"\033[1;35m[PACING]\033[0m {msg}")
+
+# Kalibracja tempa lektora dla domkniętej pętli feedbacku (Closed-Loop Pacing Guardrail)
+SPEECH_WPS_BENCHMARK: float = 3.42  # Średnia prędkość mowy lektora Qwen3-TTS (słów / sekundę)
+DEFAULT_MAX_PACING_RETRIES: int = 5  # Domyślny limit prób rekalibracji na scenę
+
+
 
 # ==============================================================================
 # 2. SŁOWNIK INŻYNIERSKI IT (DYNAMICZNY Z CONFIG/TECH_TERMS.JSON)
@@ -269,9 +277,9 @@ class OllamaTranslator:
             if orig_pause > 2.0:
                 speech_target_sec = max(2.0, duration_sec - orig_pause)
             else:
-                speech_target_sec = max(2.0, duration_sec - 1.2)
+                speech_target_sec = max(2.0, duration_sec - 1.0)
 
-            target_words = max(6, int(speech_target_sec * 3.1))
+            target_words = max(6, int(round(speech_target_sec * SPEECH_WPS_BENCHMARK)))
             is_dense = (pl_words / speech_target_sec) > 2.6
 
             if is_dense:
@@ -338,6 +346,80 @@ class OllamaTranslator:
             translated = clean_llm_translation(translated)
             return translated
 
+    def refine_scene(
+        self,
+        text_pl: str,
+        current_en: str,
+        current_words: int,
+        target_words: int,
+        min_words: int,
+        max_words: int,
+        window_dur: float,
+        speech_target_sec: float,
+        direction: str,
+    ) -> str:
+        """
+        Iteracyjna kalibracja długości tłumaczenia przez Bielika:
+        - direction == 'expand': rozszerza wypowiedź bez halucynacji (pełne zdania, zwroty łączące).
+        - direction == 'condense': skraca wypowiedź do zwięzłej formy bez utraty faktów technicznych.
+        """
+        system_prompt = (
+            "You are a Principal Solutions Architect (22+ years experience) recording an authentic YouTube screencast voiceover in English.\n"
+            "You are revising a draft translation to fit a precise spoken timing budget.\n\n"
+            "Core Requirements:\n"
+            "1. Tone: Senior architect talking to peer engineer. Pragmatic, direct, articulate, zero corporate buzzwords.\n"
+            "2. Strict Fidelity: Translate ONLY what is present in the Polish source. Do NOT extrapolate or invent fictional workflows.\n"
+            "3. IT Terminology: 'man pages', 'dotfiles', 'Obsidian vault', 'Antigravity', 'Claude Code', 'mount point', 'VRAM footprint', 'bare metal', 'zero-guessing principle'.\n"
+            "4. Output Format: Output ONLY the revised plain spoken English voiceover text. No notes, no explanations, no quotes, no commentary."
+        )
+
+        if direction == "expand":
+            user_prompt = (
+                f"Your previous translation had {current_words} words, which speaks too quickly and leaves an empty gap in the {window_dur:.1f}s video window.\n"
+                f"Please expand the translation to ~{target_words} words (target range: {min_words} to {max_words} words) for this {speech_target_sec:.1f}s speech window.\n\n"
+                f"GUIDELINES FOR EXPANSION:\n"
+                f"- Do NOT invent new facts, side stories, or external topics.\n"
+                f"- Articulate the source thoughts with full spoken maturity: use natural connectors (e.g. 'in other words', 'what this means in practice is', 'specifically', 'as you can see'), complete grammatical sentences, and full explanations of the ideas in the source.\n\n"
+                f"Polish source text:\n{text_pl}\n\n"
+                f"Previous draft to expand:\n{current_en}\n\n"
+                f"Output ONLY the expanded spoken English voiceover text (~{target_words} words):"
+            )
+        else:
+            user_prompt = (
+                f"Your previous translation had {current_words} words, which exceeds the available {speech_target_sec:.1f}s speech budget.\n"
+                f"Please condense the translation to ~{target_words} words (target range: {min_words} to {max_words} words).\n\n"
+                f"GUIDELINES FOR CONDENSATION:\n"
+                f"- Retain all essential technical facts, commands, and context from the Polish source.\n"
+                f"- Express the ideas more crisply and concisely, cutting redundant phrasing and wordy transitions.\n\n"
+                f"Polish source text:\n{text_pl}\n\n"
+                f"Previous draft to condense:\n{current_en}\n\n"
+                f"Output ONLY the tightened spoken English voiceover text (~{target_words} words):"
+            )
+
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "stream": False,
+            "options": {
+                "temperature": 0.25,
+                "top_p": 0.9,
+            }
+        }
+
+        req = urllib.request.Request(
+            f"{self.base_url}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=90.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            translated = data.get("message", {}).get("content", "").strip()
+            translated = clean_llm_translation(translated)
+            return translated
+
     def unload(self) -> None:
         """Natychmiast zwalnia model z VRAM, aby nie kolidował z Breeze-TTS."""
         try:
@@ -380,12 +462,18 @@ class LocalMarianTranslator:
         return translated_results
 
 
-def translate_scenes_batch(scenes: list[dict], translator=None, llm_model: str = "auto") -> None:
+def translate_scenes_batch(
+    scenes: list[dict],
+    translator=None,
+    llm_model: str = "auto",
+    max_pacing_retries: int = DEFAULT_MAX_PACING_RETRIES,
+) -> None:
     """
     Tłumaczy listę scen z języka polskiego na angielski.
     1. Przeprowadza inżynierski przekład semantyczny przez model Bielik LLM (Ollama), jeśli dostępny.
-    2. Fallback: wsadowy przekład neuronowy MarianMT na CPU.
-    3. Stosuje słownik pojęć inżynierskich IT (config/tech_terms.json).
+    2. Waliduje długość i dopasowanie do budżetu czasowego (Closed-Loop Pacing Guardrail) w pętli do max_pacing_retries prób.
+    3. Fallback: wsadowy przekład neuronowy MarianMT na CPU.
+    4. Stosuje słownik pojęć inżynierskich IT (config/tech_terms.json).
     """
     if not scenes:
         return
@@ -399,7 +487,7 @@ def translate_scenes_batch(scenes: list[dict], translator=None, llm_model: str =
     ollama_trans = OllamaTranslator(model_name=target_llm)
 
     if ollama_trans.is_available():
-        log_info(f"Inżynierskie tłumaczenie semantyczne przez model Bielik LLM ({target_llm})...")
+        log_info(f"Inżynierskie tłumaczenie semantyczne przez model Bielik LLM ({target_llm}) z pętlą kalibracji tempa (max {max_pacing_retries} prób)...")
         t0 = time.time()
         for idx, sc in enumerate(scenes):
             if idx + 1 < len(scenes):
@@ -408,16 +496,99 @@ def translate_scenes_batch(scenes: list[dict], translator=None, llm_model: str =
             else:
                 window_dur = sc["end"] - sc["start"]
                 orig_pause = 0.0
-            log_info(f"Bielik: Tłumaczenie sceny {sc['id']}/{len(scenes)} (okno: {window_dur:.1f}s, luka: {orig_pause:.1f}s): '{sc['text_pl'][:42]}...'")
+
+            if orig_pause > 2.0:
+                speech_target_sec = max(2.0, window_dur - orig_pause)
+                desired_gap = orig_pause
+                min_acceptable_gap = max(1.0, orig_pause - 1.5)
+                max_acceptable_gap = orig_pause + 1.5
+            else:
+                # Mowa ciągła: celujemy w naturalny oddech radiowy (0.8s - 1.8s)
+                speech_target_sec = max(2.0, window_dur - 1.0)
+                desired_gap = 1.0
+                min_acceptable_gap = 0.6
+                max_acceptable_gap = 2.0
+
+            target_words = max(6, int(round(speech_target_sec * SPEECH_WPS_BENCHMARK)))
+            min_words = max(5, int(round((window_dur - max_acceptable_gap) * SPEECH_WPS_BENCHMARK)))
+            max_words = max(6, int(round((window_dur - min_acceptable_gap) * SPEECH_WPS_BENCHMARK)))
+
+            history = []
+
+            # Próba 1: Bazowy przekład
             try:
-                sc["text_en"] = ollama_trans.translate_scene(sc["text_pl"], duration_sec=window_dur, orig_pause=orig_pause)
+                cand = ollama_trans.translate_scene(sc["text_pl"], duration_sec=window_dur, orig_pause=orig_pause)
+                cand = clean_llm_translation(cand)
+                for pl_t, en_t in tech_terms.items():
+                    cand = re.sub(re.escape(pl_t), en_t, cand, flags=re.IGNORECASE)
             except Exception as e_ollama:
                 log_warn(f"Błąd Ollama dla sceny {sc['id']} ({e_ollama}), użycie MarianMT...")
                 if translator is None:
                     translator = LocalMarianTranslator()
-                sc["text_en"] = translator.translate_batch([sc["text_pl"]])[0]
+                cand = translator.translate_batch([sc["text_pl"]])[0]
+
+            words = len(cand.split())
+            est_dur = words / SPEECH_WPS_BENCHMARK
+            est_gap = window_dur - est_dur
+            diff = abs(words - target_words)
+            history.append((cand, words, est_gap, diff))
+
+            if min_acceptable_gap <= est_gap <= max_acceptable_gap or max_pacing_retries <= 1:
+                sc["text_en"] = cand
+                sc["calibration_retries"] = 1
+                sc["calibration_status"] = "1 próba (Idealnie)"
+                log_pacing(f"Scena {sc['id']:02d}/{len(scenes)} [Próba 1/1]: {words} słów (szac. {est_dur:.1f}s, luka: {est_gap:.1f}s, okno: {window_dur:.1f}s) -> IDEALNIE")
+            else:
+                gap_type = f"ZA DUŻA LUKA ({est_gap:.1f}s > {max_acceptable_gap:.1f}s)" if est_gap > max_acceptable_gap else f"ZA DŁUGI TEKST ({est_dur:.1f}s > {speech_target_sec:.1f}s)"
+                log_pacing(f"Scena {sc['id']:02d}/{len(scenes)} [Próba 1/{max_pacing_retries}]: {words} słów (szac. {est_dur:.1f}s, luka: {est_gap:.1f}s, cel: ~{target_words} słów [{min_words}-{max_words}]) -> {gap_type}. Rekalibracja Bielik...")
+                accepted = False
+                for attempt in range(2, max_pacing_retries + 1):
+                    direction = "expand" if est_gap > max_acceptable_gap else "condense"
+                    try:
+                        cand = ollama_trans.refine_scene(
+                            text_pl=sc["text_pl"],
+                            current_en=cand,
+                            current_words=words,
+                            target_words=target_words,
+                            min_words=min_words,
+                            max_words=max_words,
+                            window_dur=window_dur,
+                            speech_target_sec=speech_target_sec,
+                            direction=direction,
+                        )
+                        cand = clean_llm_translation(cand)
+                        for pl_t, en_t in tech_terms.items():
+                            cand = re.sub(re.escape(pl_t), en_t, cand, flags=re.IGNORECASE)
+                    except Exception as e_refine:
+                        log_warn(f"Błąd rekalibracji w próbie {attempt} dla sceny {sc['id']}: {e_refine}")
+                        break
+
+                    words = len(cand.split())
+                    est_dur = words / SPEECH_WPS_BENCHMARK
+                    est_gap = window_dur - est_dur
+                    diff = abs(words - target_words)
+                    history.append((cand, words, est_gap, diff))
+
+                    if min_acceptable_gap <= est_gap <= max_acceptable_gap:
+                        sc["text_en"] = cand
+                        sc["calibration_retries"] = attempt
+                        sc["calibration_status"] = f"{attempt} próby (Idealnie)"
+                        log_ok(f"Scena {sc['id']:02d}/{len(scenes)} [Próba {attempt}/{max_pacing_retries}]: {words} słów (szac. {est_dur:.1f}s, luka: {est_gap:.1f}s) -> ZAAKCEPTOWANO w próbie {attempt}!")
+                        accepted = True
+                        break
+                    else:
+                        status_note = f"ZA DUŻA LUKA ({est_gap:.1f}s)" if est_gap > max_acceptable_gap else f"ZA DŁUGI ({est_dur:.1f}s > {speech_target_sec:.1f}s)"
+                        log_pacing(f"Scena {sc['id']:02d}/{len(scenes)} [Próba {attempt}/{max_pacing_retries}]: {words} słów (szac. {est_dur:.1f}s, luka: {est_gap:.1f}s vs cel ~{target_words}) -> {status_note}...")
+
+                if not accepted:
+                    best_attempt = min(history, key=lambda x: x[3])
+                    sc["text_en"] = best_attempt[0]
+                    sc["calibration_retries"] = len(history)
+                    sc["calibration_status"] = f"Najlepsza z {len(history)} ({best_attempt[1]} słów, luka: {best_attempt[2]:.1f}s)"
+                    log_warn(f"Scena {sc['id']:02d}/{len(scenes)}: Wykorzystano {len(history)} prób. Wybrano wersję z najmniejszym odchyleniem: {best_attempt[1]} słów (szac. luka: {best_attempt[2]:.1f}s).")
+
         dt = time.time() - t0
-        log_ok(f"Zakończono tłumaczenie Bielik w {dt:.2f}s.")
+        log_ok(f"Zakończono tłumaczenie Bielik z walidacją budżetu czasowego w {dt:.2f}s.")
         ollama_trans.unload()
     else:
         log_info("Bielik/Ollama niedostępny. Uruchamianie lokalnego modelu tłumaczeniowego MarianMT (CPU)...")
@@ -430,6 +601,8 @@ def translate_scenes_batch(scenes: list[dict], translator=None, llm_model: str =
         log_ok(f"Przetłumaczono {len(scenes)} segmentów w {dt:.2f}s przez MarianMT.")
         for sc, text_en in zip(scenes, translated_en):
             sc["text_en"] = text_en
+            sc["calibration_retries"] = 1
+            sc["calibration_status"] = "MarianMT (Brak kalibracji)"
 
     # Krok 3: Dodatkowa standaryzacja pojęć inżynierskich IT
     for sc in scenes:
@@ -786,6 +959,7 @@ def process_single_short(
     edge_voice: str | None = None,
     translator: LocalMarianTranslator | None = None,
     tts_engine: BaseTTSEngine | None = None,
+    max_pacing_retries: int = DEFAULT_MAX_PACING_RETRIES,
 ) -> bool:
     work_dir = work_dir.resolve()
     short_id = work_dir.name
@@ -894,8 +1068,8 @@ def process_single_short(
         log_err(f"Nie udało się wyodrębnić segmentów do dubbingu dla {short_id}.")
         return False
 
-    # 3. Dynamiczne tłumaczenie maszynowe (Bielik LLM / MarianMT + Tech Terms)
-    translate_scenes_batch(scenes, translator=translator, llm_model=llm_model)
+    # 3. Dynamiczne tłumaczenie maszynowe (Bielik LLM / MarianMT + Tech Terms) z walidacją budżetu czasu
+    translate_scenes_batch(scenes, translator=translator, llm_model=llm_model, max_pacing_retries=max_pacing_retries)
 
     transcript_json = output_dir / f"{short_id}_Dubbing_Transcript_EN.json"
     with open(transcript_json, "w", encoding="utf-8") as f:
@@ -1018,14 +1192,15 @@ def process_single_short(
         f.write(f"3. **Napisy w języku angielskim:** `{srt_en_file.name}`\n")
         f.write(f"4. **Napisy w języku polskim:** `{srt_pl_file.name}`\n\n")
         f.write("## Tabela Zsynchronizowanych Scen\n\n")
-        f.write("| Scena | Zakres czasu | Pacing / Status | Pauza po scenie | Oryginał PL | Kwestia EN |\n")
-        f.write("| :---: | :---: | :---: | :---: | :--- | :--- |\n")
+        f.write("| Scena | Zakres czasu | Pacing / Status | Kalibracja Bielik | Pauza po scenie | Oryginał PL | Kwestia EN |\n")
+        f.write("| :---: | :---: | :---: | :---: | :---: | :--- | :--- |\n")
         for sc in scenes:
             start_t = sc.get("start_synced", sc["start"])
             end_t = sc.get("end_synced", sc["end"])
             pacing = sc.get("pacing_status", "1.00x (Płynne)")
+            calib = sc.get("calibration_status", "1 próba (Idealnie)")
             pause_str = sc.get("post_pause_str", "-")
-            f.write(f"| {sc['id']} | `{start_t:.2f}s - {end_t:.2f}s` | `{pacing}` | `{pause_str}` | {sc['text_pl']} | **{sc['text_en']}** |\n")
+            f.write(f"| {sc['id']} | `{start_t:.2f}s - {end_t:.2f}s` | `{pacing}` | `{calib}` | `{pause_str}` | {sc['text_pl']} | **{sc['text_en']}** |\n")
 
     log_ok(f"Zapisano raport podsumowujący: {summary_md.name}")
     log_info("=" * 65)
@@ -1068,6 +1243,7 @@ def main():
     parser.add_argument("--instruction", type=str, default="Maintain a calm, confident, authoritative engineering delivery with clear cadence.", help="Instrukcja stylu mowy")
     parser.add_argument("--output-video", action="store_true", default=True, help="Wygeneruj zduplikowane wideo z dubbingiem EN")
     parser.add_argument("--transcribe-only", action="store_true", default=False, help="Wygeneruj wyłącznie transkrypcję Whisper i napisy SRT (bez syntezy TTS)")
+    parser.add_argument("--max-pacing-retries", type=int, default=DEFAULT_MAX_PACING_RETRIES, help="Maksymalna liczba iteracji rekalibracji długości tekstu przez Bielika (domyślnie: 5)")
     args = parser.parse_args()
 
     # Wybór presetów akcentu i głosu
@@ -1129,6 +1305,7 @@ def main():
                 edge_voice=active_edge_voice,
                 translator=shared_translator,
                 tts_engine=shared_tts_engine,
+                max_pacing_retries=args.max_pacing_retries,
             )
         return
 
@@ -1156,6 +1333,7 @@ def main():
         edge_voice=active_edge_voice,
         translator=shared_translator,
         tts_engine=shared_tts_engine,
+        max_pacing_retries=args.max_pacing_retries,
     )
 
 
