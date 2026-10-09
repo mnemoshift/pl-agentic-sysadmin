@@ -11,7 +11,7 @@ from .base import BaseTTSEngine
 
 
 class QwenTTSEngine(BaseTTSEngine):
-    def __init__(self, model_id: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"):
+    def __init__(self, model_id: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base", **kwargs):
         self.model_id = model_id
         self._model = None
         self.cached_prompt = None

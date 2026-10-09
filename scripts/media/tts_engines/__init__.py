@@ -60,7 +60,15 @@ def get_tts_engine(name: str = "auto", ref_audio: Path | None = None, **kwargs) 
     if not engine_cls:
         raise ValueError(f"Nieznany silnik TTS: '{name}'. Dostępne: {list(AVAILABLE_ENGINES.keys())}")
 
-    return engine_cls(**kwargs)
+    import inspect
+    sig = inspect.signature(engine_cls.__init__)
+    valid_params = sig.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in valid_params.values()):
+        filtered_kwargs = kwargs
+    else:
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_params}
+
+    return engine_cls(**filtered_kwargs)
 
 
 __all__ = [
