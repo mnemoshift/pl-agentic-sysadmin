@@ -40,23 +40,24 @@ import json
 import re
 import tempfile
 import time
+import urllib.request
 
-# Preload bibliotek CUDA (libcublas) dla akceleracji CTranslate2 / faster-whisper jeśli dostępne
+# Preload bibliotek CUDA (libcublasLt first, then libcublas) dla akceleracji CTranslate2 / faster-whisper jeśli dostępne
 try:
     import ctypes
-    for cublas_candidate in [
-        "/usr/local/lib/ollama/cuda_v12/libcublas.so.12",
-        "/usr/local/cuda/lib64/libcublas.so.12",
-    ]:
-        if Path(cublas_candidate).exists():
-            ctypes.CDLL(cublas_candidate)
-            break
     for cublaslt_candidate in [
         "/usr/local/lib/ollama/cuda_v12/libcublasLt.so.12",
         "/usr/local/cuda/lib64/libcublasLt.so.12",
     ]:
         if Path(cublaslt_candidate).exists():
             ctypes.CDLL(cublaslt_candidate)
+            break
+    for cublas_candidate in [
+        "/usr/local/lib/ollama/cuda_v12/libcublas.so.12",
+        "/usr/local/cuda/lib64/libcublas.so.12",
+    ]:
+        if Path(cublas_candidate).exists():
+            ctypes.CDLL(cublas_candidate)
             break
 except Exception:
     pass
@@ -134,9 +135,151 @@ def load_tech_terms() -> dict[str, str]:
     }
 
 
+def load_asr_corrections() -> dict[str, str]:
+    config_path = REPO_ROOT / "config" / "asr_corrections.json"
+    if config_path.exists():
+        try:
+            return json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            log_warn(f"Nie udało się odczytać {config_path}: {e}")
+    return {}
+
+
+def apply_asr_corrections(text: str) -> str:
+    rules = load_asr_corrections()
+    for pat, repl in rules.items():
+        text = re.sub(pat, repl, text, flags=re.IGNORECASE)
+    return text
+
+
+def group_whisper_segments(raw_segments, min_duration=12.0, max_duration=28.0) -> list[dict]:
+    """
+    Łączy drobne segmenty ASR w spójne grupy zdań/paragrafów (15-25s),
+    eliminując ucinanie zdań w połowie i redukując liczbę zapytań do TTS.
+    """
+    merged = []
+    curr = {"start": None, "end": None, "text": ""}
+
+    for s in raw_segments:
+        s_start = getattr(s, "start", None) if hasattr(s, "start") else s.get("start")
+        s_end = getattr(s, "end", None) if hasattr(s, "end") else s.get("end")
+        s_text = getattr(s, "text", "") if hasattr(s, "text") else s.get("text", "")
+        s_text = s_text.strip()
+        if not s_text:
+            continue
+
+        if curr["start"] is None:
+            curr["start"] = round(s_start, 2)
+            curr["end"] = round(s_end, 2)
+            curr["text"] = s_text
+            continue
+
+        dur = s_end - curr["start"]
+        curr_dur = curr["end"] - curr["start"]
+        gap = s_start - curr["end"]
+        ends_sentence = curr["text"].rstrip().endswith((".", "?", "!", ":"))
+
+        if (curr_dur >= min_duration and ends_sentence) or (gap >= 1.2 and curr_dur >= 10.0) or (dur > max_duration):
+            merged.append(curr)
+            curr = {"start": round(s_start, 2), "end": round(s_end, 2), "text": s_text}
+        else:
+            curr["end"] = round(s_end, 2)
+            curr["text"] += " " + s_text
+
+    if curr["start"] is not None:
+        merged.append(curr)
+
+    scenes = []
+    for idx, m in enumerate(merged, 1):
+        cleaned_pl = apply_asr_corrections(m["text"].strip())
+        scenes.append({
+            "id": idx,
+            "start": m["start"],
+            "end": m["end"],
+            "text_pl": cleaned_pl
+        })
+    return scenes
+
+
 # ==============================================================================
-# 3. LOKALNE TŁUMACZENIE NEURONOWE (MARIANMT NA CPU)
+# 3. LOKALNE TŁUMACZENIE I KOREKTA LLM (BIELIK / OLLAMA LUB MARIANMT)
 # ==============================================================================
+class OllamaTranslator:
+    def __init__(self, model_name: str = "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M", base_url: str = "http://localhost:11434"):
+        self.model_name = model_name
+        self.base_url = base_url.rstrip("/")
+
+    def is_available(self) -> bool:
+        try:
+            req = urllib.request.Request(f"{self.base_url}/api/tags")
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                models = [m.get("name", "") for m in data.get("models", [])]
+                return any(self.model_name.lower() in m.lower() or m.lower() in self.model_name.lower() for m in models)
+        except Exception:
+            return False
+
+    def translate_scene(self, text_pl: str) -> str:
+        system_prompt = (
+            "You are a Principal Solutions Architect (22+ years experience) and senior technical translator "
+            "adapting Polish engineering screencasts into authentic, fluent, idiomatic English for YouTube.\n\n"
+            "Key Requirements:\n"
+            "1. Tone: Senior engineer talking to peer engineer. Pragmatic, direct, articulate, zero corporate buzzwords.\n"
+            "2. IT Terminology:\n"
+            "   - 'man pages', 'dotfiles', 'Obsidian vault', 'Antigravity', 'Claude Code', 'mount point', 'VRAM footprint', 'bare metal', 'zero-guessing principle'.\n"
+            "   - 'na żywym organizmie' -> 'on a live system'\n"
+            "   - 'Linux pod spodem' -> 'Linux under the hood'\n"
+            "   - 'z miłą chęcią wam pokażę' -> 'I would be happy to show you'\n"
+            "   - 'byłem tam i wracałem do Windowsa' -> 'been there, done that, and kept going back to Windows'\n"
+            "   - 'zderzamy dwie epoki' -> 'we are colliding two eras'\n"
+            "   - 'bebechy Linuxa' -> 'the internal plumbing of Linux'\n"
+            "   - 'agentowy sysadmin' -> 'Agentic SysAdmin'\n"
+            "3. Do NOT translate literally. Translate the natural engineering meaning into smooth, spoken English.\n"
+            "4. Output ONLY the English translation. No explanations, no markdown quotes, no notes."
+        )
+
+        user_prompt = f"Translate this Polish spoken chunk into natural English spoken voiceover:\n\n{text_pl}"
+
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "stream": False,
+            "options": {
+                "temperature": 0.2,
+                "top_p": 0.9,
+            }
+        }
+
+        req = urllib.request.Request(
+            f"{self.base_url}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=90.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            translated = data.get("message", {}).get("content", "").strip()
+            translated = translated.strip('"\'`')
+            return translated
+
+    def unload(self) -> None:
+        """Natychmiast zwalnia model z VRAM, aby nie kolidował z Breeze-TTS."""
+        try:
+            payload = {"model": self.model_name, "keep_alive": 0}
+            req = urllib.request.Request(
+                f"{self.base_url}/api/generate",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                resp.read()
+            log_info(f"Zwolniono model {self.model_name} z VRAM Ollama.")
+        except Exception as e:
+            log_warn(f"Błąd zwalniania modelu z Ollama: {e}")
+
+
 class LocalMarianTranslator:
     def __init__(self, model_name: str = "Helsinki-NLP/opus-mt-pl-en"):
         self.model_name = model_name
@@ -163,26 +306,54 @@ class LocalMarianTranslator:
         return translated_results
 
 
-def translate_scenes_batch(scenes: list[dict], translator: LocalMarianTranslator) -> None:
+def translate_scenes_batch(scenes: list[dict], translator=None, llm_model: str = "auto") -> None:
     """
     Tłumaczy listę scen z języka polskiego na angielski.
-    1. Przeprowadza wsadowy przekład neuronowy przez model MarianMT w pamięci procesu.
-    2. Stosuje słownik pojęć inżynierskich IT (config/tech_terms.json).
+    1. Przeprowadza inżynierski przekład semantyczny przez model Bielik LLM (Ollama), jeśli dostępny.
+    2. Fallback: wsadowy przekład neuronowy MarianMT na CPU.
+    3. Stosuje słownik pojęć inżynierskich IT (config/tech_terms.json).
     """
     if not scenes:
         return
 
+    # Krok 1: Deterministyczna korekta fonetycznych artefaktów ASR w tekście PL
+    for sc in scenes:
+        sc["text_pl"] = apply_asr_corrections(sc.get("text_pl", ""))
+
     tech_terms = load_tech_terms()
-    pl_texts = [sc.get("text_pl", "").strip(' „"”') for sc in scenes]
+    target_llm = "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M" if llm_model in ("auto", "bielik") else llm_model
+    ollama_trans = OllamaTranslator(model_name=target_llm)
 
-    log_info(f"Lokalny model tłumaczeniowy MarianMT: Tłumaczenie wsadowe {len(pl_texts)} segmentów...")
-    t0 = time.time()
-    translated_en = translator.translate_batch(pl_texts, batch_size=16)
-    dt = time.time() - t0
-    log_ok(f"Przetłumaczono {len(scenes)} segmentów w {dt:.2f}s.")
+    if ollama_trans.is_available():
+        log_info(f"Inżynierskie tłumaczenie semantyczne przez model Bielik LLM ({target_llm})...")
+        t0 = time.time()
+        for idx, sc in enumerate(scenes, 1):
+            log_info(f"Bielik: Tłumaczenie sceny {sc['id']}/{len(scenes)}: '{sc['text_pl'][:45]}...'")
+            try:
+                sc["text_en"] = ollama_trans.translate_scene(sc["text_pl"])
+            except Exception as e_ollama:
+                log_warn(f"Błąd Ollama dla sceny {sc['id']} ({e_ollama}), użycie MarianMT...")
+                if translator is None:
+                    translator = LocalMarianTranslator()
+                sc["text_en"] = translator.translate_batch([sc["text_pl"]])[0]
+        dt = time.time() - t0
+        log_ok(f"Zakończono tłumaczenie Bielik w {dt:.2f}s.")
+        ollama_trans.unload()
+    else:
+        log_info("Bielik/Ollama niedostępny. Uruchamianie lokalnego modelu tłumaczeniowego MarianMT (CPU)...")
+        if translator is None:
+            translator = LocalMarianTranslator()
+        pl_texts = [sc.get("text_pl", "").strip(' „"”') for sc in scenes]
+        t0 = time.time()
+        translated_en = translator.translate_batch(pl_texts, batch_size=16)
+        dt = time.time() - t0
+        log_ok(f"Przetłumaczono {len(scenes)} segmentów w {dt:.2f}s przez MarianMT.")
+        for sc, text_en in zip(scenes, translated_en):
+            sc["text_en"] = text_en
 
-    for sc, text_en in zip(scenes, translated_en):
-        cleaned_en = text_en
+    # Krok 3: Dodatkowa standaryzacja pojęć inżynierskich IT
+    for sc in scenes:
+        cleaned_en = sc.get("text_en", "")
         for pl_term, en_term in tech_terms.items():
             cleaned_en = re.sub(re.escape(pl_term), en_term, cleaned_en, flags=re.IGNORECASE)
         sc["text_en"] = cleaned_en
@@ -203,7 +374,7 @@ class BreezeTTSInProcess:
         )
         update_generation_config_for_breeze(self.model)
         self.config = FastStreamingConfig(
-            max_new_tokens=1500,
+            max_new_tokens=850,
             max_seq_len=2048,
             repetition_penalty=1.1,
         )
@@ -418,43 +589,45 @@ def parse_short_script_md(script_path: Path) -> list[dict]:
     return scenes
 
 
-def transcribe_with_whisper(audio_path: Path) -> list[dict]:
-    log_info("Brak pliku scenariusza. Uruchamianie lokalnego modelu Whisper...")
-    scenes = []
+def transcribe_with_whisper(audio_path: Path, model_name: str = "large-v3-turbo") -> list[dict]:
+    log_info(f"Brak pliku scenariusza. Uruchamianie lokalnego modelu Whisper ({model_name})...")
+    initial_prompt = (
+        "W tym filmie omawiamy Zorin OS, Linux, stację roboczą, architekturę IT, "
+        "Antigravity, Claude Code, Obsidian vault, pliki README, Markdown, Makefile, "
+        "VRAM, NVENC, zasadę zero guessing, na żywym organizmie."
+    )
 
     # 1. Próba na CUDA (FP16)
-    try:
-        model = WhisperModel("base", device="cuda", compute_type="float16")
-        segments, _ = model.transcribe(str(audio_path), beam_size=5, language="pl")
-        for seg in segments:
-            scenes.append({
-                "id": seg.id + 1,
-                "start": round(seg.start, 2),
-                "end": round(seg.end, 2),
-                "text_pl": seg.text.strip()
-            })
-        if scenes:
-            log_ok(f"Whisper (CUDA) wygenerował {len(scenes)} segmentów.")
-            return scenes
-    except Exception as e_cuda:
-        log_warn(f"Whisper (CUDA) niedostępny ({e_cuda}), uruchamianie na CPU...")
+    for cand in [model_name, "large-v3-turbo", "base"]:
+        try:
+            model = WhisperModel(cand, device="cuda", compute_type="float16")
+            segments, _ = model.transcribe(str(audio_path), beam_size=5, language="pl", initial_prompt=initial_prompt)
+            raw_list = list(segments)
+            del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            scenes = group_whisper_segments(raw_list)
+            if scenes:
+                log_ok(f"Whisper (CUDA/{cand}) wygenerował {len(scenes)} spójnych scen logicznych (ze {len(raw_list)} surowych segmentów).")
+                return scenes
+        except Exception as e_cuda:
+            log_warn(f"Whisper (CUDA/{cand}) niedostępny: {e_cuda}")
+            if cand == "base":
+                break
 
     # 2. Próba na CPU (INT8)
-    try:
-        model = WhisperModel("base", device="cpu", compute_type="int8")
-        segments, _ = model.transcribe(str(audio_path), beam_size=5, language="pl")
-        for seg in segments:
-            scenes.append({
-                "id": seg.id + 1,
-                "start": round(seg.start, 2),
-                "end": round(seg.end, 2),
-                "text_pl": seg.text.strip()
-            })
-        if scenes:
-            log_ok(f"Whisper (CPU) wygenerował {len(scenes)} segmentów.")
-            return scenes
-    except Exception as e_cpu:
-        log_err(f"Błąd uruchomienia Whisper na CPU: {e_cpu}")
+    for cand in ["large-v3-turbo", "base"]:
+        try:
+            model = WhisperModel(cand, device="cpu", compute_type="int8")
+            segments, _ = model.transcribe(str(audio_path), beam_size=5, language="pl", initial_prompt=initial_prompt)
+            raw_list = list(segments)
+            del model
+            scenes = group_whisper_segments(raw_list)
+            if scenes:
+                log_ok(f"Whisper (CPU/{cand}) wygenerował {len(scenes)} spójnych scen.")
+                return scenes
+        except Exception as e_cpu:
+            log_warn(f"Whisper (CPU/{cand}) błąd: {e_cpu}")
 
     duration = get_audio_duration(audio_path)
     return [{
@@ -560,6 +733,7 @@ def process_single_short(
     instruction: str,
     output_video: bool,
     transcribe_only: bool = False,
+    llm_model: str = "auto",
     translator: LocalMarianTranslator | None = None,
     breeze_engine: BreezeTTSInProcess | None = None,
 ) -> bool:
@@ -641,10 +815,8 @@ def process_single_short(
         log_err(f"Nie udało się wyodrębnić segmentów do dubbingu dla {short_id}.")
         return False
 
-    # 3. Dynamiczne tłumaczenie maszynowe (MarianMT na CPU + Tech Terms)
-    if translator is None:
-        translator = LocalMarianTranslator()
-    translate_scenes_batch(scenes, translator)
+    # 3. Dynamiczne tłumaczenie maszynowe (Bielik LLM / MarianMT + Tech Terms)
+    translate_scenes_batch(scenes, translator=translator, llm_model=llm_model)
 
     transcript_json = output_dir / f"{short_id}_Dubbing_Transcript_EN.json"
     with open(transcript_json, "w", encoding="utf-8") as f:
@@ -793,6 +965,7 @@ def main():
 
     # Silnik i styl
     parser.add_argument("--engine", choices=["auto", "breeze", "edge", "kokoro"], default="auto", help="Silnik syntezy TTS")
+    parser.add_argument("--llm-model", type=str, default="auto", help="Model LLM w Ollama do inżynierskiego tłumaczenia (np. auto, bielik, none)")
     parser.add_argument("--instruction", type=str, default="Maintain a calm, confident, authoritative engineering delivery with clear cadence.", help="Instrukcja stylu mowy")
     parser.add_argument("--output-video", action="store_true", default=True, help="Wygeneruj zduplikowane wideo z dubbingiem EN")
     parser.add_argument("--transcribe-only", action="store_true", default=False, help="Wygeneruj wyłącznie transkrypcję Whisper i napisy SRT (bez syntezy TTS)")
@@ -820,16 +993,9 @@ def main():
                     ref_transcript = txt_cand.read_text(encoding="utf-8").strip()
                 break
 
-    # Współdzielone instancje w procesie (In-Process Singletons)
-    shared_translator = LocalMarianTranslator()
+    # Leniwa inicjalizacja modeli (GPU VRAM jest zwalniane sekwencyjnie: Whisper -> Ollama -> Breeze)
+    shared_translator = None
     shared_breeze = None
-    if args.engine in ("breeze", "auto") and not args.transcribe_only and BREEZE_AVAILABLE:
-        model_dir = find_breeze_model_dir()
-        if model_dir and ref_audio and ref_audio.exists():
-            try:
-                shared_breeze = BreezeTTSInProcess(model_dir)
-            except Exception as e:
-                log_warn(f"Nie udało się zainicjalizować Breeze-TTS-2 ({e}), fallback do Edge-TTS...")
 
     # Tryb wsadowy
     if args.batch:
@@ -846,6 +1012,7 @@ def main():
                 instruction=args.instruction,
                 output_video=args.output_video,
                 transcribe_only=args.transcribe_only,
+                llm_model=args.llm_model,
                 translator=shared_translator,
                 breeze_engine=shared_breeze,
             )
@@ -871,6 +1038,7 @@ def main():
         instruction=args.instruction,
         output_video=args.output_video,
         transcribe_only=args.transcribe_only,
+        llm_model=args.llm_model,
         translator=shared_translator,
         breeze_engine=shared_breeze,
     )
