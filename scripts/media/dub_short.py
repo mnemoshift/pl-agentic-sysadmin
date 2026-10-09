@@ -246,25 +246,41 @@ class OllamaTranslator:
             return False
 
     def translate_scene(self, text_pl: str, duration_sec: float | None = None) -> str:
-        timing_rules = ""
-        max_words = None
+        pl_words = len(text_pl.split())
+        timing_guidance = ""
+        user_hint = ""
+
         if duration_sec and duration_sec > 1.0:
             target_words = max(5, int(duration_sec * 2.30))
-            max_words = max(7, int(duration_sec * 2.50))
-            timing_rules = (
-                f"\nTIMING BUDGET (CRITICAL for video synchronization):\n"
-                f"- Maximum spoken window on screen: {duration_sec:.1f} seconds.\n"
-                f"- Target word count: ~{target_words} words (strict upper limit: {max_words} words).\n"
-                f"- Condense the phrasing cleanly if needed. Do NOT add unnecessary words or filler.\n"
-                f"- Output ONLY the English speech text that fits comfortably within {duration_sec:.1f}s."
-            )
+            is_dense = (pl_words / duration_sec) > 2.2
+
+            if is_dense:
+                timing_guidance = (
+                    f"\nTIMING BUDGET (Fast-paced scene, window: {duration_sec:.1f}s):\n"
+                    f"- The Polish speech was dense. Keep the English translation crisp, direct, and concise (~{target_words} words).\n"
+                    f"- Avoid wordy clauses or filler, but ensure the English remains 100% grammatically correct and natural."
+                )
+                user_hint = f"\n\n(Note: Keep concise, ~{target_words} words for this {duration_sec:.1f}s scene)"
+            else:
+                timing_guidance = (
+                    f"\nTIMING BUDGET (Ample time, window: {duration_sec:.1f}s):\n"
+                    f"- This scene has comfortable time. Translate fully, articulately, and fluently without dropping ideas or over-condensing."
+                )
 
         system_prompt = (
             "You are a Principal Solutions Architect (22+ years experience) and senior technical translator "
             "adapting Polish engineering screencasts into authentic, fluent, idiomatic English for YouTube.\n\n"
             "Key Requirements:\n"
             "1. Tone: Senior engineer talking to peer engineer. Pragmatic, direct, articulate, zero corporate buzzwords.\n"
-            "2. IT Terminology:\n"
+            "2. Natural Spoken Fluency (CRITICAL):\n"
+            "   - Produce grammatically flawless, natural spoken English.\n"
+            "   - Never use broken, clipped, or telegraphic phrasing (e.g. say 'welcome to newcomers', NEVER 'newcomers to others').\n"
+            "   - Translate complete thoughts into natural sentences without dropping essential words.\n"
+            "3. Active, Concise Engineering Style:\n"
+            "   - Use crisp, active phrasing without wordy filler or redundant clauses.\n"
+            "   - Example: Instead of 'which contains instructions on how to work with the agent to achieve the target state we see on the screen', say: 'with instructions on working with the agent to reach the target state on screen'.\n"
+            "   - Example: Instead of 'This report is now available for review, both now and in the future', say: 'It is a report for review now and in the future'.\n"
+            "4. IT Terminology:\n"
             "   - 'man pages', 'dotfiles', 'Obsidian vault', 'Antigravity', 'Claude Code', 'mount point', 'VRAM footprint', 'bare metal', 'zero-guessing principle'.\n"
             "   - 'na żywym organizmie' -> 'on a live system'\n"
             "   - 'Linux pod spodem' -> 'Linux under the hood'\n"
@@ -273,14 +289,12 @@ class OllamaTranslator:
             "   - 'zderzamy dwie epoki' -> 'we are colliding two eras'\n"
             "   - 'bebechy Linuxa' -> 'the internal plumbing of Linux'\n"
             "   - 'agentowy sysadmin' -> 'Agentic SysAdmin'\n"
-            "3. Do NOT translate literally. Translate the natural engineering meaning into smooth, spoken English.\n"
-            "4. Output ONLY the English translation. No explanations, no markdown quotes, no notes."
-            f"{timing_rules}"
+            "   - 'Kdenlive' -> 'Kdenlive'\n"
+            "5. Output ONLY the English translation. No explanations, no markdown quotes, no notes."
+            f"{timing_guidance}"
         )
 
-        user_prompt = f"Translate this Polish spoken chunk into natural English spoken voiceover:\n\n{text_pl}"
-        if max_words:
-            user_prompt += f"\n\n(Remember: Maximum {max_words} words for this {duration_sec:.1f}s scene)"
+        user_prompt = f"Translate this Polish spoken chunk into natural English spoken voiceover:\n\n{text_pl}{user_hint}"
 
         payload = {
             "model": self.model_name,
@@ -733,16 +747,19 @@ def time_sync_and_master(
                     "-ar", "48000", "-ac", "1",
                     str(out_seg)
                 ]
-            elif (avail_window - seg_dur) > 3.5:
-                # Nadmiarowa martwa cisza (>3.5s) — łagodna relaksacja tempa (zwolnienie o 6%)
-                speed_factor = relax_factor
+            elif (avail_window - seg_dur) > 3.0:
+                # Nadmiarowa martwa cisza (>3.0s) — dynamiczna relaksacja tempa (od 0.90 do 0.96)
+                target_dur = max(seg_dur, avail_window - 2.5)
+                raw_speed = seg_dur / target_dur
+                speed_factor = max(0.90, min(0.96, raw_speed))
                 adj_dur = seg_dur / speed_factor
                 excess_gap = avail_window - adj_dur
-                if excess_gap > 2.0:
-                    offset = min(1.2, excess_gap * 0.25)
+                offset = 0.0
+                if excess_gap > 1.5:
+                    offset = min(2.0, excess_gap * 0.35)
                     actual_start += offset
                     avail_window -= offset
-                log_info(f"Dopasowanie tempa (relaksacja ciszy) dla sceny {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {adj_dur:.2f}s, luka: {excess_gap:.1f}s)")
+                log_info(f"Dopasowanie tempa (relaksacja ciszy) dla sceny {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {adj_dur:.2f}s, offset: +{offset:.2f}s, luka: {avail_window - adj_dur:.1f}s)")
                 cmd = [
                     "ffmpeg", "-y", "-i", str(seg_wav),
                     "-filter:a", f"atempo={speed_factor:.3f}",
