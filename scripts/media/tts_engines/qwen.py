@@ -76,10 +76,13 @@ class QwenTTSEngine(BaseTTSEngine):
 
         try:
             import soundfile as sf
+            from text_director import filter_qwen_tags
+
+            safe_text = filter_qwen_tags(text)
             self._ensure_model()
             prompt = self.get_prompt(ref_audio, ref_transcript)
             wavs, sr = self._model.generate_voice_clone(
-                text=text,
+                text=safe_text,
                 language=language,
                 voice_clone_prompt=prompt,
             )

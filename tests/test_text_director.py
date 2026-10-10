@@ -16,9 +16,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "media"))
 
 from text_director import (  # noqa: E402
+    QWEN_EMOTION_TAGS,
+    QWEN_VOCAL_EVENT_TAGS,
+    TagFormat,
     clean_voiceover_text,
     enrich_voiceover_tags,
     escape_raw_ampersands,
+    filter_qwen_tags,
     get_engine_capability,
     prepare_edge_ssml,
     strip_voice_tags,
@@ -92,6 +96,15 @@ class TestTextDirector(unittest.TestCase):
         self.assertIn("break", cap_edge.allowed_tags)
         self.assertIn("prosody", cap_edge.allowed_tags)
 
+        cap_qwen = get_engine_capability("qwen")
+        self.assertEqual(cap_qwen.tag_format, TagFormat.BRACKETS)
+        self.assertIn("excited", cap_qwen.allowed_tags)
+        self.assertIn("clears throat", cap_qwen.allowed_tags)
+        self.assertIn("very slowly", cap_qwen.allowed_tags)
+        self.assertIn("gasp", cap_qwen.allowed_tags)
+        self.assertIn("excited", QWEN_EMOTION_TAGS)
+        self.assertIn("clears throat", QWEN_VOCAL_EVENT_TAGS)
+
     def test_enrich_voiceover_tags_unsupported_engine_strips_tags(self):
         # Silnik Kokoro/Breeze zawsze otrzymuje czysty tekst bez tagów
         raw = 'Hello <break time="300ms"/> [pause] world'
@@ -160,6 +173,52 @@ class TestTextDirector(unittest.TestCase):
         raw = 'Tom &amp; Jerry <break time="300ms"/>'
         self.assertEqual(strip_voice_tags(raw), "Tom & Jerry")
 
+    def test_qwen_tags_whitelisting(self):
+        # 1. Poprawne tagi Qwen przechodzą przez filter_qwen_tags bez zmian
+        text = "[curious]Why? [gasp][panicked]Oh no!"
+        self.assertEqual(filter_qwen_tags(text), "[curious]Why? [gasp][panicked]Oh no!")
+
+        # 2. Poprawne tagi wielowyrazowe
+        text2 = "[very slowly]Watch out, [clears throat] please."
+        self.assertEqual(filter_qwen_tags(text2), "[very slowly]Watch out, [clears throat] please.")
+
+        # 3. Wzbogacenie przez Reżysera tekstu (mock LLM)
+        def mock_llm(_prompt):
+            return "<directed_text>[curious]Why? [gasp][panicked]Oh no!</directed_text>"
+
+        res = enrich_voiceover_tags("Why? Oh no!", engine_type="qwen", client_llm=mock_llm)
+        self.assertEqual(res, "[curious]Why? [gasp][panicked]Oh no!")
+
+    def test_qwen_unsupported_tags_cleaned(self):
+        # 1. Halucynowane tagi nawiasowe są usuwane
+        self.assertEqual(filter_qwen_tags("[robot_voice]Hello"), "Hello")
+        self.assertEqual(filter_qwen_tags("Hello [unknown_tag] world"), "Hello world")
+
+        # 2. Przypadkowe tagi XML w tekście dla Qwen są usuwane
+        self.assertEqual(filter_qwen_tags("Hello <laughter>world</laughter>"), "Hello world")
+
+        # 3. Wzbogacenie przez Reżysera tekstu usuwa nieobsługiwany tag i zachowuje słowa
+        def mock_llm(_prompt):
+            return "<directed_text>[robot_voice]Hello</directed_text>"
+
+        res = enrich_voiceover_tags("Hello", engine_type="qwen", client_llm=mock_llm)
+        self.assertEqual(res, "Hello")
+
+    def test_strip_voice_tags_multiword_brackets(self):
+        # Weryfikacja całkowitego wycięcia tagów wielowyrazowych ze spacjami dla napisów SRT/ASS
+        raw = "[very slowly]Proceed with caution, [clears throat] please."
+        stripped = strip_voice_tags(raw)
+        self.assertEqual(stripped, "Proceed with caution, please.")
+        self.assertNotIn("[clears throat]", stripped)
+        self.assertNotIn("[very slowly]", stripped)
+        self.assertNotIn("clears throat", stripped)
+        self.assertNotIn("very slowly", stripped)
+
+        # Inne złożone tagi Qwen
+        raw2 = "[like dracula]Welcome to the castle [deep and loud shouting]everyone!"
+        self.assertEqual(strip_voice_tags(raw2), "Welcome to the castle everyone!")
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -41,6 +41,50 @@ class TTSEngineCapability:
     description: str
 
 
+# ==============================================================================
+# Słownik znaczników emocji i dynamiki Qwen3 TTS (Qwen3 TTS Prompt Guide)
+# ==============================================================================
+QWEN_EMOTION_TAGS: dict[str, str] = {
+    # Tag: opis działania (Span scope)
+    "sad": "Sad delivery",
+    "bored": "Bored tone",
+    "amazed": "Amazed / astonished tone",
+    "tired": "Tired, exhausted tone",
+    "angry": "Angry delivery",
+    "excited": "Excited, enthusiastic delivery",
+    "serious": "Serious, focused tone",
+    "curious": "Curious, inquisitive tone",
+    "shouting": "Shouting delivery",
+    "whispers": "Whispering delivery",
+    "asmr": "Soft ASMR style delivery",
+    "panicked": "Panicked, rushed tone",
+    "sarcastic": "Sarcastic tone",
+    "empathetic": "Empathetic, compassionate tone",
+    "mischievously": "Mischievous, playful tone",
+    "reluctantly": "Reluctant delivery",
+    "crying": "Crying, weeping delivery",
+    "trembling": "Trembling, shaky delivery",
+    "very slowly": "Very slow speech rate",
+    "very fast": "Very fast speech rate",
+    "scornful": "Scornful, dismissive tone",
+    "like dracula": "Deep, eerie gothic style",
+    "deep and loud shouting": "Deep, loud shouting",
+}
+
+QWEN_VOCAL_EVENT_TAGS: dict[str, str] = {
+    # Tag: zdarzenie wokalne (Point scope)
+    "gasp": "Sharp intake of breath",
+    "sighing": "Sigh",
+    "clears throat": "Throat clearing",
+    "giggles": "Giggle / chuckle",
+    "laughing": "Laughter",
+    "cough": "Cough",
+    "snorts": "Snort or scoff",
+}
+
+ALL_QWEN_TAGS: set[str] = set(QWEN_EMOTION_TAGS.keys()) | set(QWEN_VOCAL_EVENT_TAGS.keys())
+
+
 ENGINE_CAPABILITIES: dict[str, TTSEngineCapability] = {
     "edge": TTSEngineCapability(
         engine_name="edge",
@@ -52,9 +96,9 @@ ENGINE_CAPABILITIES: dict[str, TTSEngineCapability] = {
     "qwen": TTSEngineCapability(
         engine_name="qwen",
         supports_tags=True,
-        tag_format=TagFormat.PARALINGUISTIC_XML,
-        allowed_tags=("breath", "laughter", "strong"),
-        description="Wspiera tagi paralingwistyczne: <breath>, <laughter>...</laughter>, <strong>...</strong>, ...",
+        tag_format=TagFormat.BRACKETS,
+        allowed_tags=tuple(sorted(ALL_QWEN_TAGS)),
+        description="Wspiera oficjalne tagi Qwen3 TTS w nawiasach kwadratowych [tag]: emotion (span) i vocal events (point).",
     ),
     "chatterbox": TTSEngineCapability(
         engine_name="chatterbox",
@@ -128,6 +172,7 @@ def supports_voice_tags(engine_name: str) -> bool:
 def strip_voice_tags(text: str) -> str:
     """
     Usuwa z tekstu wszelkie tagi XML/HTML (<...>) oraz tagi w nawiasach kwadratowych ([...]),
+    w tym znaczniki wielowyrazowe ze spacjami (np. [clears throat], [very slowly]),
     aby nie trafiły do napisów ani do silników, które przeczytałyby je na głos.
     """
     if not text:
@@ -138,8 +183,8 @@ def strip_voice_tags(text: str) -> str:
     # Usunięcie wszelkich tagów XML / HTML (np. <break time="300ms"/>, <express-as style="excited">, <breath>, <strong>)
     raw = re.sub(r"<[^>]+>", "", raw)
 
-    # Usunięcie znaczników w nawiasach kwadratowych (np. [sigh], [pause], [chuckle], [gasp], [akcent])
-    raw = re.sub(r"\[[a-zA-Z_\-]+\]", "", raw)
+    # Usunięcie znaczników w nawiasach kwadratowych (w tym wielowyrazowych ze spacjami i myślnikami)
+    raw = re.sub(r"\[[a-zA-Z0-9_\- ]+\]", "", raw)
 
     # Dekodowanie encji XML z powrotem do znaków tekstowych (dla napisów i czystego tekstu)
     raw = (
@@ -156,6 +201,38 @@ def strip_voice_tags(text: str) -> str:
     # Normalizacja białych znaków i usunięcie zbędnych spacji
     raw = re.sub(r"\s+", " ", raw).strip()
     return raw
+
+
+def filter_qwen_tags(text: str) -> str:
+    """
+    Skanuje tekst pod kątem znaczników [tag] i usuwa wszelkie tagi spoza oficjalnego
+    słownika Qwen3 TTS (QWEN_EMOTION_TAGS + QWEN_VOCAL_EVENT_TAGS).
+    Usuwa również wszelkie przypadkowe tagi XML (<...>).
+    Zachowuje poprawne tagi ze słownika, oryginalne słowa i poprawną interpunkcję.
+    """
+    if not text:
+        return ""
+
+    raw = text
+
+    # Usunięcie wszelkich tagów XML (<...>), aby nie były odczytane przez Qwen na głos
+    raw = re.sub(r"<[^>]+>", "", raw)
+
+    def replace_bracket_tag(match: re.Match[str]) -> str:
+        content = match.group(1).strip()
+        if content.lower() in ALL_QWEN_TAGS:
+            return f"[{content.lower()}]"
+        return ""
+
+    raw = re.sub(r"\[([a-zA-Z0-9_\- ]+)\]", replace_bracket_tag, raw)
+
+    # Normalizacja spacji przed znakami interpunkcyjnymi
+    raw = re.sub(r"\s+([,\.!?;:])", r"\1", raw)
+
+    # Normalizacja wielokrotnych spacji
+    raw = re.sub(r"[ \t]+", " ", raw).strip()
+    return raw
+
 
 
 def clean_voiceover_text(text: str) -> str:
@@ -225,9 +302,45 @@ def clean_voiceover_text(text: str) -> str:
     return raw
 
 
+def _build_qwen_director_prompt(text: str) -> tuple[str, str]:
+    """Generuje dedykowany prompt Reżysera dla Qwen3 TTS zgodnie z oficjalnym Prompt Guide."""
+    emotions_str = "\n".join(f"  - [{tag}]: {desc}" for tag, desc in QWEN_EMOTION_TAGS.items())
+    events_str = "\n".join(f"  - [{tag}]: {desc}" for tag, desc in QWEN_VOCAL_EVENT_TAGS.items())
+
+    system_prompt = (
+        "You are an elite Audio & Voiceover Director specialized in Qwen3 TTS expressive speech.\n"
+        "Your task is to enrich the given voiceover line with official Qwen3 TTS prompt tags in square brackets [...].\n\n"
+        "OFFICIAL QWEN3 TTS TAG SPECIFICATION:\n"
+        "1. Emotion & Delivery Tags (Span scope - defines overall style/tone from insertion point until next tag or segment):\n"
+        f"{emotions_str}\n\n"
+        "2. Rich-language Vocal Event Tags (Point scope - momentary vocal event at that exact point without altering the overarching emotion):\n"
+        f"{events_str}\n\n"
+        "USAGE RULES & GUIDELINES:\n"
+        "- Tags can be combined directly, e.g.: '[tired][sighing]Another day of work...' or '[excited]Great news! [laughing]We did it!'\n"
+        "- Use natural punctuation (hyphens '-', ellipses '...', exclamation marks '!') alongside tags to guide pacing and pauses.\n"
+        "- Insert at most 1 to 3 tags per utterance. Keep delivery tasteful, natural, and understated.\n"
+        "- DO NOT invent any tags. ONLY use tags from the approved lists above.\n\n"
+        "STRICT CARDINAL RULES:\n"
+        "1. DO NOT CHANGE, ADD, OR DELETE ANY WORDS from the original text. Every single word of the original text must remain verbatim in place.\n"
+        "2. ONLY insert tags from the approved lists in square brackets [...].\n"
+        "3. Wrap your entire output strictly inside <directed_text>...</directed_text> tags.\n"
+        "4. Output NO preamble, NO commentary, NO markdown codeblocks, NO quotes outside or inside the tags."
+    )
+
+    user_prompt = (
+        f"Original spoken text:\n\"{text}\"\n\n"
+        "Enrich with allowed Qwen3 TTS voice tags while strictly preserving every single word verbatim. "
+        "Output ONLY inside <directed_text>...</directed_text>."
+    )
+    return system_prompt, user_prompt
+
+
 def _build_director_prompt(text: str, engine_name: str) -> tuple[str, str]:
     """Generuje system prompt oraz user prompt dla Reżysera tekstu."""
     cap = get_engine_capability(engine_name)
+
+    if cap.engine_name == "qwen":
+        return _build_qwen_director_prompt(text)
 
     engine_tag_instructions = ""
     if cap.tag_format == TagFormat.SSML:
@@ -305,6 +418,15 @@ def _validate_directed_text(original_text: str, directed_text: str, cap: TTSEngi
         # Silnik bez wsparcia nie powinien mieć żadnych tagów
         if "<" in directed_text or ">" in directed_text or "[" in directed_text:
             return False
+
+    if cap.engine_name == "qwen":
+        # Qwen wspiera wyłącznie nawiasy kwadratowe z listy whitelist. Brak tagów XML.
+        if "<" in directed_text or ">" in directed_text:
+            return False
+        found_tags = re.findall(r"\[([a-zA-Z0-9_\- ]+)\]", directed_text)
+        for t in found_tags:
+            if t.strip().lower() not in ALL_QWEN_TAGS:
+                return False
 
     return True
 
@@ -414,6 +536,8 @@ def enrich_voiceover_tags(
         return strip_voice_tags(clean_text)
 
     if client_llm is None:
+        if cap.engine_name == "qwen":
+            return filter_qwen_tags(clean_text)
         if cap.tag_format == TagFormat.SSML:
             return prepare_edge_ssml(clean_text)
         return clean_text
@@ -422,6 +546,8 @@ def enrich_voiceover_tags(
     raw_response = _call_llm_director(system_prompt, user_prompt, client_llm)
 
     if not raw_response:
+        if cap.engine_name == "qwen":
+            return filter_qwen_tags(clean_text)
         if cap.tag_format == TagFormat.SSML:
             return prepare_edge_ssml(clean_text)
         return clean_text
@@ -436,12 +562,18 @@ def enrich_voiceover_tags(
         directed_cand = re.sub(r"\s*</directed_text>.*$", "", directed_cand, flags=re.DOTALL | re.IGNORECASE).strip()
         directed_cand = directed_cand.strip(' "”„\'`')
 
+    # Filtracja dla Qwen: usunięcie ewentualnych halucynacji tagowych i tagów XML przed asercją
+    if cap.engine_name == "qwen":
+        directed_cand = filter_qwen_tags(directed_cand)
+
     # Asercja wierności słów i integralności
     if _validate_directed_text(clean_text, directed_cand, cap):
         if cap.tag_format == TagFormat.SSML:
             directed_cand = prepare_edge_ssml(directed_cand)
         return directed_cand
 
+    if cap.engine_name == "qwen":
+        return filter_qwen_tags(clean_text)
     if cap.tag_format == TagFormat.SSML:
         return prepare_edge_ssml(clean_text)
     return clean_text
