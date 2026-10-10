@@ -68,6 +68,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from text_director import (  # noqa: E402
+    clean_voiceover_text,
+    enrich_voiceover_tags,
+    strip_voice_tags,
+    supports_voice_tags,
+)
 from tts_engines import (  # noqa: E402
     BaseTTSEngine,
     detect_best_engine,
@@ -304,68 +310,8 @@ def group_whisper_segments(raw_segments, min_duration=12.0, max_duration=28.0) -
 ## ==============================================================================
 # 3. LOKALNE TŁUMACZENIE I KOREKTA LLM (BIELIK / OLLAMA LUB MARIANMT)
 # ==============================================================================
-def clean_voiceover_text(text: str) -> str:
-    """
-    Oczyszcza tekst voiceoveru/dubbingu z wszelkich wycieków metadanych promptu (np. PACING BUDGET),
-    wtrąceń reżyserskich w nawiasach, bloków kodu, tagów XML oraz zewnętrznych cudzysłowów.
-    """
-    if not text:
-        return ""
+# clean_voiceover_text oraz strip_voice_tags są zaimportowane z text_director
 
-    raw = text.strip()
-
-    # 1. Priorytetowe parsowanie zawartości tagu <voiceover>...</voiceover>
-    vo_match = re.search(r"<voiceover>(.*?)</voiceover>", raw, flags=re.DOTALL | re.IGNORECASE)
-    if vo_match:
-        raw = vo_match.group(1).strip()
-    else:
-        # Usunięcie pojedynczych niedomkniętych tagów
-        raw = re.sub(r"^.*?<voiceover>\s*", "", raw, flags=re.DOTALL | re.IGNORECASE)
-        raw = re.sub(r"\s*</voiceover>.*$", "", raw, flags=re.DOTALL | re.IGNORECASE)
-
-    # 2. Usunięcie tagów <source_text>...</source_text> oraz tagów XML
-    raw = re.sub(r"<source_text>.*?</source_text>", "", raw, flags=re.DOTALL | re.IGNORECASE)
-    raw = re.sub(r"</?(?:source_text|voiceover)>", "", raw, flags=re.IGNORECASE)
-
-    # 3. Odcięcie frazy PACING BUDGET / PACING RULES oraz wszystkiego co następuje po niej
-    raw = re.sub(r"\bPACING BUDGET\b.*", "", raw, flags=re.IGNORECASE | re.DOTALL)
-    raw = re.sub(r"\bPACING (?:RULES|REVISION RULES)\b.*", "", raw, flags=re.IGNORECASE | re.DOTALL)
-
-    # 4. Usunięcie bloków kodu Markdown
-    raw = re.sub(r"^```(?:[a-zA-Z]+)?\s*", "", raw)
-    raw = re.sub(r"\s*```$", "", raw)
-
-    # 5. Usunięcie typowych prefiksów generowanych przez LLM
-    prefixes = [
-        r"^(?:Here(?:'s| is) (?:a |the )?(?:(?:natural|fluent|idiomatic|spoken|English|revised|plain)\s+)*(?:translation|voiceover)[^:]*:\s*)",
-        r"^(?:English translation:\s*)",
-        r"^(?:Translation:\s*)",
-        r"^(?:Sure, here is[^:]*:\s*)",
-        r"^(?:Voiceover:\s*)",
-    ]
-    for p in prefixes:
-        raw = re.sub(p, "", raw, flags=re.IGNORECASE)
-
-    # 6. Wytnij wtrącenia metadanych w nawiasach np. [Speech window: ...], (Target voiceover length: ...)
-    raw = re.sub(
-        r"\[(?:\s*pacing|\s*speech window|\s*target voiceover|\s*word count|\s*words?|\s*count|\s*note|\s*voiceover|\s*audio|\s*pause|\s*sound|\s*laughter|\s*sigh|\s*target)[^\]]*\]",
-        "",
-        raw,
-        flags=re.IGNORECASE,
-    )
-    raw = re.sub(
-        r"\((?:\s*pacing|\s*speech window|\s*target voiceover|\s*target voice|\s*word count|\s*words?|\s*count|\s*note|\s*voiceover|\s*audio|\s*pause|\s*sound|\s*laughter|\s*sigh|\s*target|\s*natural|\s*articulate|\s*approximately)[^\)]*\)",
-        "",
-        raw,
-        flags=re.IGNORECASE,
-    )
-
-    # 7. Zdjęcie zbędnych cudzysłowów opakowujących całą wypowiedź
-    raw = raw.strip(' "”„\'`')
-
-    # 8. Normalizacja białych znaków
-    raw = re.sub(r"\s+", " ", raw).strip()
-    return raw
 
 
 def clean_llm_translation(raw_text: str) -> str:
@@ -830,7 +776,7 @@ def export_srt(scenes: list[dict], srt_path: Path, lang_key: str = "text_pl", us
         s_end = sc.get("end_synced", sc["end"]) if use_synced else sc["end"]
         start_str = sec_to_srt_time(s_start)
         end_str = sec_to_srt_time(s_end)
-        text = clean_voiceover_text(sc.get(lang_key, ""))
+        text = strip_voice_tags(clean_voiceover_text(sc.get(lang_key, "")))
         lines.append(f"{idx}\n{start_str} --> {end_str}\n{text}\n")
     srt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -1096,6 +1042,7 @@ def process_single_short(
     translator: LocalMarianTranslator | None = None,
     tts_engine: BaseTTSEngine | None = None,
     max_pacing_retries: int = DEFAULT_MAX_PACING_RETRIES,
+    expressive: bool = False,
 ) -> bool:
     work_dir = work_dir.resolve()
     short_id = work_dir.name
@@ -1219,28 +1166,47 @@ def process_single_short(
         active_engine_instance = get_tts_engine("edge", voice=edge_voice or "en-US-ChristopherNeural")
         active_engine_name = active_engine_instance.name
 
+    llm_director_client = None
+    if expressive and supports_voice_tags(selected_engine):
+        target_llm = "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M" if llm_model in ("auto", "bielik") else llm_model
+        candidate_llm = OllamaTranslator(model_name=target_llm)
+        if candidate_llm.is_available():
+            llm_director_client = candidate_llm
+            log_info(f"Reżyser tekstu: Włączono wzbogacanie Two-Pass TTS Voice Tags ({selected_engine.upper()}, model: {target_llm}).")
+        else:
+            log_warn("Ollama nie jest dostępna dla Reżysera tekstu. Użycie czystego tekstu.")
+
     log_info(f"Generowanie mowy dla poszczególnych scen (silnik: {selected_engine.upper()})...")
     for sc in scenes:
-        sc["text_en"] = clean_voiceover_text(sc.get("text_en", ""))
+        clean_vo = clean_voiceover_text(sc.get("text_en", ""))
+        if expressive and supports_voice_tags(selected_engine) and llm_director_client:
+            directed_vo = enrich_voiceover_tags(clean_vo, selected_engine, client_llm=llm_director_client)
+        else:
+            directed_vo = strip_voice_tags(clean_vo)
+
+        # Do napisów (.srt / .ass), transcript JSON i raportów ZAWSZE trafia tekst oczyszczony ze znaczników!
+        sc["text_en"] = strip_voice_tags(directed_vo)
+        sc["text_en_directed"] = directed_vo
+
         part_wav = dub_parts_dir / f"scene_{sc['id']:03d}.wav"
         txt_marker = part_wav.with_suffix(".txt")
         engine_marker = part_wav.with_suffix(".engine")
         expected_engine = selected_engine
 
-        # Inteligentne wznawianie: użyj istniejącego pliku tylko jeśli tekst angielski jest identyczny ORAZ silnik jest zgodny
+        # Inteligentne wznawianie: użyj istniejącego pliku tylko jeśli tekst do syntezy jest identyczny ORAZ silnik jest zgodny
         if (
             part_wav.exists()
             and part_wav.stat().st_size > 1000
             and txt_marker.exists()
-            and txt_marker.read_text(encoding="utf-8").strip() == sc["text_en"].strip()
+            and txt_marker.read_text(encoding="utf-8").strip() == directed_vo.strip()
             and (not engine_marker.exists() or engine_marker.read_text(encoding="utf-8").strip() == expected_engine)
         ):
             segment_wavs.append(part_wav)
             continue
 
-        log_info(f"{selected_engine.upper()}: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...'")
+        log_info(f"{selected_engine.upper()}: Synteza sceny {sc['id']}: '{directed_vo[:42]}...'")
         synth_ok = active_engine_instance.synthesize(
-            text=sc["text_en"],
+            text=directed_vo,
             out_wav=part_wav,
             ref_audio=ref_audio,
             ref_transcript=ref_transcript,
@@ -1252,9 +1218,9 @@ def process_single_short(
                 log_err(f"Błąd syntezy sceny {sc['id']} przez wymuszony silnik {selected_engine}.")
                 return False
             voice_to_use = edge_voice or "en-US-ChristopherNeural"
-            log_info(f"Edge-TTS Fallback: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...' (voice: {voice_to_use})")
+            log_info(f"Edge-TTS Fallback: Synteza sceny {sc['id']}: '{directed_vo[:42]}...' (voice: {voice_to_use})")
             fallback_engine = get_tts_engine("edge", voice=voice_to_use)
-            synth_ok = fallback_engine.synthesize(text=sc["text_en"], out_wav=part_wav)
+            synth_ok = fallback_engine.synthesize(text=directed_vo, out_wav=part_wav)
             active_engine_name = f"Edge-TTS ({voice_to_use})"
             if synth_ok:
                 engine_marker.write_text("edge\n", encoding="utf-8")
@@ -1262,8 +1228,11 @@ def process_single_short(
             engine_marker.write_text(f"{selected_engine}\n", encoding="utf-8")
 
         if part_wav.exists() and part_wav.stat().st_size > 1000:
-            txt_marker.write_text(sc["text_en"].strip() + "\n", encoding="utf-8")
+            txt_marker.write_text(directed_vo.strip() + "\n", encoding="utf-8")
         segment_wavs.append(part_wav)
+
+    if llm_director_client is not None:
+        llm_director_client.unload()
 
     # 5. Time-sync i mastering EBU R128
     mastered_wav = output_dir / f"{short_id}_VoiceOver_EN_CLEAN.wav"
@@ -1359,6 +1328,7 @@ def main():
     parser.add_argument("--output-video", action="store_true", default=True, help="Wygeneruj zduplikowane wideo z dubbingiem EN")
     parser.add_argument("--transcribe-only", action="store_true", default=False, help="Wygeneruj wyłącznie transkrypcję Whisper i napisy SRT (bez syntezy TTS)")
     parser.add_argument("--max-pacing-retries", type=int, default=DEFAULT_MAX_PACING_RETRIES, help="Maksymalna liczba iteracji rekalibracji długości tekstu przez Bielika (domyślnie: 10)")
+    parser.add_argument("--expressive", action="store_true", default=False, help="Włącz dwufazowe wzbogacanie tekstu o znaczniki emocji/dynamiki (Two-Pass TTS Voice Tags)")
     args = parser.parse_args()
 
     # Wybór presetów akcentu i głosu
@@ -1410,6 +1380,7 @@ def main():
                 translator=shared_translator,
                 tts_engine=shared_tts_engine,
                 max_pacing_retries=args.max_pacing_retries,
+                expressive=args.expressive,
             )
         return
 
@@ -1438,6 +1409,7 @@ def main():
         translator=shared_translator,
         tts_engine=shared_tts_engine,
         max_pacing_retries=args.max_pacing_retries,
+        expressive=args.expressive,
     )
 
 

@@ -37,7 +37,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from dub_video import clean_voiceover_text, resolve_reference_audio  # noqa: E402
+from dub_video import OllamaTranslator, resolve_reference_audio  # noqa: E402
+from text_director import (  # noqa: E402
+    clean_voiceover_text,
+    enrich_voiceover_tags,
+    strip_voice_tags,
+    supports_voice_tags,
+)
 from tts_engines import EdgeTTSEngine, KokoCloneEngine  # noqa: E402
 
 
@@ -243,7 +249,7 @@ def concatenate_and_master(
             current_time = end_t
 
             if item_info.get("type") == "speech":
-                txt = clean_voiceover_text(item_info.get("text", ""))
+                txt = strip_voice_tags(clean_voiceover_text(item_info.get("text", "")))
                 srt_entries.append(
                     f"{srt_idx}\n{sec_to_srt_time(start_t)} --> {sec_to_srt_time(end_t)}\n{txt}\n"
                 )
@@ -302,6 +308,7 @@ def generate_voiceover(
     use_voice_conversion: bool = True,
     max_items: int | None = None,
     section_filter: str | None = None,
+    expressive: bool = False,
 ) -> bool:
     script_path = script_path.resolve()
     work_dir = work_dir.resolve()
@@ -353,6 +360,16 @@ def generate_voiceover(
                 log_warn(f"Błąd inicjalizacji Kanade ({e_cl}). Fallback do czystego głosu lektora.")
                 use_voice_conversion = False
 
+    # 2.5 Reżyser tekstu dla trybu ekspresyjnego
+    llm_director_client = None
+    if expressive and supports_voice_tags("edge"):
+        candidate_llm = OllamaTranslator(model_name="SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M")
+        if candidate_llm.is_available():
+            llm_director_client = candidate_llm
+            log_info("Reżyser tekstu: Włączono wzbogacanie Two-Pass TTS Voice Tags (Bielik LLM).")
+        else:
+            log_warn("Ollama nie jest dostępna dla Reżysera tekstu. Użycie czystego tekstu.")
+
     # 3. Generowanie poszczególnych części
     segment_files = []
     log_info("Rozpoczynanie syntezy i transferu barwy dla segmentów...")
@@ -369,8 +386,14 @@ def generate_voiceover(
             continue
 
         # Typ speech
-        text = clean_voiceover_text(it["text"])
-        it["text"] = text
+        clean_text = clean_voiceover_text(it["text"])
+        if expressive and supports_voice_tags("edge") and llm_director_client:
+            directed_text = enrich_voiceover_tags(clean_text, "edge", client_llm=llm_director_client)
+        else:
+            directed_text = strip_voice_tags(clean_text)
+
+        it["text"] = strip_voice_tags(directed_text)  # Do napisów SRT i raportu MD
+        it["text_directed"] = directed_text          # Do syntezy TTS
         base_wav = parts_dir / f"part_{item_id:04d}_base.wav"
         cloned_wav = parts_dir / f"part_{item_id:04d}_cloned.wav"
         txt_marker = parts_dir / f"part_{item_id:04d}.txt"
@@ -382,15 +405,15 @@ def generate_voiceover(
             final_part_wav.exists()
             and final_part_wav.stat().st_size > 1000
             and txt_marker.exists()
-            and txt_marker.read_text(encoding="utf-8").strip() == text
+            and txt_marker.read_text(encoding="utf-8").strip() == directed_text.strip()
         ):
             segment_files.append((final_part_wav, it))
             continue
 
-        log_info(f"Segment #{item_id:03d} [{it['section'][:25]}]: '{text[:45]}...'")
+        log_info(f"Segment #{item_id:03d} [{it['section'][:25]}]: '{directed_text[:45]}...'")
 
         # Krok A: Czysta polska synteza
-        synth_ok = edge_engine.synthesize(text=text, out_wav=base_wav)
+        synth_ok = edge_engine.synthesize(text=directed_text, out_wav=base_wav)
         if not synth_ok:
             log_err(f"Błąd syntezy segmentu #{item_id}. Przerywanie.")
             return False
@@ -410,8 +433,11 @@ def generate_voiceover(
         else:
             final_part_wav = base_wav
 
-        txt_marker.write_text(text + "\n", encoding="utf-8")
+        txt_marker.write_text(directed_text + "\n", encoding="utf-8")
         segment_files.append((final_part_wav, it))
+
+    if llm_director_client is not None:
+        llm_director_client.unload()
 
     project_slug = work_dir.name if work_dir.name and work_dir.name != "work" else script_path.stem.replace("_read_script", "").replace("voiceover_", "")
     if not project_slug or project_slug == "voiceover":
@@ -473,6 +499,7 @@ def main():
     parser.add_argument("--no-cloning", action="store_true", default=False, help="Wyłącz konwersję barwy Kanade (generuj czystego Marka)")
     parser.add_argument("--section", type=str, default=None, help="Ogranicz generowanie do wybranej sekcji/wieszaka (np. 'WIESZAK 1')")
     parser.add_argument("--limit", type=int, default=None, help="Ogranicz do pierwszych N segmentów (do szybkiego testu)")
+    parser.add_argument("--expressive", action="store_true", default=False, help="Włącz dwufazowe wzbogacanie tekstu o znaczniki emocji/dynamiki (Two-Pass TTS Voice Tags)")
     args = parser.parse_args()
 
     script_path = args.script.resolve()
@@ -505,6 +532,7 @@ def main():
         use_voice_conversion=not args.no_cloning,
         max_items=args.limit,
         section_filter=args.section,
+        expressive=args.expressive,
     )
     if not success:
         sys.exit(1)
