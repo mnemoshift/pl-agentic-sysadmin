@@ -233,7 +233,7 @@ ensure_theme_repositories() {
             git clone --depth 1 https://github.com/vinceliuice/WhiteSur-gtk-theme.git "$base_dir/WhiteSur-gtk-theme"
         fi
         log_info "Instalacja motywu WhiteSur GTK..."
-        (cd "$base_dir/WhiteSur-gtk-theme" && ./install.sh -m -t default -l -c light >/dev/null 2>&1 || true)
+        (cd "$base_dir/WhiteSur-gtk-theme" && ./install.sh -m -t default -l -c light >/dev/null 2>&1) || true
     fi
 
     # 2. WhiteSur Icon Theme
@@ -245,7 +245,7 @@ ensure_theme_repositories() {
             git clone --depth 1 https://github.com/vinceliuice/WhiteSur-icon-theme.git "$base_dir/WhiteSur-icon-theme"
         fi
         log_info "Instalacja motywu ikon WhiteSur..."
-        (cd "$base_dir/WhiteSur-icon-theme" && ./install.sh >/dev/null 2>&1 || true)
+        (cd "$base_dir/WhiteSur-icon-theme" && ./install.sh >/dev/null 2>&1) || true
     fi
 
     # 3. McMojave Cursors
@@ -257,7 +257,7 @@ ensure_theme_repositories() {
             git clone --depth 1 https://github.com/vinceliuice/McMojave-cursors.git "$base_dir/McMojave-cursors"
         fi
         log_info "Instalacja kursorów McMojave..."
-        (cd "$base_dir/McMojave-cursors" && ./install.sh >/dev/null 2>&1 || true)
+        (cd "$base_dir/McMojave-cursors" && ./install.sh >/dev/null 2>&1) || true
     fi
 }
 
@@ -349,6 +349,7 @@ except Exception:
     mkdir -p "$HOME/.config/autostart"
     if [ -f /usr/share/applications/plank.desktop ]; then
         cp /usr/share/applications/plank.desktop "$HOME/.config/autostart/" 2>/dev/null || true
+        # shellcheck disable=SC2016
         sed -i 's|^Exec=.*|Exec=sh -c '\''if [ "$XDG_SESSION_TYPE" = "x11" ]; then plank; fi'\''|' "$HOME/.config/autostart/plank.desktop"
     fi
 
@@ -1114,7 +1115,7 @@ show_status() {
         local th1
         th1=$(dconf read /net/launchpad/plank/docks/dock1/theme 2>/dev/null || echo "Transparent")
         local count1
-        count1=$(ls -1 "$HOME/.config/plank/dock1/launchers" 2>/dev/null | wc -l)
+        count1=$(find "$HOME/.config/plank/dock1/launchers" -maxdepth 1 -mindepth 1 2>/dev/null | wc -l)
         echo "  -> dock1 (Monitor: $m1, motyw: $th1, przypiętych: $count1)"
     fi
     if [[ "$enabled_docks" == *"dock2"* ]]; then
@@ -1123,7 +1124,7 @@ show_status() {
         local th2
         th2=$(dconf read /net/launchpad/plank/docks/dock2/theme 2>/dev/null || echo "Transparent")
         local count2
-        count2=$(ls -1 "$HOME/.config/plank/dock2/launchers" 2>/dev/null | wc -l)
+        count2=$(find "$HOME/.config/plank/dock2/launchers" -maxdepth 1 -mindepth 1 2>/dev/null | wc -l)
         echo "  -> dock2 (Monitor: $m2, motyw: $th2, aktywatorów: $count2)"
     fi
     echo -n "Tapeta systemowa:       "

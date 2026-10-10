@@ -79,7 +79,7 @@ cmd_install() {
     rm -rf "${temp_dir}"
 
     if [[ -x "$HOME/.local/bin/rclone" ]]; then
-        log_ok "Pomyślnie zainstalowano rclone: $($HOME/.local/bin/rclone version | head -n 1)"
+        log_ok "Pomyślnie zainstalowano rclone: $("$HOME"/.local/bin/rclone version | head -n 1)"
         log_info "Ścieżka: $HOME/.local/bin/rclone"
     else
         log_err "Instalacja nie powiodła się. Możesz zainstalować rclone systemowo: sudo apt install -y rclone"
