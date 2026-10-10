@@ -75,13 +75,29 @@ class QwenTTSEngine(BaseTTSEngine):
             return False
 
         try:
+            import logging
+
             import soundfile as sf
+            from text_director import clean_voiceover_text, strip_voice_tags
+
+            # Upewniamy się, że do generacji mowy trafia w 100% czysty tekst bez jakichkolwiek znaczników
+            safe_text = strip_voice_tags(clean_voiceover_text(text))
             self._ensure_model()
             prompt = self.get_prompt(ref_audio, ref_transcript)
+
+            acting_instruction = instruction.strip() if instruction else "Speak naturally in a clear, engaging tone."
+            gen_kwargs = dict(kwargs)
+            try:
+                ins_text = self._model._build_instruct_text(acting_instruction)
+                gen_kwargs["instruct_ids"] = self._model._tokenize_texts([ins_text])
+            except Exception as e:
+                logging.getLogger(__name__).warning("Nie udało się stokenizować instruct_ids dla Qwen3-TTS: %s", e)
+
             wavs, sr = self._model.generate_voice_clone(
-                text=text,
+                text=safe_text,
                 language=language,
                 voice_clone_prompt=prompt,
+                **gen_kwargs,
             )
             out_wav.parent.mkdir(parents=True, exist_ok=True)
             sf.write(str(out_wav), wavs[0], sr)
@@ -89,3 +105,4 @@ class QwenTTSEngine(BaseTTSEngine):
         except Exception as e:
             print(f"\033[1;31m[ERROR]\033[0m Błąd syntezy przez Qwen3-TTS: {e}", file=sys.stderr)
             return False
+

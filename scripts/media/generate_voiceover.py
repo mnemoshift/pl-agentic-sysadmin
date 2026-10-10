@@ -37,8 +37,15 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from dub_video import clean_voiceover_text, resolve_reference_audio  # noqa: E402
+from dub_video import OllamaTranslator, resolve_reference_audio  # noqa: E402
+from text_director import (  # noqa: E402
+    clean_voiceover_text,
+    enrich_voiceover_tags,
+    strip_voice_tags,
+    supports_voice_tags,
+)
 from tts_engines import EdgeTTSEngine, KokoCloneEngine  # noqa: E402
+from work_manager import WorkRunManager  # noqa: E402
 
 
 def log_info(msg: str):
@@ -243,7 +250,7 @@ def concatenate_and_master(
             current_time = end_t
 
             if item_info.get("type") == "speech":
-                txt = clean_voiceover_text(item_info.get("text", ""))
+                txt = strip_voice_tags(clean_voiceover_text(item_info.get("text", "")))
                 srt_entries.append(
                     f"{srt_idx}\n{sec_to_srt_time(start_t)} --> {sec_to_srt_time(end_t)}\n{txt}\n"
                 )
@@ -296,169 +303,235 @@ def concatenate_and_master(
 # ==============================================================================
 def generate_voiceover(
     script_path: Path,
-    work_dir: Path,
+    work_dir: Path | None = None,
     ref_audio: Path | None = None,
     polish_voice: str = "pl-PL-MarekNeural",
     use_voice_conversion: bool = True,
     max_items: int | None = None,
     section_filter: str | None = None,
+    expressive: bool = False,
+    output_dir: Path | None = None,
 ) -> bool:
     script_path = script_path.resolve()
+    if work_dir is None:
+        work_dir = REPO_ROOT / "work" / script_path.stem.replace("_read_script", "")
     work_dir = work_dir.resolve()
-    output_dir = work_dir / "output"
-    parts_dir = work_dir / "vo_parts"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    parts_dir.mkdir(parents=True, exist_ok=True)
-
-    log_info("=" * 65)
-    log_info(" Workstation Hub: Generator Voiceoveru PL (Profil Lektora: work/voice_sample)")
-    log_info("=" * 65)
-    log_info(f"Skrypt Markdown:    {script_path.name}")
-    log_info(f"Katalog roboczy:    {work_dir}")
-    log_info(f"Konwersja barwy:    {'TAK (Kanade Zero-Shot)' if use_voice_conversion else 'NIE (Czysty Edge-TTS)'}")
-    if ref_audio:
-        log_info(f"Próbka wzorca głosu: {ref_audio.name}")
-
-    # 1. Parsowanie skryptu czytanego Markdown
-    items = parse_markdown_voiceover_script(script_path)
-    if not items:
-        log_err("Nie znaleziono żadnych segmentów tekstu do odczytania w skrypcie.")
-        return False
-
-    if section_filter:
-        items = [it for it in items if section_filter.lower() in it.get("section", "").lower()]
-        log_info(f"Filtrowanie do sekcji '{section_filter}': {len(items)} segmentów.")
-
-    if max_items:
-        items = items[:max_items]
-        log_info(f"Ograniczono przetwarzanie do pierwszych {max_items} segmentów.")
-
-    log_ok(f"Wyekstrahowano {len(items)} elementów ze skryptu (mowa i pauzy).")
-
-    # 2. Inicjalizacja silnika TTS oraz konwersji głosu
-    edge_engine = EdgeTTSEngine(voice=polish_voice, rate="+0%")
-    cloner_engine = None
-
-    if use_voice_conversion:
-        if not ref_audio or not ref_audio.exists():
-            log_warn("Brak pliku próbki referencyjnej (--ref-audio). Wyłączanie konwersji głosu Kanade.")
-            use_voice_conversion = False
-        else:
-            try:
-                cloner_engine = KokoCloneEngine()
-                if not cloner_engine.is_available():
-                    log_warn("Silnik KokoClone/Kanade nie jest dostępny. Fallback do czystego głosu lektora.")
-                    use_voice_conversion = False
-            except Exception as e_cl:
-                log_warn(f"Błąd inicjalizacji Kanade ({e_cl}). Fallback do czystego głosu lektora.")
-                use_voice_conversion = False
-
-    # 3. Generowanie poszczególnych części
-    segment_files = []
-    log_info("Rozpoczynanie syntezy i transferu barwy dla segmentów...")
-
-    for it in items:
-        item_id = it["id"]
-        item_type = it["type"]
-
-        if item_type == "pause":
-            pause_wav = parts_dir / f"part_{item_id:04d}_pause_{it['duration']}s.wav"
-            if not pause_wav.exists() or pause_wav.stat().st_size < 100:
-                create_silence_wav(pause_wav, it["duration"])
-            segment_files.append((pause_wav, it))
-            continue
-
-        # Typ speech
-        text = clean_voiceover_text(it["text"])
-        it["text"] = text
-        base_wav = parts_dir / f"part_{item_id:04d}_base.wav"
-        cloned_wav = parts_dir / f"part_{item_id:04d}_cloned.wav"
-        txt_marker = parts_dir / f"part_{item_id:04d}.txt"
-
-        final_part_wav = cloned_wav if use_voice_conversion else base_wav
-
-        # Inteligentne wznawianie (cache)
-        if (
-            final_part_wav.exists()
-            and final_part_wav.stat().st_size > 1000
-            and txt_marker.exists()
-            and txt_marker.read_text(encoding="utf-8").strip() == text
-        ):
-            segment_files.append((final_part_wav, it))
-            continue
-
-        log_info(f"Segment #{item_id:03d} [{it['section'][:25]}]: '{text[:45]}...'")
-
-        # Krok A: Czysta polska synteza
-        synth_ok = edge_engine.synthesize(text=text, out_wav=base_wav)
-        if not synth_ok:
-            log_err(f"Błąd syntezy segmentu #{item_id}. Przerywanie.")
-            return False
-
-        # Krok B: Przeniesienie barwy Jarka przez Kanade (jeśli włączone)
-        if use_voice_conversion and cloner_engine and ref_audio:
-            conv_ok = cloner_engine.convert_audio(
-                source_audio=base_wav,
-                ref_audio=ref_audio,
-                output_wav=cloned_wav,
-            )
-            if not conv_ok:
-                log_warn(f"Nie powiodła się konwersja segmentu #{item_id}, użycie czystego audio bazowego.")
-                final_part_wav = base_wav
-            else:
-                final_part_wav = cloned_wav
-        else:
-            final_part_wav = base_wav
-
-        txt_marker.write_text(text + "\n", encoding="utf-8")
-        segment_files.append((final_part_wav, it))
 
     project_slug = work_dir.name if work_dir.name and work_dir.name != "work" else script_path.stem.replace("_read_script", "").replace("voiceover_", "")
     if not project_slug or project_slug == "voiceover":
         project_slug = "VoiceOver"
-    mastered_wav = output_dir / f"{project_slug}_VoiceOver_PL_CLEAN.wav"
-    subtitles_srt = output_dir / f"{project_slug}_VoiceOver_PL.srt"
 
-    log_info(f"Łączenie {len(segment_files)} segmentów i generowanie finalnego mastera...")
-    concatenate_and_master(
-        segment_files=segment_files,
-        output_wav=mastered_wav,
-        output_srt=subtitles_srt,
-        target_lufs=-14.0,
-        target_tp=-1.0,
+    # Inicjalizacja menedżera przebiegu (WorkRunManager)
+    run_mgr = WorkRunManager(
+        task_slug=project_slug,
+        engine="pl_voiceover",
+        explicit_output_dir=output_dir,
     )
 
-    total_dur = get_audio_duration(mastered_wav)
+    with run_mgr.capture_logs():
+        parts_dir = run_mgr.tts_segments_dir
 
-    # 5. Raport podsumowujący
-    report_md = output_dir / f"{project_slug}_VoiceOver_Summary.md"
-    with open(report_md, "w", encoding="utf-8") as f:
-        f.write(f"# Raport Generowania Voiceoveru PL: {project_slug}\n\n")
-        f.write(f"- **Skrypt źródłowy:** `{script_path.name}`\n")
-        f.write(f"- **Długość całkowita:** `{total_dur:.2f}s` ({total_dur / 60.0:.2f} min)\n")
-        f.write(f"- **Styl / Głos bazowy:** `{polish_voice}`\n")
-        f.write(f"- **Konwersja barwy (Kanade):** `{'TAK (' + ref_audio.name + ')' if use_voice_conversion else 'NIE'}`\n")
-        f.write("- **Standard emisyjny:** `EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS, 48kHz stereo)`\n\n")
-        f.write("## Wygenerowane Pliki Produkcyjne (Deliverables)\n\n")
-        f.write(f"1. **Czysty lektor (Gotowy master do Kdenlive):** `{mastered_wav.name}`\n")
-        f.write(f"2. **Zsynchronizowane napisy lektorskie:** `{subtitles_srt.name}`\n\n")
-        f.write("## Tabela Wygenerowanych Segmentów\n\n")
-        f.write("| # | Typ | Sekcja / Wieszak | Treść / Czas |\n")
-        f.write("| :---: | :---: | :--- | :--- |\n")
-        for f_path, it in segment_files:
-            if it["type"] == "pause":
-                f.write(f"| {it['id']} | `PAUZA` | {it.get('section', '-')} | *Pauza {it['duration']}s* |\n")
+        log_info("=" * 65)
+        log_info(" Workstation Hub: Generator Voiceoveru PL (Profil Lektora: work/voice_sample)")
+        log_info("=" * 65)
+        log_info(f"Skrypt Markdown:    {script_path.name}")
+        log_info(f"Katalog projektu:   {work_dir}")
+        log_info(f"Katalog runu:       {run_mgr.run_dir}")
+        log_info(f"Konwersja barwy:    {'TAK (Kanade Zero-Shot)' if use_voice_conversion else 'NIE (Czysty Edge-TTS)'}")
+        if ref_audio:
+            log_info(f"Próbka wzorca głosu: {ref_audio.name}")
+
+        # 1. Parsowanie skryptu czytanego Markdown
+        items = parse_markdown_voiceover_script(script_path)
+        if not items:
+            log_err("Nie znaleziono żadnych segmentów tekstu do odczytania w skrypcie.")
+            run_mgr.finish_run()
+            return False
+
+        if section_filter:
+            items = [it for it in items if section_filter.lower() in it.get("section", "").lower()]
+            log_info(f"Filtrowanie do sekcji '{section_filter}': {len(items)} segmentów.")
+
+        if max_items:
+            items = items[:max_items]
+            log_info(f"Ograniczono przetwarzanie do pierwszych {max_items} segmentów.")
+
+        log_ok(f"Wyekstrahowano {len(items)} elementów ze skryptu (mowa i pauzy).")
+
+        # 2. Inicjalizacja silnika TTS oraz konwersji głosu
+        edge_engine = EdgeTTSEngine(voice=polish_voice, rate="+0%")
+        cloner_engine = None
+
+        if use_voice_conversion:
+            if not ref_audio or not ref_audio.exists():
+                log_warn("Brak pliku próbki referencyjnej (--ref-audio). Wyłączanie konwersji głosu Kanade.")
+                use_voice_conversion = False
             else:
-                f.write(f"| {it['id']} | `MOWA` | {it.get('section', '-')} | {it['text']} |\n")
+                try:
+                    cloner_engine = KokoCloneEngine()
+                    if not cloner_engine.is_available():
+                        log_warn("Silnik KokoClone/Kanade nie jest dostępny. Fallback do czystego głosu lektora.")
+                        use_voice_conversion = False
+                except Exception as e_cl:
+                    log_warn(f"Błąd inicjalizacji Kanade ({e_cl}). Fallback do czystego głosu lektora.")
+                    use_voice_conversion = False
 
-    log_ok("=" * 65)
-    log_ok(f"SUKCES! Wygenerowano pełną ścieżkę lektorską dla {project_slug} ({total_dur:.2f}s).")
-    log_info("Dostarczone pliki:")
-    log_info(f"  1. [Master WAV]:      {mastered_wav}")
-    log_info(f"  2. [Napisy SRT]:      {subtitles_srt}")
-    log_info(f"  3. [Raport MD]:       {report_md}")
-    log_info("=" * 65)
-    return True
+        # 2.5 Reżyser tekstu dla trybu ekspresyjnego
+        llm_director_client = None
+        if expressive and supports_voice_tags("edge"):
+            candidate_llm = OllamaTranslator(model_name="SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M")
+            if candidate_llm.is_available():
+                llm_director_client = candidate_llm
+                log_info("Reżyser tekstu: Włączono wzbogacanie Two-Pass TTS Voice Tags (Bielik LLM).")
+            else:
+                log_warn("Ollama nie jest dostępna dla Reżysera tekstu. Użycie czystego tekstu.")
+
+        # 3. Generowanie poszczególnych części
+        segment_files = []
+        log_info("Rozpoczynanie syntezy i transferu barwy dla segmentów...")
+
+        with run_mgr.measure_stage("tts_generation"):
+            for it in items:
+                item_id = it["id"]
+                item_type = it["type"]
+
+                if item_type == "pause":
+                    pause_wav = parts_dir / f"part_{item_id:04d}_pause_{it['duration']}s.wav"
+                    if not pause_wav.exists() or pause_wav.stat().st_size < 100:
+                        create_silence_wav(pause_wav, it["duration"])
+                    segment_files.append((pause_wav, it))
+                    continue
+
+                # Typ speech
+                clean_text = clean_voiceover_text(it["text"])
+                if expressive and supports_voice_tags("edge") and llm_director_client:
+                    directed_text = enrich_voiceover_tags(clean_text, "edge", client_llm=llm_director_client)
+                else:
+                    directed_text = strip_voice_tags(clean_text)
+
+                it["text"] = strip_voice_tags(directed_text)  # Do napisów SRT i raportu MD
+                it["text_directed"] = directed_text          # Do syntezy TTS
+                base_wav = parts_dir / f"part_{item_id:04d}_base.wav"
+                cloned_wav = parts_dir / f"part_{item_id:04d}_cloned.wav"
+                txt_marker = parts_dir / f"part_{item_id:04d}.txt"
+
+                final_part_wav = cloned_wav if use_voice_conversion else base_wav
+
+                # Inteligentne wznawianie (cache)
+                if (
+                    final_part_wav.exists()
+                    and final_part_wav.stat().st_size > 1000
+                    and txt_marker.exists()
+                    and txt_marker.read_text(encoding="utf-8").strip() == directed_text.strip()
+                ):
+                    segment_files.append((final_part_wav, it))
+                    continue
+
+                log_info(f"Segment #{item_id:03d} [{it['section'][:25]}]: '{directed_text[:45]}...'")
+
+                # Krok A: Czysta polska synteza
+                synth_ok = edge_engine.synthesize(text=directed_text, out_wav=base_wav)
+                if not synth_ok:
+                    log_err(f"Błąd syntezy segmentu #{item_id}. Przerywanie.")
+                    run_mgr.finish_run()
+                    return False
+
+                # Krok B: Przeniesienie barwy Jarka przez Kanade (jeśli włączone)
+                if use_voice_conversion and cloner_engine and ref_audio:
+                    conv_ok = cloner_engine.convert_audio(
+                        source_audio=base_wav,
+                        ref_audio=ref_audio,
+                        output_wav=cloned_wav,
+                    )
+                    if not conv_ok:
+                        log_warn(f"Nie powiodła się konwersja segmentu #{item_id}, użycie czystego audio bazowego.")
+                        final_part_wav = base_wav
+                    else:
+                        final_part_wav = cloned_wav
+                else:
+                    final_part_wav = base_wav
+
+                txt_marker.write_text(directed_text + "\n", encoding="utf-8")
+                segment_files.append((final_part_wav, it))
+
+        if llm_director_client is not None:
+            llm_director_client.unload()
+
+        mastered_wav = run_mgr.output_dir / f"{project_slug}_VoiceOver_PL_CLEAN.wav"
+        subtitles_srt = run_mgr.subtitles_dir / f"{project_slug}_VoiceOver_PL.srt"
+        out_subtitles_srt = run_mgr.output_dir / f"{project_slug}_VoiceOver_PL.srt"
+
+        log_info(f"Łączenie {len(segment_files)} segmentów i generowanie finalnego mastera...")
+        with run_mgr.measure_stage("audio_mastering"):
+            concatenate_and_master(
+                segment_files=segment_files,
+                output_wav=mastered_wav,
+                output_srt=subtitles_srt,
+                target_lufs=-14.0,
+                target_tp=-1.0,
+            )
+            # Kopia napisów także do 06_output dla spójności deliverables
+            if subtitles_srt.exists():
+                out_subtitles_srt.write_text(subtitles_srt.read_text(encoding="utf-8"), encoding="utf-8")
+
+        total_dur = get_audio_duration(mastered_wav)
+
+        # 4. Automatyczna analiza jakości efektu końcowego (QualityAnalyzer)
+        full_vo_text = " ".join(it["text"] for _, it in segment_files if it.get("type") == "speech")
+        quality = run_mgr.quality_analyzer.analyze_output(
+            audio_path=mastered_wav,
+            target_speech_window=total_dur,
+            voiceover_text=full_vo_text,
+        )
+
+        # 5. Raport podsumowujący
+        report_md = run_mgr.output_dir / f"{project_slug}_VoiceOver_Summary.md"
+        with open(report_md, "w", encoding="utf-8") as f:
+            f.write(f"# Raport Generowania Voiceoveru PL: {project_slug}\n\n")
+            f.write(f"- **Skrypt źródłowy:** `{script_path.name}`\n")
+            f.write(f"- **Długość całkowita:** `{total_dur:.2f}s` ({total_dur / 60.0:.2f} min)\n")
+            f.write(f"- **Styl / Głos bazowy:** `{polish_voice}`\n")
+            f.write(f"- **Konwersja barwy (Kanade):** `{'TAK (' + ref_audio.name + ')' if use_voice_conversion and ref_audio else 'NIE'}`\n")
+            f.write("- **Standard emisyjny:** `EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS, 48kHz stereo)`\n\n")
+            f.write("## Audyt Jakościowy (Quality Metrics)\n\n")
+            f.write(f"- **Status ogólny:** `{quality.overall_quality_status}`\n")
+            f.write(f"- **Tempo mowy (WPM):** `{quality.wpm}` (ostrzeżenie: `{quality.pacing_warning}`)\n")
+            f.write(f"- **Poziom szczytowy (Peak):** `{quality.peak_db} dB` (przesterowanie: `{quality.is_clipping}`)\n")
+            f.write(f"- **Głośność RMS:** `{quality.rms_db} dB`\n")
+            f.write(f"- **Maksymalna pauza w mowie:** `{quality.max_internal_silence_sec:.2f}s` (nienaturalna cisza: `{quality.unnatural_silence_detected}`)\n\n")
+            f.write("## Wygenerowane Pliki Produkcyjne (Deliverables)\n\n")
+            f.write(f"1. **Czysty lektor (Gotowy master do Kdenlive):** `{mastered_wav.name}`\n")
+            f.write(f"2. **Zsynchronizowane napisy lektorskie:** `{out_subtitles_srt.name}`\n\n")
+            f.write("## Tabela Wygenerowanych Segmentów\n\n")
+            f.write("| # | Typ | Sekcja / Wieszak | Treść / Czas |\n")
+            f.write("| :---: | :---: | :--- | :--- |\n")
+            for f_path, it in segment_files:
+                if it["type"] == "pause":
+                    f.write(f"| {it['id']} | `PAUZA` | {it.get('section', '-')} | *Pauza {it['duration']}s* |\n")
+                else:
+                    f.write(f"| {it['id']} | `MOWA` | {it.get('section', '-')} | {it['text']} |\n")
+
+        run_mgr.record_stats(
+            segments_count=len(segment_files),
+            total_duration_sec=round(total_dur, 2),
+            words_count=quality.word_count,
+            base_voice=polish_voice,
+            voice_conversion=use_voice_conversion,
+            expressive=expressive,
+        )
+        summary_json = run_mgr.finish_run(quality_analysis=quality)
+
+        log_ok("=" * 65)
+        log_ok(f"SUKCES! Wygenerowano pełną ścieżkę lektorską dla {project_slug} ({total_dur:.2f}s).")
+        log_info(f"Katalog przebiegu (Run Workspace): {run_mgr.run_dir}")
+        log_info("Dostarczone pliki:")
+        log_info(f"  1. [Master WAV]:      {mastered_wav.name}")
+        log_info(f"  2. [Napisy SRT]:      {out_subtitles_srt.name}")
+        log_info(f"  3. [Raport MD]:       {report_md.name}")
+        log_info(f"  4. [Run Summary JSON]:{summary_json.name}")
+        log_info("  5. [Execution Log]:   logs/execution.log")
+        log_info("=" * 65)
+        return True
 
 
 # ==============================================================================
@@ -468,11 +541,13 @@ def main():
     parser = argparse.ArgumentParser(description="Autonomiczny potok generowania polskiego voiceoveru z Markdown.")
     parser.add_argument("-s", "--script", type=Path, required=True, help="Ścieżka do pliku Markdown ze skryptem czytanym (.md)")
     parser.add_argument("-w", "--work-dir", type=Path, default=None, help="Katalog roboczy projektu (domyślnie work/<nazwa_skryptu>)")
+    parser.add_argument("-o", "--output-dir", type=Path, default=None, help="Jawnie wskazany katalog wyjściowy (jeśli nie podano, tworzy wersjonowany katalog w work/runs/)")
     parser.add_argument("--voice-ref", "--ref-audio", dest="voice_ref", type=Path, default=None, help="Ścieżka do próbki referencyjnej WAV (domyślnie z work/voice_sample/)")
     parser.add_argument("--voice", type=str, default="pl-PL-MarekNeural", help="Głos bazowy lektora (domyślnie pl-PL-MarekNeural)")
     parser.add_argument("--no-cloning", action="store_true", default=False, help="Wyłącz konwersję barwy Kanade (generuj czystego Marka)")
     parser.add_argument("--section", type=str, default=None, help="Ogranicz generowanie do wybranej sekcji/wieszaka (np. 'WIESZAK 1')")
     parser.add_argument("--limit", type=int, default=None, help="Ogranicz do pierwszych N segmentów (do szybkiego testu)")
+    parser.add_argument("--expressive", action="store_true", default=False, help="Włącz dwufazowe wzbogacanie tekstu o znaczniki emocji/dynamiki (Two-Pass TTS Voice Tags)")
     args = parser.parse_args()
 
     script_path = args.script.resolve()
@@ -505,6 +580,8 @@ def main():
         use_voice_conversion=not args.no_cloning,
         max_items=args.limit,
         section_filter=args.section,
+        expressive=args.expressive,
+        output_dir=args.output_dir,
     )
     if not success:
         sys.exit(1)

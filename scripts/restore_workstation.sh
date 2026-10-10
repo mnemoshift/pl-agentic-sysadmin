@@ -85,7 +85,8 @@ if [[ "${MODE}" == "all" || "${MODE}" == "repos" ]]; then
     echo "  -> Konfiguracja Docker Official Repo..."
     exec_cmd "sudo install -m 0755 -d /etc/apt/keyrings"
     exec_cmd "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg"
-    exec_cmd 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null'
+    arch="$(dpkg --print-architecture)"
+    exec_cmd "echo \"deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable\" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null"
 
     # VS Code
     echo "  -> Konfiguracja Microsoft VS Code Repo..."
@@ -131,22 +132,31 @@ if [[ "${MODE}" == "all" || "${MODE}" == "flatpaks" ]]; then
     exec_cmd "flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
 
     # Kluczowe aplikacje ze stacji roboczej
-    CORE_FLATPAKS=(
-        "com.obsproject.Studio"
-        "com.obsproject.Studio.Plugin.SourceRecord"
-        "com.spotify.Client"
-        "md.obsidian.Obsidian"
-        "org.kde.kdenlive"
-        "org.keepassxc.KeePassXC"
-        "org.onlyoffice.desktopeditors"
-        "org.freedesktop.LinuxAudio.Plugins.TAP"
-        "org.freedesktop.LinuxAudio.Plugins.swh"
-    )
+    if [[ -f "${FLATPAK_FILE}" ]]; then
+        echo "  Wczytywanie pakietów Flatpak z ${FLATPAK_FILE}..."
+        while IFS= read -r app || [[ -n "$app" ]]; do
+            [[ -z "$app" || "$app" =~ ^# ]] && continue
+            echo "  -> Instalacja Flatpak: ${app}"
+            exec_cmd "flatpak install -y --noninteractive flathub ${app}"
+        done < "${FLATPAK_FILE}"
+    else
+        CORE_FLATPAKS=(
+            "com.obsproject.Studio"
+            "com.obsproject.Studio.Plugin.SourceRecord"
+            "com.spotify.Client"
+            "md.obsidian.Obsidian"
+            "org.kde.kdenlive"
+            "org.keepassxc.KeePassXC"
+            "org.onlyoffice.desktopeditors"
+            "org.freedesktop.LinuxAudio.Plugins.TAP"
+            "org.freedesktop.LinuxAudio.Plugins.swh"
+        )
 
-    for app in "${CORE_FLATPAKS[@]}"; do
-        echo "  -> Instalacja Flatpak: ${app}"
-        exec_cmd "flatpak install -y --noninteractive flathub ${app}"
-    done
+        for app in "${CORE_FLATPAKS[@]}"; do
+            echo "  -> Instalacja Flatpak: ${app}"
+            exec_cmd "flatpak install -y --noninteractive flathub ${app}"
+        done
+    fi
 fi
 
 # Krok 4: Weryfikacja punktów montowania dysków

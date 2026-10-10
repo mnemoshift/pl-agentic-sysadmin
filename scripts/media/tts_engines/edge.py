@@ -55,10 +55,13 @@ class EdgeTTSEngine(BaseTTSEngine):
             print("\033[1;31m[ERROR]\033[0m Brak zainstalowanego pakietu edge-tts.", file=sys.stderr)
             return False
 
+        from text_director import prepare_edge_ssml
+
+        safe_text = prepare_edge_ssml(text)
         temp_mp3 = out_wav.with_suffix(".mp3")
         cmd = [
             edge_bin,
-            "--text", text,
+            "--text", safe_text,
             "--voice", active_voice,
             f"--rate={active_rate}",
             "--write-media", str(temp_mp3),

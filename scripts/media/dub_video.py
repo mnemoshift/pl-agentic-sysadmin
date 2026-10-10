@@ -23,6 +23,7 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 # ==============================================================================
 # 0. SELF-BOOTSTRAPPING: Automatyczne przełączanie na środowisko .venv repozytorium
@@ -68,11 +69,19 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from text_director import (  # noqa: E402
+    clean_voiceover_text,
+    direct_voiceover,
+    enrich_voiceover_tags,
+    strip_voice_tags,
+    supports_voice_tags,
+)
 from tts_engines import (  # noqa: E402
     BaseTTSEngine,
     detect_best_engine,
     get_tts_engine,
 )
+from work_manager import WorkRunManager  # noqa: E402
 
 
 def log_info(msg: str):
@@ -304,68 +313,8 @@ def group_whisper_segments(raw_segments, min_duration=12.0, max_duration=28.0) -
 ## ==============================================================================
 # 3. LOKALNE TŁUMACZENIE I KOREKTA LLM (BIELIK / OLLAMA LUB MARIANMT)
 # ==============================================================================
-def clean_voiceover_text(text: str) -> str:
-    """
-    Oczyszcza tekst voiceoveru/dubbingu z wszelkich wycieków metadanych promptu (np. PACING BUDGET),
-    wtrąceń reżyserskich w nawiasach, bloków kodu, tagów XML oraz zewnętrznych cudzysłowów.
-    """
-    if not text:
-        return ""
+# clean_voiceover_text oraz strip_voice_tags są zaimportowane z text_director
 
-    raw = text.strip()
-
-    # 1. Priorytetowe parsowanie zawartości tagu <voiceover>...</voiceover>
-    vo_match = re.search(r"<voiceover>(.*?)</voiceover>", raw, flags=re.DOTALL | re.IGNORECASE)
-    if vo_match:
-        raw = vo_match.group(1).strip()
-    else:
-        # Usunięcie pojedynczych niedomkniętych tagów
-        raw = re.sub(r"^.*?<voiceover>\s*", "", raw, flags=re.DOTALL | re.IGNORECASE)
-        raw = re.sub(r"\s*</voiceover>.*$", "", raw, flags=re.DOTALL | re.IGNORECASE)
-
-    # 2. Usunięcie tagów <source_text>...</source_text> oraz tagów XML
-    raw = re.sub(r"<source_text>.*?</source_text>", "", raw, flags=re.DOTALL | re.IGNORECASE)
-    raw = re.sub(r"</?(?:source_text|voiceover)>", "", raw, flags=re.IGNORECASE)
-
-    # 3. Odcięcie frazy PACING BUDGET / PACING RULES oraz wszystkiego co następuje po niej
-    raw = re.sub(r"\bPACING BUDGET\b.*", "", raw, flags=re.IGNORECASE | re.DOTALL)
-    raw = re.sub(r"\bPACING (?:RULES|REVISION RULES)\b.*", "", raw, flags=re.IGNORECASE | re.DOTALL)
-
-    # 4. Usunięcie bloków kodu Markdown
-    raw = re.sub(r"^```(?:[a-zA-Z]+)?\s*", "", raw)
-    raw = re.sub(r"\s*```$", "", raw)
-
-    # 5. Usunięcie typowych prefiksów generowanych przez LLM
-    prefixes = [
-        r"^(?:Here(?:'s| is) (?:a |the )?(?:(?:natural|fluent|idiomatic|spoken|English|revised|plain)\s+)*(?:translation|voiceover)[^:]*:\s*)",
-        r"^(?:English translation:\s*)",
-        r"^(?:Translation:\s*)",
-        r"^(?:Sure, here is[^:]*:\s*)",
-        r"^(?:Voiceover:\s*)",
-    ]
-    for p in prefixes:
-        raw = re.sub(p, "", raw, flags=re.IGNORECASE)
-
-    # 6. Wytnij wtrącenia metadanych w nawiasach np. [Speech window: ...], (Target voiceover length: ...)
-    raw = re.sub(
-        r"\[(?:\s*pacing|\s*speech window|\s*target voiceover|\s*word count|\s*words?|\s*count|\s*note|\s*voiceover|\s*audio|\s*pause|\s*sound|\s*laughter|\s*sigh|\s*target)[^\]]*\]",
-        "",
-        raw,
-        flags=re.IGNORECASE,
-    )
-    raw = re.sub(
-        r"\((?:\s*pacing|\s*speech window|\s*target voiceover|\s*target voice|\s*word count|\s*words?|\s*count|\s*note|\s*voiceover|\s*audio|\s*pause|\s*sound|\s*laughter|\s*sigh|\s*target|\s*natural|\s*articulate|\s*approximately)[^\)]*\)",
-        "",
-        raw,
-        flags=re.IGNORECASE,
-    )
-
-    # 7. Zdjęcie zbędnych cudzysłowów opakowujących całą wypowiedź
-    raw = raw.strip(' "”„\'`')
-
-    # 8. Normalizacja białych znaków
-    raw = re.sub(r"\s+", " ", raw).strip()
-    return raw
 
 
 def clean_llm_translation(raw_text: str) -> str:
@@ -830,7 +779,7 @@ def export_srt(scenes: list[dict], srt_path: Path, lang_key: str = "text_pl", us
         s_end = sc.get("end_synced", sc["end"]) if use_synced else sc["end"]
         start_str = sec_to_srt_time(s_start)
         end_str = sec_to_srt_time(s_end)
-        text = clean_voiceover_text(sc.get(lang_key, ""))
+        text = strip_voice_tags(clean_voiceover_text(sc.get(lang_key, "")))
         lines.append(f"{idx}\n{start_str} --> {end_str}\n{text}\n")
     srt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -1096,238 +1045,347 @@ def process_single_short(
     translator: LocalMarianTranslator | None = None,
     tts_engine: BaseTTSEngine | None = None,
     max_pacing_retries: int = DEFAULT_MAX_PACING_RETRIES,
+    expressive: bool = False,
+    output_dir: Path | None = None,
 ) -> bool:
     work_dir = work_dir.resolve()
     short_id = work_dir.name
-    output_dir = work_dir / "output"
-    output_dir.mkdir(parents=True, exist_ok=True)
 
-    if not input_video:
-        input_video = auto_detect_input_video(work_dir)
+    # Inicjalizacja menedżera przebiegu (WorkRunManager)
+    run_mgr = WorkRunManager(
+        task_slug=short_id,
+        engine=engine,
+        explicit_output_dir=output_dir,
+    )
 
-    if not input_video or not input_video.exists():
-        log_err(f"Nie znaleziono wideo źródłowego w {work_dir}/input/")
-        return False
+    with run_mgr.capture_logs():
+        if not input_video:
+            input_video = auto_detect_input_video(work_dir)
 
-    total_duration = get_audio_duration(input_video)
+        if not input_video or not input_video.exists():
+            log_err(f"Nie znaleziono wideo źródłowego w {work_dir}/input/")
+            run_mgr.finish_run()
+            return False
 
-    log_info("=" * 65)
-    log_info(f" Workstation Hub: Autonomiczny Potok Dubbingu dla {short_id}")
-    log_info("=" * 65)
-    log_info(f"Wideo wejściowe:  {input_video.name} ({total_duration:.2f}s)")
-    log_info(f"Katalog roboczy:  {work_dir}")
-    log_info(f"Silnik TTS:       {engine.upper()}")
+        total_duration = get_audio_duration(input_video)
 
-    # Walidacja i automatyczna detekcja próbki referencyjnej głosu
-    if not transcribe_only and engine != "edge":
-        ref_audio, ref_transcript = resolve_reference_audio(ref_audio, work_dir=work_dir, ref_transcript=ref_transcript)
-        if ref_audio:
-            log_info(f"Próbka głosu:     {ref_audio.name} ({'z transkrypcją' if ref_transcript else 'bez transkrypcji'})")
+        log_info("=" * 65)
+        log_info(f" Workstation Hub: Autonomiczny Potok Dubbingu dla {short_id}")
+        log_info("=" * 65)
+        log_info(f"Wideo wejściowe:  {input_video.name} ({total_duration:.2f}s)")
+        log_info(f"Katalog projektu: {work_dir}")
+        log_info(f"Katalog runu:     {run_mgr.run_dir}")
+        log_info(f"Silnik TTS:       {engine.upper()}")
 
-    # 1. Ekstrakcja czystego audio ze źródła lub dedykowany plik lektorski
+        # Walidacja i automatyczna detekcja próbki referencyjnej głosu
+        if not transcribe_only and engine != "edge":
+            ref_audio, ref_transcript = resolve_reference_audio(ref_audio, work_dir=work_dir, ref_transcript=ref_transcript)
+            if ref_audio:
+                log_info(f"Próbka głosu:     {ref_audio.name} ({'z transkrypcją' if ref_transcript else 'bez transkrypcji'})")
 
-    raw_audio = output_dir / f"{short_id}_VoiceOver_RAW_24k.wav"
-    input_voiceover = None
-    input_dir = work_dir / "input"
-    if input_dir.exists():
-        for vo_cand in sorted(input_dir.glob("*.wav")):
-            if "voiceover" in vo_cand.name.lower() or "clean" in vo_cand.name.lower():
-                input_voiceover = vo_cand
-                break
+        # 1. Ekstrakcja czystego audio ze źródła lub dedykowany plik lektorski
+        raw_audio = run_mgr.source_extracted_dir / f"{short_id}_VoiceOver_RAW_24k.wav"
+        input_voiceover = None
+        input_dir = work_dir / "input"
+        if input_dir.exists():
+            for vo_cand in sorted(input_dir.glob("*.wav")):
+                if "voiceover" in vo_cand.name.lower() or "clean" in vo_cand.name.lower():
+                    input_voiceover = vo_cand
+                    break
 
-    if input_voiceover and input_voiceover.exists():
-        log_info(f"Wykryto dedykowany plik lektorski: {input_voiceover.name}")
-        cmd = [
-            "ffmpeg", "-y", "-i", str(input_voiceover),
-            "-vn", "-acodec", "pcm_s16le",
-            "-ar", "24000", "-ac", "1",
-            str(raw_audio)
-        ]
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        log_ok("Przygotowano strumień lektorski 24kHz z dedykowanego pliku WAV.")
-    else:
-        extract_raw_audio(input_video, raw_audio, sample_rate=24000)
+        with run_mgr.measure_stage("source_extraction"):
+            if input_voiceover and input_voiceover.exists():
+                log_info(f"Wykryto dedykowany plik lektorski: {input_voiceover.name}")
+                cmd = [
+                    "ffmpeg", "-y", "-i", str(input_voiceover),
+                    "-vn", "-acodec", "pcm_s16le",
+                    "-ar", "24000", "-ac", "1",
+                    str(raw_audio)
+                ]
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                log_ok("Przygotowano strumień lektorski 24kHz z dedykowanego pliku WAV.")
+            else:
+                extract_raw_audio(input_video, raw_audio, sample_rate=24000)
 
-    # 2. Parsowanie scenariusza lub automatyczna transkrypcja Whisper
-    if not script_path:
-        candidates = [
-            work_dir / "input" / "short_script.md",
-            work_dir / f"{short_id}.srt",
-            input_video.with_suffix(".srt"),
-        ]
-        candidates.extend(list((work_dir / "input").glob("*.srt")))
-        for cand in candidates:
-            if cand.exists():
-                script_path = cand
-                break
+        # 2. Parsowanie scenariusza lub automatyczna transkrypcja Whisper
+        if not script_path:
+            candidates = [
+                work_dir / "input" / "short_script.md",
+                work_dir / f"{short_id}.srt",
+                input_video.with_suffix(".srt"),
+            ]
+            candidates.extend(list((work_dir / "input").glob("*.srt")))
+            for cand in candidates:
+                if cand.exists():
+                    script_path = cand
+                    break
 
-    if script_path and script_path.exists():
-        log_info(f"Wczytywanie scenariusza: {script_path.name}")
-        if script_path.suffix == ".srt":
-            scenes = parse_srt(script_path)
-        else:
-            scenes = parse_short_script_md(script_path)
+        with run_mgr.measure_stage("transcription"):
+            if script_path and script_path.exists():
+                log_info(f"Wczytywanie scenariusza: {script_path.name}")
+                if script_path.suffix == ".srt":
+                    scenes = parse_srt(script_path)
+                else:
+                    scenes = parse_short_script_md(script_path)
 
-        srt_duration = scenes[-1]["end"] if scenes else 0.0
-        if abs(srt_duration - total_duration) > 20.0:
-            log_warn("Scenariusz nie odpowiada czasowo wideo! Uruchamianie bezpośredniej transkrypcji Whisper...")
-            whisper_scenes = transcribe_with_whisper(raw_audio)
-            if whisper_scenes:
-                scenes = whisper_scenes
-    else:
-        log_info("Brak pliku scenariusza (.md/.srt) — uruchamianie automatycznej transkrypcji Whisper...")
-        scenes = transcribe_with_whisper(raw_audio)
+                srt_duration = scenes[-1]["end"] if scenes else 0.0
+                if abs(srt_duration - total_duration) > 20.0:
+                    log_warn("Scenariusz nie odpowiada czasowo wideo! Uruchamianie bezpośredniej transkrypcji Whisper...")
+                    whisper_scenes = transcribe_with_whisper(raw_audio)
+                    if whisper_scenes:
+                        scenes = whisper_scenes
+            else:
+                log_info("Brak pliku scenariusza (.md/.srt) — uruchamianie automatycznej transkrypcji Whisper...")
+                scenes = transcribe_with_whisper(raw_audio)
 
-    if not scenes:
-        log_err(f"Nie udało się wyodrębnić segmentów do dubbingu dla {short_id}.")
-        return False
+        if not scenes:
+            log_err(f"Nie udało się wyodrębnić segmentów do dubbingu dla {short_id}.")
+            run_mgr.finish_run()
+            return False
 
-    # 3. Dynamiczne tłumaczenie maszynowe (Bielik LLM / MarianMT + Tech Terms) z walidacją budżetu czasu
-    translate_scenes_batch(scenes, translator=translator, llm_model=llm_model, max_pacing_retries=max_pacing_retries)
+        # 3. Dynamiczne tłumaczenie maszynowe (Bielik LLM / MarianMT + Tech Terms) z walidacją budżetu czasu
+        with run_mgr.measure_stage("llm_adaptation"):
+            translate_scenes_batch(scenes, translator=translator, llm_model=llm_model, max_pacing_retries=max_pacing_retries)
 
-    transcript_json = output_dir / f"{short_id}_Dubbing_Transcript_EN.json"
-    with open(transcript_json, "w", encoding="utf-8") as f:
-        json.dump(scenes, f, ensure_ascii=False, indent=2)
-    log_ok(f"Zapisano transkrypcję segmentów: {transcript_json.name}")
+        transcript_json = run_mgr.llm_adaptation_dir / f"{short_id}_Dubbing_Transcript_EN.json"
+        with open(transcript_json, "w", encoding="utf-8") as f:
+            json.dump(scenes, f, ensure_ascii=False, indent=2)
+        log_ok(f"Zapisano transkrypcję segmentów: {transcript_json.name}")
 
-    srt_pl_file = output_dir / f"{short_id}_PL.srt"
-    srt_en_file = output_dir / f"{short_id}_EN.srt"
-    export_srt(scenes, srt_pl_file, lang_key="text_pl")
-    export_srt(scenes, srt_en_file, lang_key="text_en")
-    log_ok(f"Wygenerowano napisy SRT: {srt_pl_file.name} oraz {srt_en_file.name}")
+        srt_pl_file = run_mgr.subtitles_dir / f"{short_id}_PL.srt"
+        srt_en_file = run_mgr.subtitles_dir / f"{short_id}_EN.srt"
+        export_srt(scenes, srt_pl_file, lang_key="text_pl")
+        export_srt(scenes, srt_en_file, lang_key="text_en")
+        log_ok(f"Wygenerowano napisy SRT: {srt_pl_file.name} oraz {srt_en_file.name}")
 
-    if transcribe_only:
-        log_ok(f"Tryb --transcribe-only zakończony dla {short_id}.")
-        return True
+        if transcribe_only:
+            run_mgr.record_stats(
+                scenes_count=len(scenes),
+                total_duration_sec=round(total_duration, 2),
+                transcribe_only=True,
+            )
+            summary_json = run_mgr.finish_run()
+            log_ok(f"Zapisano raport przebiegu: {summary_json.name}")
+            log_ok(f"Tryb --transcribe-only zakończony dla {short_id}.")
+            return True
 
-    # 4. Inicjalizacja wybranego silnika syntezy (Qwen3-TTS / Chatterbox / KokoClone / Breeze / Edge)
-    dub_parts_dir = output_dir / "dub_parts"
-    dub_parts_dir.mkdir(parents=True, exist_ok=True)
-    segment_wavs = []
+        # 4. Inicjalizacja wybranego silnika syntezy (Qwen3-TTS / Chatterbox / KokoClone / Breeze / Edge)
+        dub_parts_dir = run_mgr.tts_segments_dir
+        segment_wavs = []
 
-    # Rozstrzygnięcie i pobranie silnika
-    selected_engine = engine
-    if selected_engine == "auto":
-        selected_engine = detect_best_engine(ref_audio)
+        # Rozstrzygnięcie i pobranie silnika
+        selected_engine = engine
+        if selected_engine == "auto":
+            selected_engine = detect_best_engine(ref_audio)
 
-    try:
-        active_engine_instance = get_tts_engine(selected_engine, ref_audio=ref_audio, voice=edge_voice)
-        active_engine_name = active_engine_instance.name
-    except Exception as e_eng:
-        log_warn(f"Nie udało się załadować silnika {selected_engine} ({e_eng}), fallback do Edge-TTS...")
-        selected_engine = "edge"
-        active_engine_instance = get_tts_engine("edge", voice=edge_voice or "en-US-ChristopherNeural")
-        active_engine_name = active_engine_instance.name
+        try:
+            active_engine_instance = get_tts_engine(selected_engine, ref_audio=ref_audio, voice=edge_voice)
+            active_engine_name = active_engine_instance.name
+        except Exception as e_eng:
+            log_warn(f"Nie udało się załadować silnika {selected_engine} ({e_eng}), fallback do Edge-TTS...")
+            selected_engine = "edge"
+            active_engine_instance = get_tts_engine("edge", voice=edge_voice or "en-US-ChristopherNeural")
+            active_engine_name = active_engine_instance.name
 
-    log_info(f"Generowanie mowy dla poszczególnych scen (silnik: {selected_engine.upper()})...")
-    for sc in scenes:
-        sc["text_en"] = clean_voiceover_text(sc.get("text_en", ""))
-        part_wav = dub_parts_dir / f"scene_{sc['id']:03d}.wav"
-        txt_marker = part_wav.with_suffix(".txt")
-        engine_marker = part_wav.with_suffix(".engine")
-        expected_engine = selected_engine
+        llm_director_client = None
+        if expressive and (supports_voice_tags(selected_engine) or selected_engine == "qwen"):
+            target_llm = "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M" if llm_model in ("auto", "bielik") else llm_model
+            candidate_llm = OllamaTranslator(model_name=target_llm)
+            if candidate_llm.is_available():
+                llm_director_client = candidate_llm
+                if selected_engine == "qwen":
+                    log_info(f"Reżyser tekstu: Włączono Acting Direction (Instruct TTS) ({selected_engine.upper()}, model: {target_llm}).")
+                else:
+                    log_info(f"Reżyser tekstu: Włączono wzbogacanie Two-Pass TTS Voice Tags ({selected_engine.upper()}, model: {target_llm}).")
+            else:
+                log_warn("Ollama nie jest dostępna dla Reżysera tekstu. Użycie standardowej ekspresji / czystego tekstu.")
 
-        # Inteligentne wznawianie: użyj istniejącego pliku tylko jeśli tekst angielski jest identyczny ORAZ silnik jest zgodny
-        if (
-            part_wav.exists()
-            and part_wav.stat().st_size > 1000
-            and txt_marker.exists()
-            and txt_marker.read_text(encoding="utf-8").strip() == sc["text_en"].strip()
-            and (not engine_marker.exists() or engine_marker.read_text(encoding="utf-8").strip() == expected_engine)
-        ):
-            segment_wavs.append(part_wav)
-            continue
+        log_info(f"Generowanie mowy dla poszczególnych scen (silnik: {selected_engine.upper()})...")
+        with run_mgr.measure_stage("tts_generation"):
+            acting_directions_log: dict[str, Any] = {}
+            for sc in scenes:
+                clean_vo = clean_voiceover_text(sc.get("text_en", ""))
+                active_instruction = instruction
 
-        log_info(f"{selected_engine.upper()}: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...'")
-        synth_ok = active_engine_instance.synthesize(
-            text=sc["text_en"],
-            out_wav=part_wav,
-            ref_audio=ref_audio,
-            ref_transcript=ref_transcript,
-            instruction=instruction,
+                if selected_engine == "qwen":
+                    if expressive and llm_director_client:
+                        clean_vo, acting_instruction = direct_voiceover(clean_vo, client_llm=llm_director_client)
+                        if acting_instruction:
+                            active_instruction = acting_instruction
+                    else:
+                        clean_vo = strip_voice_tags(clean_vo)
+                    directed_vo = clean_vo
+                    sc["acting_instruction"] = active_instruction
+                    acting_directions_log[f"scene_{sc['id']:03d}"] = {
+                        "text": clean_vo,
+                        "instruction": active_instruction,
+                    }
+                elif expressive and supports_voice_tags(selected_engine) and llm_director_client:
+                    directed_vo = enrich_voiceover_tags(clean_vo, selected_engine, client_llm=llm_director_client)
+                else:
+                    directed_vo = strip_voice_tags(clean_vo)
+
+                # Do napisów (.srt / .ass), transcript JSON i raportów ZAWSZE trafia tekst oczyszczony ze znaczników!
+                sc["text_en"] = strip_voice_tags(directed_vo)
+                sc["text_en_directed"] = directed_vo
+
+                part_wav = dub_parts_dir / f"scene_{sc['id']:03d}.wav"
+                txt_marker = part_wav.with_suffix(".txt")
+                engine_marker = part_wav.with_suffix(".engine")
+                expected_engine = selected_engine
+
+                # Inteligentne wznawianie: użyj istniejącego pliku tylko jeśli tekst do syntezy jest identyczny ORAZ silnik jest zgodny
+                if (
+                    part_wav.exists()
+                    and part_wav.stat().st_size > 1000
+                    and txt_marker.exists()
+                    and txt_marker.read_text(encoding="utf-8").strip() == directed_vo.strip()
+                    and (not engine_marker.exists() or engine_marker.read_text(encoding="utf-8").strip() == expected_engine)
+                ):
+                    segment_wavs.append(part_wav)
+                    continue
+
+                log_info(f"{selected_engine.upper()}: Synteza sceny {sc['id']}: '{directed_vo[:42]}...'")
+                synth_ok = active_engine_instance.synthesize(
+                    text=directed_vo,
+                    out_wav=part_wav,
+                    ref_audio=ref_audio,
+                    ref_transcript=ref_transcript,
+                    instruction=active_instruction,
+                )
+
+                if not synth_ok:
+                    if selected_engine != "edge" and engine != "auto":
+                        log_err(f"Błąd syntezy sceny {sc['id']} przez wymuszony silnik {selected_engine}.")
+                        run_mgr.finish_run()
+                        return False
+                    voice_to_use = edge_voice or "en-US-ChristopherNeural"
+                    log_info(f"Edge-TTS Fallback: Synteza sceny {sc['id']}: '{directed_vo[:42]}...' (voice: {voice_to_use})")
+                    fallback_engine = get_tts_engine("edge", voice=voice_to_use)
+                    synth_ok = fallback_engine.synthesize(text=directed_vo, out_wav=part_wav)
+                    active_engine_name = f"Edge-TTS ({voice_to_use})"
+                    if synth_ok:
+                        engine_marker.write_text("edge\n", encoding="utf-8")
+                else:
+                    engine_marker.write_text(f"{selected_engine}\n", encoding="utf-8")
+
+                if part_wav.exists() and part_wav.stat().st_size > 1000:
+                    txt_marker.write_text(directed_vo.strip() + "\n", encoding="utf-8")
+                segment_wavs.append(part_wav)
+
+            if acting_directions_log:
+                directions_file = run_mgr.llm_adaptation_dir / f"{short_id}_Acting_Directions.json"
+                directions_file.write_text(
+                    json.dumps(acting_directions_log, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                log_ok(f"Zapisano instrukcje reżyserskie TTS: {directions_file.name}")
+                run_mgr.record_stats(acting_directions_count=len(acting_directions_log))
+
+        if llm_director_client is not None:
+            llm_director_client.unload()
+
+        # 5. Time-sync i mastering EBU R128
+        mastered_wav = run_mgr.output_dir / f"{short_id}_VoiceOver_EN_CLEAN.wav"
+        with run_mgr.measure_stage("audio_mastering"):
+            time_sync_and_master(scenes, segment_wavs, total_duration, mastered_wav, target_lufs=-14.0, target_tp=-1.0)
+
+        # Deliverables w 06_output: zaktualizowane napisy SRT i transkrypcja
+        out_srt_en = run_mgr.output_dir / f"{short_id}_EN.srt"
+        out_srt_pl = run_mgr.output_dir / f"{short_id}_PL.srt"
+        out_transcript_json = run_mgr.output_dir / f"{short_id}_Dubbing_Transcript_EN.json"
+
+        export_srt(scenes, out_srt_en, lang_key="text_en", use_synced=True)
+        export_srt(scenes, out_srt_pl, lang_key="text_pl")
+        export_srt(scenes, srt_en_file, lang_key="text_en", use_synced=True)
+        with open(out_transcript_json, "w", encoding="utf-8") as f:
+            json.dump(scenes, f, ensure_ascii=False, indent=2)
+
+        # 6. Finalny montaż wideo EN
+        output_video_file = None
+        if output_video:
+            output_video_file = run_mgr.output_dir / f"{short_id}_FINAL_EN_DUBBED.mp4"
+            log_info(f"Generowanie filmu z angielską ścieżką dźwiękową: {output_video_file.name}...")
+            with run_mgr.measure_stage("video_muxing"):
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", str(input_video),
+                    "-i", str(mastered_wav),
+                    "-c:v", "copy",
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-shortest",
+                    str(output_video_file)
+                ]
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            log_ok(f"Utworzono gotowy plik wideo EN: {output_video_file.name}")
+
+        # 7. Automatyczna analiza jakości efektu końcowego (QualityAnalyzer)
+        full_vo_text = " ".join(sc.get("text_en", "") for sc in scenes)
+        quality = run_mgr.quality_analyzer.analyze_output(
+            audio_path=mastered_wav,
+            target_speech_window=total_duration,
+            voiceover_text=full_vo_text,
+            video_path=output_video_file if output_video else None,
         )
 
-        if not synth_ok:
-            if selected_engine != "edge" and engine != "auto":
-                log_err(f"Błąd syntezy sceny {sc['id']} przez wymuszony silnik {selected_engine}.")
-                return False
-            voice_to_use = edge_voice or "en-US-ChristopherNeural"
-            log_info(f"Edge-TTS Fallback: Synteza sceny {sc['id']}: '{sc['text_en'][:42]}...' (voice: {voice_to_use})")
-            fallback_engine = get_tts_engine("edge", voice=voice_to_use)
-            synth_ok = fallback_engine.synthesize(text=sc["text_en"], out_wav=part_wav)
-            active_engine_name = f"Edge-TTS ({voice_to_use})"
-            if synth_ok:
-                engine_marker.write_text("edge\n", encoding="utf-8")
-        else:
-            engine_marker.write_text(f"{selected_engine}\n", encoding="utf-8")
+        # Raport Markdown
+        summary_md = run_mgr.output_dir / f"{short_id}_Dubbing_Summary.md"
+        with open(summary_md, "w", encoding="utf-8") as f:
+            f.write(f"# Raport Dubbingu AI: {short_id}\n\n")
+            f.write(f"- **Wideo źródłowe:** `{input_video.name}` ({total_duration:.2f}s)\n")
+            f.write(f"- **Silnik syntezy:** `{active_engine_name}`\n")
+            f.write("- **Standard emisyjny audio:** `EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS)`\n\n")
+            f.write("## Audyt Jakościowy (Quality Metrics)\n\n")
+            f.write(f"- **Status ogólny:** `{quality.overall_quality_status}`\n")
+            f.write(f"- **Tempo mowy (WPM):** `{quality.wpm}` (ostrzeżenie: `{quality.pacing_warning}`)\n")
+            f.write(f"- **Dryf czasu:** `{quality.drift_seconds:.2f}s` (okno mowy: `{quality.target_window_sec:.2f}s`)\n")
+            f.write(f"- **Poziom szczytowy (Peak):** `{quality.peak_db} dB` (przesterowanie: `{quality.is_clipping}`)\n")
+            f.write(f"- **Głośność RMS:** `{quality.rms_db} dB`\n")
+            f.write(f"- **Maksymalna pauza w mowie:** `{quality.max_internal_silence_sec:.2f}s` (nienaturalna cisza: `{quality.unnatural_silence_detected}`)\n\n")
+            f.write("## Wygenerowane Pliki Produkcyjne (Deliverables)\n\n")
+            f.write("1. **Plik dźwiękowy lektora (YouTube Multi-Language Audio):**\n")
+            f.write(f"   `{mastered_wav.name}` (WAV 48kHz stereo, -14.0 LUFS — do wrzucenia w YouTube Studio jako alternatywna ścieżka językowa).\n\n")
+            if output_video and output_video_file:
+                f.write("2. **Zdubbingowany film EN (Full Video + Dubbing):**\n")
+                f.write(f"   `{output_video_file.name}` (wideo + zsynchronizowany dubbing EN).\n\n")
+            f.write(f"3. **Napisy w języku angielskim:** `{out_srt_en.name}`\n")
+            f.write(f"4. **Napisy w języku polskim:** `{out_srt_pl.name}`\n\n")
+            f.write("## Tabela Zsynchronizowanych Scen\n\n")
+            f.write("| Scena | Zakres czasu | Pacing / Status | Kalibracja Bielik | Pauza po scenie | Oryginał PL | Kwestia EN |\n")
+            f.write("| :---: | :---: | :---: | :---: | :---: | :--- | :--- |\n")
+            for sc in scenes:
+                start_t = sc.get("start_synced", sc["start"])
+                end_t = sc.get("end_synced", sc["end"])
+                pacing = sc.get("pacing_status", "1.00x (Płynne)")
+                calib = sc.get("calibration_status", "1 próba (Idealnie)")
+                pause_str = sc.get("post_pause_str", "-")
+                f.write(f"| {sc['id']} | `{start_t:.2f}s - {end_t:.2f}s` | `{pacing}` | `{calib}` | `{pause_str}` | {sc['text_pl']} | **{sc['text_en']}** |\n")
 
-        if part_wav.exists() and part_wav.stat().st_size > 1000:
-            txt_marker.write_text(sc["text_en"].strip() + "\n", encoding="utf-8")
-        segment_wavs.append(part_wav)
+        run_mgr.record_stats(
+            scenes_count=len(scenes),
+            total_duration_sec=round(total_duration, 2),
+            words_count=quality.word_count,
+            active_engine=active_engine_name,
+            expressive=expressive,
+        )
+        summary_json = run_mgr.finish_run(quality_analysis=quality)
 
-    # 5. Time-sync i mastering EBU R128
-    mastered_wav = output_dir / f"{short_id}_VoiceOver_EN_CLEAN.wav"
-    time_sync_and_master(scenes, segment_wavs, total_duration, mastered_wav, target_lufs=-14.0, target_tp=-1.0)
-
-    # Aktualizacja napisów SRT i transkrypcji o precyzyjnie zsynchronizowane znaczniki czasowe
-    export_srt(scenes, srt_en_file, lang_key="text_en", use_synced=True)
-    with open(transcript_json, "w", encoding="utf-8") as f:
-        json.dump(scenes, f, ensure_ascii=False, indent=2)
-
-    # 6. Finalny montaż wideo EN
-    if output_video:
-        output_video_file = output_dir / f"{short_id}_FINAL_EN_DUBBED.mp4"
-        log_info(f"Generowanie filmu z angielską ścieżką dźwiękową: {output_video_file.name}...")
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(input_video),
-            "-i", str(mastered_wav),
-            "-c:v", "copy",
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-shortest",
-            str(output_video_file)
-        ]
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        log_ok(f"Utworzono gotowy plik wideo EN: {output_video_file.name}")
-
-    # Raport Markdown
-    summary_md = output_dir / f"{short_id}_Dubbing_Summary.md"
-    with open(summary_md, "w", encoding="utf-8") as f:
-        f.write(f"# Raport Dubbingu AI: {short_id}\n\n")
-        f.write(f"- **Wideo źródłowe:** `{input_video.name}` ({total_duration:.2f}s)\n")
-        f.write(f"- **Silnik syntezy:** `{active_engine_name}`\n")
-        f.write("- **Standard emisyjny audio:** `EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS)`\n\n")
-        f.write("## Wygenerowane Pliki Produkcyjne (Deliverables)\n\n")
-        f.write("1. **Plik dźwiękowy lektora (YouTube Multi-Language Audio):**\n")
-        f.write(f"   `{mastered_wav.name}` (WAV 48kHz stereo, -14.0 LUFS — do wrzucenia w YouTube Studio jako alternatywna ścieżka językowa).\n\n")
-        if output_video:
-            f.write("2. **Zdubbingowany film EN (Full Video + Dubbing):**\n")
-            f.write(f"   `{output_video_file.name}` (wideo + zsynchronizowany dubbing EN).\n\n")
-        f.write(f"3. **Napisy w języku angielskim:** `{srt_en_file.name}`\n")
-        f.write(f"4. **Napisy w języku polskim:** `{srt_pl_file.name}`\n\n")
-        f.write("## Tabela Zsynchronizowanych Scen\n\n")
-        f.write("| Scena | Zakres czasu | Pacing / Status | Kalibracja Bielik | Pauza po scenie | Oryginał PL | Kwestia EN |\n")
-        f.write("| :---: | :---: | :---: | :---: | :---: | :--- | :--- |\n")
-        for sc in scenes:
-            start_t = sc.get("start_synced", sc["start"])
-            end_t = sc.get("end_synced", sc["end"])
-            pacing = sc.get("pacing_status", "1.00x (Płynne)")
-            calib = sc.get("calibration_status", "1 próba (Idealnie)")
-            pause_str = sc.get("post_pause_str", "-")
-            f.write(f"| {sc['id']} | `{start_t:.2f}s - {end_t:.2f}s` | `{pacing}` | `{calib}` | `{pause_str}` | {sc['text_pl']} | **{sc['text_en']}** |\n")
-
-    log_ok(f"Zapisano raport podsumowujący: {summary_md.name}")
-    log_info("=" * 65)
-    log_ok(f"PROCES ZAKOŃCZONY SUKCESEM DLA {short_id}!")
-    log_info("Dostarczone pliki produkcyjne (Deliverables):")
-    log_info(f"  1. [YouTube Audio Track]: {mastered_wav.name}")
-    if output_video:
-        log_info(f"  2. [Full Dubbed Video]:   {output_video_file.name}")
-    log_info(f"  3. [English Subtitles]:   {srt_en_file.name}")
-    log_info(f"  4. [Polish Subtitles]:    {srt_pl_file.name}")
-    log_info("=" * 65)
-    return True
+        log_ok(f"Zapisano raport podsumowujący: {summary_md.name}")
+        log_ok(f"Zapisano metadane i audyt przebiegu: {summary_json.name}")
+        log_info(f"Katalog przebiegu (Run Workspace): {run_mgr.run_dir}")
+        log_info("=" * 65)
+        log_ok(f"PROCES ZAKOŃCZONY SUKCESEM DLA {short_id}!")
+        log_info("Dostarczone pliki produkcyjne (Deliverables):")
+        log_info(f"  1. [YouTube Audio Track]: {mastered_wav.name}")
+        if output_video and output_video_file:
+            log_info(f"  2. [Full Dubbed Video]:   {output_video_file.name}")
+        log_info(f"  3. [English Subtitles]:   {out_srt_en.name}")
+        log_info(f"  4. [Polish Subtitles]:    {out_srt_pl.name}")
+        log_info(f"  5. [Run Summary JSON]:    {summary_json.name}")
+        log_info("  6. [Execution Log]:       logs/execution.log")
+        log_info("=" * 65)
+        return True
 
 
 process_video = process_single_short
@@ -1340,6 +1398,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generyczny autonomiczny potok dubbingu wideo (pojedynczy lub zestaw).")
     parser.add_argument("-i", "--input", type=Path, default=None, help="Opcjonalny plik wideo źródłowego (MP4)")
     parser.add_argument("-w", "--work-dir", type=Path, default=None, help="Katalog roboczy projektu (np. work/EP002_Short)")
+    parser.add_argument("-o", "--output-dir", type=Path, default=None, help="Jawnie wskazany katalog wyjściowy (jeśli nie podano, tworzy wersjonowany katalog w work/runs/)")
     parser.add_argument("-s", "--script", type=Path, default=None, help="Opcjonalny plik scenariusza (MD lub SRT)")
     parser.add_argument("--batch", nargs="+", help="Lista katalogów projektów do przetworzenia wsadowego")
 
@@ -1359,6 +1418,7 @@ def main():
     parser.add_argument("--output-video", action="store_true", default=True, help="Wygeneruj zduplikowane wideo z dubbingiem EN")
     parser.add_argument("--transcribe-only", action="store_true", default=False, help="Wygeneruj wyłącznie transkrypcję Whisper i napisy SRT (bez syntezy TTS)")
     parser.add_argument("--max-pacing-retries", type=int, default=DEFAULT_MAX_PACING_RETRIES, help="Maksymalna liczba iteracji rekalibracji długości tekstu przez Bielika (domyślnie: 10)")
+    parser.add_argument("--expressive", action="store_true", default=False, help="Włącz dwufazowe wzbogacanie tekstu o znaczniki emocji/dynamiki (Two-Pass TTS Voice Tags)")
     args = parser.parse_args()
 
     # Wybór presetów akcentu i głosu
@@ -1386,7 +1446,6 @@ def main():
         sys.exit(1)
 
     # Leniwa inicjalizacja modeli (GPU VRAM jest zwalniane sekwencyjnie)
-
     shared_translator = None
     shared_tts_engine = None
 
@@ -1395,6 +1454,7 @@ def main():
         log_info(f"Uruchamianie przetwarzania zestawu wideo ({len(args.batch)} projektów)...")
         for b_dir in args.batch:
             target_dir = Path(b_dir)
+            target_out = (args.output_dir / target_dir.name) if (args.output_dir and len(args.batch) > 1) else args.output_dir
             process_video(
                 work_dir=target_dir,
                 input_video=None,
@@ -1410,6 +1470,8 @@ def main():
                 translator=shared_translator,
                 tts_engine=shared_tts_engine,
                 max_pacing_retries=args.max_pacing_retries,
+                expressive=args.expressive,
+                output_dir=target_out,
             )
         return
 
@@ -1438,6 +1500,8 @@ def main():
         translator=shared_translator,
         tts_engine=shared_tts_engine,
         max_pacing_retries=args.max_pacing_retries,
+        expressive=args.expressive,
+        output_dir=args.output_dir,
     )
 
 
