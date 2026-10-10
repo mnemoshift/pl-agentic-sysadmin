@@ -39,8 +39,10 @@ scripts/local_*
 .trash/
 
 # Local production workspaces and scratch media (excluded from git)
-/work/
-work/
+work/*
+!work/.gitkeep
+work/runs/
+work/latest
 /workspaces/
 
 # Python artifacts and virtual environments

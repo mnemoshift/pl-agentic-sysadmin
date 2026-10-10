@@ -202,20 +202,20 @@ media-extract-sample:
 media-dub-video:
 	@if [ -z "$(WORKSPACE)" ]; then \
 		echo "[BŁĄD] Wymagany parametr WORKSPACE. Przykład:"; \
-		echo "  make media-dub-video WORKSPACE=work/EP002 [INPUT=work/EP002/input/video.mp4] [REF_AUDIO=work/sample.wav]"; \
+		echo "  make media-dub-video WORKSPACE=work/EP002 [INPUT=work/EP002/input/video.mp4] [REF_AUDIO=work/sample.wav] [OUTPUT_DIR=...]"; \
 		exit 1; \
 	fi
 	@chmod +x scripts/media/dub_video.py
-	@./scripts/media/dub_video.py -w "$(WORKSPACE)" $(if $(INPUT),-i "$(INPUT)") $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+	@./scripts/media/dub_video.py -w "$(WORKSPACE)" $(if $(INPUT),-i "$(INPUT)") $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)") $(if $(OUTPUT_DIR),-o "$(OUTPUT_DIR)")
 
 media-dub-short:
 	@if [ -z "$(WORKSPACE)" ]; then \
 		echo "[BŁĄD] Wymagany parametr WORKSPACE. Przykład:"; \
-		echo "  make media-dub-short WORKSPACE=work/EP002_Short [INPUT=work/EP002_Short/input/video.mp4] [REF_AUDIO=work/sample.wav]"; \
+		echo "  make media-dub-short WORKSPACE=work/EP002_Short [INPUT=work/EP002_Short/input/video.mp4] [REF_AUDIO=work/sample.wav] [OUTPUT_DIR=...]"; \
 		exit 1; \
 	fi
 	@chmod +x scripts/media/dub_video.py
-	@./scripts/media/dub_video.py -w "$(WORKSPACE)" $(if $(INPUT),-i "$(INPUT)") $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)")
+	@./scripts/media/dub_video.py -w "$(WORKSPACE)" $(if $(INPUT),-i "$(INPUT)") $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)") $(if $(OUTPUT_DIR),-o "$(OUTPUT_DIR)")
 
 media-dub-ep002-short:
 	@chmod +x scripts/media/dub_video.py
