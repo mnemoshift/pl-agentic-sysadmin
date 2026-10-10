@@ -1,4 +1,4 @@
-.PHONY: help setup setup-env test lint media-setup-models audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-studio desktop-cyber-hud desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short media-clean-work media-prepare-demo media-extract-sample media-dub-short media-dub-ep002 media-dub-ep001 media-dub-batch media-dub-clean gdrive-status gdrive-install gdrive-auth gdrive-list gdrive-folders gdrive-add gdrive-remove gdrive-sync gdrive-timer-enable gdrive-timer-disable gdrive-mount gdrive-unmount tts-status tts-install tts-config tts-test tts-uninstall
+.PHONY: help setup setup-env test lint media-setup-models audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-studio desktop-cyber-hud desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short media-clean-work media-prepare-demo media-extract-sample media-dub-short media-dub-ep002 media-dub-ep001 media-dub-batch media-voiceover media-narrate media-dub-clean gdrive-status gdrive-install gdrive-auth gdrive-list gdrive-folders gdrive-add gdrive-remove gdrive-sync gdrive-timer-enable gdrive-timer-disable gdrive-mount gdrive-unmount tts-status tts-install tts-config tts-test tts-uninstall
 
 # Domyślny cel
 help:
@@ -36,6 +36,7 @@ help:
 	@echo "  make media-build-short WORKSPACE=... [NAME=EP002_Short]"
 	@echo "  make media-extract-sample INPUT=... START=... END=... OUTPUT=..."
 	@echo "  make media-dub-short WORKSPACE=... [INPUT=...] [REF_AUDIO=...]"
+	@echo "  make media-narrate INPUT=... [ENGINE=kokoclone] [REF_AUDIO=...] [LANG=pl]"
 	@echo "  make media-clean-work - Czyści wygenerowane artefakty (assets, .kdenlive), zachowując input/"
 	@echo "  make media-prepare-demo - Inicjalizuje/odnawia pliki wejściowe w work/EP002_Short/input/"
 	@echo "  --- Google Drive Selektywna Synchronizacja (rclone) ---"
@@ -243,6 +244,15 @@ media-voiceover:
 	fi
 	@chmod +x scripts/media/generate_voiceover.py
 	@./scripts/media/generate_voiceover.py -s "$(SCRIPT)" $(if $(WORK_DIR),-w "$(WORK_DIR)") $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(SECTION),--section "$(SECTION)") $(if $(LIMIT),--limit "$(LIMIT)")
+
+media-narrate:
+	@if [ -z "$(INPUT)" ]; then \
+		echo "[BŁĄD] Wymagany parametr INPUT. Przykład:"; \
+		echo "  make media-narrate INPUT=work/script.md [ENGINE=kokoclone] [REF_AUDIO=voice/sample_reference.wav] [LANG=pl] [VOICE=...] [EXPRESSIVE=1]"; \
+		exit 1; \
+	fi
+	@chmod +x scripts/media/narrate_script.py
+	@./scripts/media/narrate_script.py -i "$(INPUT)" $(if $(ENGINE),-e "$(ENGINE)") $(if $(REF_AUDIO),-r "$(REF_AUDIO)") $(if $(SCRIPT_LANG),-l "$(SCRIPT_LANG)",$(if $(filter-out en_US% pl_PL% C% POSIX%,$(LANG)),-l "$(LANG)")) $(if $(VOICE),--voice "$(VOICE)") $(if $(filter 1 true yes TRUE YES,$(EXPRESSIVE)),--expressive) $(if $(OUTPUT_DIR),-o "$(OUTPUT_DIR)")
 
 media-dub-clean:
 	@echo "Czyszczenie wygenerowanych artefaktów dubbingu w work/..."

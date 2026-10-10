@@ -16,6 +16,7 @@ from .qwen import QwenTTSEngine
 AVAILABLE_ENGINES = {
     "qwen": QwenTTSEngine,
     "kokoro": KokoCloneEngine,
+    "kokoclone": KokoCloneEngine,
     "chatterbox": ChatterboxEngine,
     "breeze": BreezeTTSEngine,
     "edge": EdgeTTSEngine,
@@ -42,6 +43,8 @@ def detect_best_engine(ref_audio: Path | None = None) -> str:
     if has_ref:
         if status.get("qwen"):
             return "qwen"
+        if status.get("kokoclone"):
+            return "kokoclone"
         if status.get("kokoro"):
             return "kokoro"
         if status.get("chatterbox"):

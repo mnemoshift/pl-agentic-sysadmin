@@ -17,6 +17,9 @@ dependencies = [
     "einops>=0.8.0",
     "qwen-tts>=0.1.1",
     "huggingface-hub>=0.20.0",
+    "kokoro-onnx>=0.6.0",
+    "misaki>=0.9.0",
+    "kanade-tokenizer @ git+https://github.com/frothywater/kanade-tokenizer.git",
 ]
 
 [dependency-groups]
@@ -29,6 +32,9 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["scripts", "tools"]

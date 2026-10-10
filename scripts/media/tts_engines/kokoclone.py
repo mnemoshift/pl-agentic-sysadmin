@@ -6,6 +6,7 @@ Generuje krystalicznie czystą mowę z Kokoro i przenosi barwę głosu referency
 """
 
 import sys
+import tempfile
 from pathlib import Path
 
 from .base import BaseTTSEngine
@@ -58,12 +59,35 @@ class KokoCloneEngine(BaseTTSEngine):
             print("\033[1;31m[ERROR]\033[0m KokoClone wymaga podania próbki referencyjnej (--ref-audio).", file=sys.stderr)
             return False
 
+        clean_lang = (
+            lang.split(".")[0].replace("-", "_").split("_")[0].lower().strip()
+            if lang
+            else "en"
+        )
+
+        if clean_lang.startswith("pl"):
+            # Kokoro nie wspiera natywnego G2P dla języka polskiego.
+            # Wykorzystujemy architekturę dwuetapową: synteza Edge-TTS (Marek) + transfer barwy Kanade.
+            from .edge import EdgeTTSEngine
+
+            edge_voice = kwargs.get("voice") or "pl-PL-MarekNeural"
+            edge = EdgeTTSEngine(voice=edge_voice)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+                temp_base = Path(tf.name)
+            try:
+                ok = edge.synthesize(text=text, out_wav=temp_base, voice=edge_voice)
+                if not ok:
+                    return False
+                return self.convert_audio(source_audio=temp_base, ref_audio=ref_audio, output_wav=out_wav)
+            finally:
+                temp_base.unlink(missing_ok=True)
+
         try:
             self._ensure_cloner()
             out_wav.parent.mkdir(parents=True, exist_ok=True)
             self._cloner.generate(
                 text=text,
-                lang=lang,
+                lang=clean_lang,
                 reference_audio=str(ref_audio.resolve()),
                 output_path=str(out_wav),
             )
