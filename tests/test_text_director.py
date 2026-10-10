@@ -18,7 +18,9 @@ sys.path.insert(0, str(REPO_ROOT / "scripts" / "media"))
 from text_director import (  # noqa: E402
     clean_voiceover_text,
     enrich_voiceover_tags,
+    escape_raw_ampersands,
     get_engine_capability,
+    prepare_edge_ssml,
     strip_voice_tags,
     supports_voice_tags,
 )
@@ -126,6 +128,37 @@ class TestTextDirector(unittest.TestCase):
 
         res = enrich_voiceover_tags(original, engine_type="edge", client_llm=failing_llm)
         self.assertEqual(res, original)
+
+    def test_escape_raw_ampersands_and_prepare_edge_ssml(self):
+        # 1. Zwykły tekst z surowym &
+        self.assertEqual(
+            escape_raw_ampersands("Tom & Jerry"),
+            "Tom &amp; Jerry",
+        )
+        self.assertEqual(
+            prepare_edge_ssml("Tom & Jerry"),
+            "Tom &amp; Jerry",
+        )
+        # 2. Tekst z już poprawną encją &amp; oraz surowym &
+        self.assertEqual(
+            prepare_edge_ssml("AT&T &amp; C++"),
+            "AT&amp;T &amp; C++",
+        )
+        # 3. Tekst z tagami XML - tagi nie są zmieniane, surowe & w tekście są zamieniane
+        ssml_input = '<express-as style="excited">R&D is great</express-as> <break time="300ms"/> Q&A &amp; more'
+        expected = '<express-as style="excited">R&amp;D is great</express-as> <break time="300ms"/> Q&amp;A &amp; more'
+        self.assertEqual(prepare_edge_ssml(ssml_input), expected)
+
+        # 4. Encje numeryczne
+        self.assertEqual(
+            prepare_edge_ssml("&#160; & and &#x2F;"),
+            "&#160; &amp; and &#x2F;",
+        )
+
+    def test_strip_voice_tags_decodes_entities(self):
+        # strip_voice_tags usuwa tagi i dekoduje &amp; do & dla czytelnych napisów SRT
+        raw = 'Tom &amp; Jerry <break time="300ms"/>'
+        self.assertEqual(strip_voice_tags(raw), "Tom & Jerry")
 
 
 if __name__ == "__main__":

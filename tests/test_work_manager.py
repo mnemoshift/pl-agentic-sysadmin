@@ -214,6 +214,7 @@ class TestWorkRunManager(unittest.TestCase):
         self.assertTrue(log_file.exists())
         log_content = log_file.read_text(encoding="utf-8")
         self.assertIn("To jest testowy komunikat na stdout", log_content)
+
     def test_explicit_output_dir(self):
         """Weryfikacja trybu z jawnie wskazanym katalogiem wyjściowym (explicit_output_dir)."""
         explicit_dir = Path(self.temp_dir.name) / "custom_output"
@@ -239,6 +240,41 @@ class TestWorkRunManager(unittest.TestCase):
         self.assertTrue(summary_file.exists())
         self.assertEqual(summary_file.parent.resolve(), explicit_dir.resolve())
         self.assertTrue((explicit_dir / "logs" / "execution.log").exists())
+
+    def test_quality_analyzer_zero_duration_protects_wpm(self):
+        """Weryfikacja zabezpieczenia przed dzieleniem przez zero w QualityAnalyzer."""
+        sr = 24000
+        empty_wav_path = Path(self.temp_dir.name) / "empty.wav"
+        # Plik o zerowej liczbie próbek
+        sf.write(str(empty_wav_path), np.array([], dtype=np.float32), sr)
+
+        analyzer = QualityAnalyzer()
+        metrics = analyzer.analyze_output(
+            audio_path=empty_wav_path,
+            target_speech_window=0.0,
+            voiceover_text="Some text here",
+        )
+        self.assertEqual(metrics.audio_duration_sec, 0.0)
+        self.assertEqual(metrics.wpm, 0.0)
+        self.assertFalse(metrics.pacing_warning)
+
+    def test_remove_latest_symlink(self):
+        """Weryfikacja bezpiecznego usuwania symlinka latest (w tym broken symlink)."""
+        mgr = WorkRunManager(
+            task_slug="symlink_cleanup_test",
+            engine="edge",
+            base_dir=self.runs_dir,
+        )
+        latest_link = self.work_dir / "latest"
+        self.assertTrue(latest_link.exists() or latest_link.is_symlink())
+
+        # Bezpieczne usunięcie
+        mgr.remove_latest_symlink()
+        self.assertFalse(latest_link.is_symlink())
+        self.assertFalse(latest_link.exists())
+
+        # Powtórne usunięcie (missing_ok) nie powinno rzucać wyjątku
+        mgr.remove_latest_symlink()
 
 
 if __name__ == "__main__":

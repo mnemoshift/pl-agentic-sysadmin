@@ -153,13 +153,14 @@ class QualityAnalyzer:
             drift_warning = False
 
         # 2. Pacing Metrics
+        actual_duration = float(duration)
         words = len(re.findall(r"\b\w+\b", voiceover_text)) if voiceover_text else 0
-        if duration > 0.0 and words > 0:
-            wpm = round((words / (duration / 60.0)), 1)
-            pacing_warning = wpm < self.min_wpm or wpm > self.max_wpm
-        else:
+        if actual_duration <= 0.0 or words == 0:
             wpm = 0.0
             pacing_warning = False
+        else:
+            wpm = round((words / (actual_duration / 60.0)), 1)
+            pacing_warning = wpm < self.min_wpm or wpm > self.max_wpm
 
         # 3. Audio Integrity (Peak, RMS, Clipping)
         if len(mono_data) > 0:
@@ -287,6 +288,12 @@ class WorkRunManager:
 
         self._update_latest_symlink()
 
+    def remove_latest_symlink(self) -> None:
+        """Bezpiecznie usuwa symlink latest."""
+        latest_link = self.base_dir.parent / "latest"
+        if latest_link.is_symlink() or latest_link.exists():
+            latest_link.unlink(missing_ok=True)
+
     def _update_latest_symlink(self) -> None:
         """Atomowo aktualizuje symlink work/latest wskazujący na bieżący run."""
         try:
@@ -298,11 +305,16 @@ class WorkRunManager:
             rel_target = os.path.relpath(self.run_dir, latest_link.parent)
 
             temp_link = latest_link.with_name(f".latest_tmp_{os.getpid()}")
-            if temp_link.exists() or temp_link.is_symlink():
-                temp_link.unlink()
+            if temp_link.is_symlink() or temp_link.exists():
+                temp_link.unlink(missing_ok=True)
 
             os.symlink(rel_target, temp_link)
-            os.replace(temp_link, latest_link)
+            try:
+                os.replace(temp_link, latest_link)
+            except OSError:
+                if latest_link.is_symlink() or latest_link.exists():
+                    latest_link.unlink(missing_ok=True)
+                os.replace(temp_link, latest_link)
         except Exception as e:
             logger.warning("Nie udało się zaktualizować symlinku latest: %s", e)
 

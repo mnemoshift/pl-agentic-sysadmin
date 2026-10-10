@@ -141,6 +141,15 @@ def strip_voice_tags(text: str) -> str:
     # Usunięcie znaczników w nawiasach kwadratowych (np. [sigh], [pause], [chuckle], [gasp], [akcent])
     raw = re.sub(r"\[[a-zA-Z_\-]+\]", "", raw)
 
+    # Dekodowanie encji XML z powrotem do znaków tekstowych (dla napisów i czystego tekstu)
+    raw = (
+        raw.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&apos;", "'")
+    )
+
     # Normalizacja wielokrotnych spacji przed znakami interpunkcyjnymi
     raw = re.sub(r"\s+([,\.!?;:])", r"\1", raw)
 
@@ -347,6 +356,43 @@ def _call_llm_director(
     return None
 
 
+def escape_raw_ampersands(text: str) -> str:
+    """
+    Upewnia się, że tekst poza tagami XML nie zawiera surowych znaków '&'.
+    Zamienia '&' na '&amp;' w miejscach, które nie są poprawnymi encjami XML.
+    """
+    if not text or "&" not in text:
+        return text
+
+    # Podział na tagi XML (<...>) oraz zwykły tekst
+    parts = re.split(r"(<[^>]+>)", text)
+    escaped_parts: list[str] = []
+    # Wzorzec dopasowujący poprawne encje XML: nazwane (&amp;, &lt;) lub numeryczne (&#123;, &#x1F;)
+    valid_entity_pattern = re.compile(r"&(?!([a-zA-Z][a-zA-Z0-9]*|#[0-9]+|#x[0-9a-fA-F]+);)")
+
+    for part in parts:
+        if part.startswith("<") and part.endswith(">"):
+            escaped_parts.append(part)
+        else:
+            escaped_parts.append(valid_entity_pattern.sub("&amp;", part))
+
+    return "".join(escaped_parts)
+
+
+def prepare_edge_ssml(text: str) -> str:
+    """
+    Przygotowuje tekst w formacie SSML dla silnika Edge TTS:
+    - Zabezpiecza surowe znaki '&' poza tagami XML zamieniając je na '&amp;'.
+    - Zachowuje poprawne encje XML oraz znaczniki SSML (<break .../>, <prosody>, etc.).
+    """
+    if not text:
+        return ""
+    return escape_raw_ampersands(text)
+
+
+prepare_ssml = prepare_edge_ssml
+
+
 def enrich_voiceover_tags(
     text: str,
     engine_type: str,
@@ -357,6 +403,7 @@ def enrich_voiceover_tags(
     Jeśli silnik TTS wspiera znaczniki, wzbogaca wypowiedź o dedykowane tagi,
     zachowując bezwzględnie oryginalne słowa. W razie braku wsparcia lub błędu
     zwraca bezpieczny tekst oczyszczony.
+    Dla formatu SSML (Edge TTS) upewnia się, że surowe znaki '&' są zamienione na '&amp;'.
     """
     clean_text = clean_voiceover_text(text)
     if not clean_text:
@@ -367,12 +414,16 @@ def enrich_voiceover_tags(
         return strip_voice_tags(clean_text)
 
     if client_llm is None:
+        if cap.tag_format == TagFormat.SSML:
+            return prepare_edge_ssml(clean_text)
         return clean_text
 
     system_prompt, user_prompt = _build_director_prompt(clean_text, cap.engine_name)
     raw_response = _call_llm_director(system_prompt, user_prompt, client_llm)
 
     if not raw_response:
+        if cap.tag_format == TagFormat.SSML:
+            return prepare_edge_ssml(clean_text)
         return clean_text
 
     # Wyciągnięcie zawartości <directed_text>...</directed_text>
@@ -387,6 +438,10 @@ def enrich_voiceover_tags(
 
     # Asercja wierności słów i integralności
     if _validate_directed_text(clean_text, directed_cand, cap):
+        if cap.tag_format == TagFormat.SSML:
+            directed_cand = prepare_edge_ssml(directed_cand)
         return directed_cand
 
+    if cap.tag_format == TagFormat.SSML:
+        return prepare_edge_ssml(clean_text)
     return clean_text
