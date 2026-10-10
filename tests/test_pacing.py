@@ -19,6 +19,7 @@ from dub_video import (  # noqa: E402
     PacingTarget,
     apply_tech_terms,
     clean_llm_translation,
+    clean_voiceover_text,
     compute_pacing_target,
     resolve_reference_audio,
 )
@@ -49,11 +50,42 @@ class TestPacingController(unittest.TestCase):
         cleaned = clean_llm_translation(raw)
         self.assertEqual(
             cleaned,
-            "Zorin OS. Just a week ago, this concept didn't exist for me. Today, it's my daily workstation."
+            "Zorin OS. Just a week ago, this concept didn't exist for me. Today, it's my daily workstation.",
         )
         self.assertNotIn("Word count", cleaned)
         self.assertNotIn("Here is", cleaned)
         self.assertNotIn("[pause]", cleaned)
+
+    def test_clean_voiceover_text_extracts_voiceover_tag(self):
+        raw = (
+            "Here is the result you requested:\n"
+            "<voiceover>Automating your workstation gives you peace of mind.</voiceover>\n"
+            "PACING BUDGET (Speech window: 24.0s):\n"
+            "- Target voiceover length: ~15 words"
+        )
+        cleaned = clean_voiceover_text(raw)
+        self.assertEqual(cleaned, "Automating your workstation gives you peace of mind.")
+
+    def test_clean_voiceover_text_cuts_pacing_budget_leak(self):
+        raw = (
+            "\"This is the clean spoken line.\" PACING BUDGET (Speech window: 12.0s): "
+            "- Target voiceover length: ~8 words (acceptable range: 6 to 10 words)."
+        )
+        cleaned = clean_voiceover_text(raw)
+        self.assertEqual(cleaned, "This is the clean spoken line.")
+
+    def test_clean_voiceover_text_removes_bracketed_metadata_and_quotes(self):
+        raw = "   \"Every developer needs a reliable setup.\" [Speech window: 15.0s] (Target voiceover length: ~10 words)   "
+        cleaned = clean_voiceover_text(raw)
+        self.assertEqual(cleaned, "Every developer needs a reliable setup.")
+
+    def test_clean_voiceover_text_strips_source_text_tags(self):
+        raw = (
+            "<source_text>Oto tekst źródłowy</source_text>\n"
+            "<voiceover>Here is the spoken output.</voiceover>"
+        )
+        cleaned = clean_voiceover_text(raw)
+        self.assertEqual(cleaned, "Here is the spoken output.")
 
     def test_apply_tech_terms_word_boundaries(self):
         tech_terms = {

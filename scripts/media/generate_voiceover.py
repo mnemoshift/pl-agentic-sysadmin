@@ -28,15 +28,16 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 
-if sys.executable != str(VENV_PYTHON) and VENV_PYTHON.exists() and os.access(str(VENV_PYTHON), os.X_OK):
-    os.execv(str(VENV_PYTHON), [str(VENV_PYTHON)] + sys.argv)
+if __name__ == "__main__" and Path(sys.executable).resolve() != VENV_PYTHON.resolve():
+    if VENV_PYTHON.exists() and os.access(str(VENV_PYTHON), os.X_OK):
+        os.execv(str(VENV_PYTHON), [str(VENV_PYTHON)] + sys.argv)
 
 # Upewnienie się, że moduły z scripts/media są dostępne
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from dub_video import resolve_reference_audio  # noqa: E402
+from dub_video import clean_voiceover_text, resolve_reference_audio  # noqa: E402
 from tts_engines import EdgeTTSEngine, KokoCloneEngine  # noqa: E402
 
 
@@ -61,7 +62,7 @@ def log_err(msg: str):
 # ==============================================================================
 def clean_speech_text(raw_text: str) -> str:
     """Oczyszcza tekst do czystej formy czytanej przez lektora."""
-    text = raw_text.strip()
+    text = clean_voiceover_text(raw_text)
     # Usunięcie pogrubień, kursywy i kodów w backtickach
     text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
     text = re.sub(r"\*([^*]+)\*", r"\1", text)
@@ -74,7 +75,7 @@ def clean_speech_text(raw_text: str) -> str:
     text = text.strip(' "”„\'`')
     # Normalizacja spacji
     text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return clean_voiceover_text(text)
 
 
 def parse_markdown_voiceover_script(md_path: Path) -> list[dict]:
@@ -242,7 +243,7 @@ def concatenate_and_master(
             current_time = end_t
 
             if item_info.get("type") == "speech":
-                txt = item_info.get("text", "").strip()
+                txt = clean_voiceover_text(item_info.get("text", ""))
                 srt_entries.append(
                     f"{srt_idx}\n{sec_to_srt_time(start_t)} --> {sec_to_srt_time(end_t)}\n{txt}\n"
                 )
@@ -368,7 +369,8 @@ def generate_voiceover(
             continue
 
         # Typ speech
-        text = it["text"]
+        text = clean_voiceover_text(it["text"])
+        it["text"] = text
         base_wav = parts_dir / f"part_{item_id:04d}_base.wav"
         cloned_wav = parts_dir / f"part_{item_id:04d}_cloned.wav"
         txt_marker = parts_dir / f"part_{item_id:04d}.txt"

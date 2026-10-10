@@ -30,10 +30,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 
-if sys.executable != str(VENV_PYTHON) and VENV_PYTHON.exists() and os.access(str(VENV_PYTHON), os.X_OK):
-    os.execv(str(VENV_PYTHON), [str(VENV_PYTHON)] + sys.argv)
-elif sys.executable != str(VENV_PYTHON) and not VENV_PYTHON.exists():
-    if shutil.which("uv"):
+if __name__ == "__main__" and Path(sys.executable).resolve() != VENV_PYTHON.resolve():
+    if VENV_PYTHON.exists() and os.access(str(VENV_PYTHON), os.X_OK):
+        os.execv(str(VENV_PYTHON), [str(VENV_PYTHON)] + sys.argv)
+    elif not VENV_PYTHON.exists() and shutil.which("uv"):
         print("[INFO] Wykryto brak środowiska .venv w repozytorium. Automatyczna inicjalizacja przez 'uv sync'...")
         subprocess.run(["uv", "sync"], cwd=str(REPO_ROOT), check=True)
         if VENV_PYTHON.exists():
@@ -301,16 +301,41 @@ def group_whisper_segments(raw_segments, min_duration=12.0, max_duration=28.0) -
     return scenes
 
 
-# ==============================================================================
+## ==============================================================================
 # 3. LOKALNE TŁUMACZENIE I KOREKTA LLM (BIELIK / OLLAMA LUB MARIANMT)
 # ==============================================================================
-def clean_llm_translation(raw_text: str) -> str:
-    """Oczyszcza odpowiedź LLM z ewentualnych metadanych, nagłówków, cudzysłowów i notatek."""
-    text = raw_text.strip()
-    # Usunięcie bloków kodu markdown
-    text = re.sub(r"^```(?:[a-zA-Z]+)?\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
-    # Usunięcie typowych prefiksów generowanych przez LLM
+def clean_voiceover_text(text: str) -> str:
+    """
+    Oczyszcza tekst voiceoveru/dubbingu z wszelkich wycieków metadanych promptu (np. PACING BUDGET),
+    wtrąceń reżyserskich w nawiasach, bloków kodu, tagów XML oraz zewnętrznych cudzysłowów.
+    """
+    if not text:
+        return ""
+
+    raw = text.strip()
+
+    # 1. Priorytetowe parsowanie zawartości tagu <voiceover>...</voiceover>
+    vo_match = re.search(r"<voiceover>(.*?)</voiceover>", raw, flags=re.DOTALL | re.IGNORECASE)
+    if vo_match:
+        raw = vo_match.group(1).strip()
+    else:
+        # Usunięcie pojedynczych niedomkniętych tagów
+        raw = re.sub(r"^.*?<voiceover>\s*", "", raw, flags=re.DOTALL | re.IGNORECASE)
+        raw = re.sub(r"\s*</voiceover>.*$", "", raw, flags=re.DOTALL | re.IGNORECASE)
+
+    # 2. Usunięcie tagów <source_text>...</source_text> oraz tagów XML
+    raw = re.sub(r"<source_text>.*?</source_text>", "", raw, flags=re.DOTALL | re.IGNORECASE)
+    raw = re.sub(r"</?(?:source_text|voiceover)>", "", raw, flags=re.IGNORECASE)
+
+    # 3. Odcięcie frazy PACING BUDGET / PACING RULES oraz wszystkiego co następuje po niej
+    raw = re.sub(r"\bPACING BUDGET\b.*", "", raw, flags=re.IGNORECASE | re.DOTALL)
+    raw = re.sub(r"\bPACING (?:RULES|REVISION RULES)\b.*", "", raw, flags=re.IGNORECASE | re.DOTALL)
+
+    # 4. Usunięcie bloków kodu Markdown
+    raw = re.sub(r"^```(?:[a-zA-Z]+)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+
+    # 5. Usunięcie typowych prefiksów generowanych przez LLM
     prefixes = [
         r"^(?:Here(?:'s| is) (?:a |the )?(?:(?:natural|fluent|idiomatic|spoken|English|revised|plain)\s+)*(?:translation|voiceover)[^:]*:\s*)",
         r"^(?:English translation:\s*)",
@@ -319,17 +344,33 @@ def clean_llm_translation(raw_text: str) -> str:
         r"^(?:Voiceover:\s*)",
     ]
     for p in prefixes:
-        text = re.sub(p, "", text, flags=re.IGNORECASE)
+        raw = re.sub(p, "", raw, flags=re.IGNORECASE)
 
-    # Usunięcie wtrąceń w nawiasach kwadratowych/okrągłych typu [pause], (Word count: 14), [Note: ...], itp.
-    text = re.sub(r"\[(?:word count|words?|count|note|voiceover|audio|pause|sound|laughter|sigh|target)[^\]]*\]", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\((?:word count|words?|count|note|voiceover|audio|pause|laughter|sigh|target|natural|articulate|approximately)[^\)]*\)", "", text, flags=re.IGNORECASE)
+    # 6. Wytnij wtrącenia metadanych w nawiasach np. [Speech window: ...], (Target voiceover length: ...)
+    raw = re.sub(
+        r"\[(?:\s*pacing|\s*speech window|\s*target voiceover|\s*word count|\s*words?|\s*count|\s*note|\s*voiceover|\s*audio|\s*pause|\s*sound|\s*laughter|\s*sigh|\s*target)[^\]]*\]",
+        "",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    raw = re.sub(
+        r"\((?:\s*pacing|\s*speech window|\s*target voiceover|\s*target voice|\s*word count|\s*words?|\s*count|\s*note|\s*voiceover|\s*audio|\s*pause|\s*sound|\s*laughter|\s*sigh|\s*target|\s*natural|\s*articulate|\s*approximately)[^\)]*\)",
+        "",
+        raw,
+        flags=re.IGNORECASE,
+    )
 
-    # Usunięcie zewnętrznych cudzysłowów
-    text = text.strip(' "”„\'`')
-    # Normalizacja białych znaków
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    # 7. Zdjęcie zbędnych cudzysłowów opakowujących całą wypowiedź
+    raw = raw.strip(' "”„\'`')
+
+    # 8. Normalizacja białych znaków
+    raw = re.sub(r"\s+", " ", raw).strip()
+    return raw
+
+
+def clean_llm_translation(raw_text: str) -> str:
+    """Oczyszcza odpowiedź LLM z ewentualnych metadanych, nagłówków, cudzysłowów i notatek."""
+    return clean_voiceover_text(raw_text)
 
 
 
@@ -363,7 +404,9 @@ class OllamaTranslator:
         "   - 'agentowy sysadmin' -> 'Agentic SysAdmin'\n"
         "   - 'Kdenlive' -> 'Kdenlive'\n"
         "5. Output Format:\n"
-        "   - Output ONLY the plain spoken English voiceover text. No notes, no explanations, no quotes, no commentary."
+        "   - Output ONLY the plain spoken English voiceover text wrapped strictly in <voiceover>...</voiceover> tags.\n"
+        "   - Example: <voiceover>Welcome to the workstation hub.</voiceover>\n"
+        "   - No notes, no explanations, no quotes, no commentary outside or inside the tags."
     )
 
     def __init__(
@@ -402,7 +445,7 @@ class OllamaTranslator:
         with urllib.request.urlopen(req, timeout=90.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             raw_content = data.get("message", {}).get("content", "").strip()
-            return clean_llm_translation(raw_content)
+            return clean_voiceover_text(raw_content)
 
     def translate_chunk(
         self,
@@ -420,14 +463,16 @@ class OllamaTranslator:
 
         if attempt == 1 or prev_words is None:
             user_prompt = (
-                f"Translate this Polish spoken chunk into natural spoken voiceover:\n\n"
-                f"{text_pl}\n\n"
-                f"PACING BUDGET (Speech window: {pacing.speech_target_sec:.1f}s):\n"
+                f"PACING RULES & BUDGET:\n"
+                f"- Speech window: {pacing.speech_target_sec:.1f}s\n"
                 f"- Target voiceover length: ~{pacing.target_words} words "
                 f"(acceptable range: {pacing.min_words} to {pacing.max_words} words).\n"
                 f"- Express the source thoughts thoroughly and articulately without adding unprompted concluding summaries.\n"
                 f"- Do NOT output word counts or notes in parentheses.\n"
-                f"Output ONLY the spoken English voiceover text:"
+                f"- Wrap your final translation strictly within <voiceover>...</voiceover> tags.\n\n"
+                f"SOURCE TEXT TO TRANSLATE:\n"
+                f"<source_text>\n{text_pl}\n</source_text>\n\n"
+                f"Output ONLY the spoken English voiceover wrapped in <voiceover> tags:"
             )
         else:
             direction = "too short" if prev_words < pacing.target_words else "too long"
@@ -447,13 +492,17 @@ class OllamaTranslator:
                 )
 
             user_prompt = (
-                f"Translate this Polish spoken chunk into natural spoken voiceover:\n\n"
-                f"{text_pl}\n\n"
-                f"REVISION INSTRUCTIONS:\n"
-                f"{guidance}\n\n"
-                f"- Output ONLY the spoken English voiceover text (NO word count notes):"
+                f"PACING REVISION RULES & BUDGET:\n"
+                f"- Speech window: {pacing.speech_target_sec:.1f}s\n"
+                f"- Target voiceover length: ~{pacing.target_words} words "
+                f"(acceptable range: {pacing.min_words} to {pacing.max_words} words).\n"
+                f"{guidance}\n"
+                f"- Do NOT output word counts or notes in parentheses.\n"
+                f"- Wrap your revised voiceover output strictly within <voiceover>...</voiceover> tags.\n\n"
+                f"SOURCE TEXT TO TRANSLATE:\n"
+                f"<source_text>\n{text_pl}\n</source_text>\n\n"
+                f"Output ONLY the spoken English voiceover wrapped in <voiceover> tags:"
             )
-
 
         messages = [
             {"role": "system", "content": self.SYSTEM_PROMPT},
@@ -556,13 +605,13 @@ def translate_scenes_batch(
                         prev_words=prev_words,
                         attempt=attempt,
                     )
-                    cand = apply_tech_terms(cand, tech_terms)
+                    cand = apply_tech_terms(clean_voiceover_text(cand), tech_terms)
                 except Exception as e_ollama:
                     log_warn(f"Błąd Ollama w próbie {attempt} dla sceny {sc['id']} ({e_ollama}), użycie MarianMT...")
                     if translator is None:
                         translator = LocalMarianTranslator()
                     cand = translator.translate_batch([sc["text_pl"]])[0]
-                    cand = apply_tech_terms(clean_llm_translation(cand), tech_terms)
+                    cand = apply_tech_terms(clean_voiceover_text(cand), tech_terms)
                     history.append((cand, len(cand.split()), window_dur - (len(cand.split()) / SPEECH_WPS_BENCHMARK), 0.0))
                     accepted = True
                     break
@@ -584,7 +633,7 @@ def translate_scenes_batch(
                 is_fidelity_ok = (words >= int(pl_words * 0.9)) and (est_gap <= pacing.max_acceptable_gap + 1.5)
 
                 if is_gap_ok or is_words_ok or is_fidelity_ok or max_pacing_retries <= 1:
-                    sc["text_en"] = cand
+                    sc["text_en"] = clean_voiceover_text(cand)
                     sc["calibration_retries"] = attempt
                     sc["calibration_status"] = f"{attempt} {'próba' if attempt == 1 else 'próby'} (Idealnie)"
                     status_label = "IDEALNIE" if attempt == 1 else f"ZAAKCEPTOWANO w próbie {attempt}!"
@@ -599,7 +648,7 @@ def translate_scenes_batch(
             if not accepted and history:
                 # Best-of-N: wybór kandydata o najmniejszym odchyleniu od naturalnego oddechu radiowego
                 best_attempt = min(history, key=lambda x: x[3])
-                sc["text_en"] = best_attempt[0]
+                sc["text_en"] = clean_voiceover_text(best_attempt[0])
                 sc["calibration_retries"] = len(history)
                 sc["calibration_status"] = f"Najlepsza z {len(history)} ({best_attempt[1]} słów, luka: {best_attempt[2]:.1f}s)"
                 log_warn(f"Scena {sc['id']:02d}/{len(scenes)}: Wykorzystano {len(history)} prób. Wybrano wariant o najmniejszym odchyleniu pauzy: {best_attempt[1]} słów (szac. luka: {best_attempt[2]:.1f}s).")
@@ -617,7 +666,7 @@ def translate_scenes_batch(
         dt = time.time() - t0
         log_ok(f"Przetłumaczono {len(scenes)} segmentów w {dt:.2f}s przez MarianMT.")
         for sc, text_en in zip(scenes, translated_en):
-            sc["text_en"] = apply_tech_terms(clean_llm_translation(text_en), tech_terms)
+            sc["text_en"] = apply_tech_terms(clean_voiceover_text(text_en), tech_terms)
             sc["calibration_retries"] = 1
             sc["calibration_status"] = "MarianMT (Brak kalibracji)"
 
@@ -781,7 +830,7 @@ def export_srt(scenes: list[dict], srt_path: Path, lang_key: str = "text_pl", us
         s_end = sc.get("end_synced", sc["end"]) if use_synced else sc["end"]
         start_str = sec_to_srt_time(s_start)
         end_str = sec_to_srt_time(s_end)
-        text = sc.get(lang_key, "").strip()
+        text = clean_voiceover_text(sc.get(lang_key, ""))
         lines.append(f"{idx}\n{start_str} --> {end_str}\n{text}\n")
     srt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -1172,6 +1221,7 @@ def process_single_short(
 
     log_info(f"Generowanie mowy dla poszczególnych scen (silnik: {selected_engine.upper()})...")
     for sc in scenes:
+        sc["text_en"] = clean_voiceover_text(sc.get("text_en", ""))
         part_wav = dub_parts_dir / f"scene_{sc['id']:03d}.wav"
         txt_marker = part_wav.with_suffix(".txt")
         engine_marker = part_wav.with_suffix(".engine")
