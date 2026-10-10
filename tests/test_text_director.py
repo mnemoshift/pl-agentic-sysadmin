@@ -16,13 +16,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "media"))
 
 from text_director import (  # noqa: E402
-    QWEN_EMOTION_TAGS,
-    QWEN_VOCAL_EVENT_TAGS,
     TagFormat,
     clean_voiceover_text,
+    direct_voiceover,
     enrich_voiceover_tags,
     escape_raw_ampersands,
-    filter_qwen_tags,
     get_engine_capability,
     prepare_edge_ssml,
     strip_voice_tags,
@@ -81,13 +79,13 @@ class TestTextDirector(unittest.TestCase):
         self.assertEqual(stripped, "Let us begin right now.")
 
     def test_supports_voice_tags_capability_matrix(self):
-        # Silniki wspierające tagi
+        # Silniki wspierające tagi w tekście
         self.assertTrue(supports_voice_tags("edge"))
         self.assertTrue(supports_voice_tags("edge-tts"))
-        self.assertTrue(supports_voice_tags("qwen"))
         self.assertTrue(supports_voice_tags("chatterbox"))
 
-        # Silniki bez wsparcia tagów
+        # Silniki bez wsparcia tagów w tekście (Qwen używa acting_instruction, Kokoro/Breeze tylko czysty tekst)
+        self.assertFalse(supports_voice_tags("qwen"))
         self.assertFalse(supports_voice_tags("kokoro"))
         self.assertFalse(supports_voice_tags("kokoclone"))
         self.assertFalse(supports_voice_tags("breeze"))
@@ -97,13 +95,9 @@ class TestTextDirector(unittest.TestCase):
         self.assertIn("prosody", cap_edge.allowed_tags)
 
         cap_qwen = get_engine_capability("qwen")
-        self.assertEqual(cap_qwen.tag_format, TagFormat.BRACKETS)
-        self.assertIn("excited", cap_qwen.allowed_tags)
-        self.assertIn("clears throat", cap_qwen.allowed_tags)
-        self.assertIn("very slowly", cap_qwen.allowed_tags)
-        self.assertIn("gasp", cap_qwen.allowed_tags)
-        self.assertIn("excited", QWEN_EMOTION_TAGS)
-        self.assertIn("clears throat", QWEN_VOCAL_EVENT_TAGS)
+        self.assertEqual(cap_qwen.tag_format, TagFormat.NONE)
+        self.assertFalse(cap_qwen.supports_tags)
+        self.assertEqual(cap_qwen.allowed_tags, ())
 
     def test_enrich_voiceover_tags_unsupported_engine_strips_tags(self):
         # Silnik Kokoro/Breeze zawsze otrzymuje czysty tekst bez tagów
@@ -173,36 +167,44 @@ class TestTextDirector(unittest.TestCase):
         raw = 'Tom &amp; Jerry <break time="300ms"/>'
         self.assertEqual(strip_voice_tags(raw), "Tom & Jerry")
 
-    def test_qwen_tags_whitelisting(self):
-        # 1. Poprawne tagi Qwen przechodzą przez filter_qwen_tags bez zmian
-        text = "[curious]Why? [gasp][panicked]Oh no!"
-        self.assertEqual(filter_qwen_tags(text), "[curious]Why? [gasp][panicked]Oh no!")
+    def test_direct_voiceover_extracts_instruction(self):
+        # 1. Poprawne wyciągnięcie acting_instruction z odpowiedzi LLM
+        original_text = "Why? Oh no, what happened to our deployment?"
 
-        # 2. Poprawne tagi wielowyrazowe
-        text2 = "[very slowly]Watch out, [clears throat] please."
-        self.assertEqual(filter_qwen_tags(text2), "[very slowly]Watch out, [clears throat] please.")
-
-        # 3. Wzbogacenie przez Reżysera tekstu (mock LLM)
         def mock_llm(_prompt):
-            return "<directed_text>[curious]Why? [gasp][panicked]Oh no!</directed_text>"
+            return "<acting_instruction>Deliver with intense curiosity and sudden panicked urgency, fast pacing.</acting_instruction>"
 
-        res = enrich_voiceover_tags("Why? Oh no!", engine_type="qwen", client_llm=mock_llm)
-        self.assertEqual(res, "[curious]Why? [gasp][panicked]Oh no!")
+        clean_text, instruction = direct_voiceover(original_text, client_llm=mock_llm)
+        self.assertEqual(clean_text, original_text)
+        self.assertEqual(instruction, "Deliver with intense curiosity and sudden panicked urgency, fast pacing.")
 
-    def test_qwen_unsupported_tags_cleaned(self):
-        # 1. Halucynowane tagi nawiasowe są usuwane
-        self.assertEqual(filter_qwen_tags("[robot_voice]Hello"), "Hello")
-        self.assertEqual(filter_qwen_tags("Hello [unknown_tag] world"), "Hello world")
+        # 2. Upewnienie się, że tekst mówiony jest w 100% oczyszczony z tagów, jeśli wejście zawierało tagi
+        dirty_input = "[curious] Why? <break time='200ms'/> Oh no! [panicked]"
+        clean_text_dirty, instruction_dirty = direct_voiceover(dirty_input, client_llm=mock_llm)
+        self.assertEqual(clean_text_dirty, "Why? Oh no!")
+        self.assertEqual(instruction_dirty, "Deliver with intense curiosity and sudden panicked urgency, fast pacing.")
 
-        # 2. Przypadkowe tagi XML w tekście dla Qwen są usuwane
-        self.assertEqual(filter_qwen_tags("Hello <laughter>world</laughter>"), "Hello world")
+    def test_direct_voiceover_fallback(self):
+        original = "Automating your workstation gives you peace of mind."
+        default_inst = "Speak naturally in a clear, engaging tone."
 
-        # 3. Wzbogacenie przez Reżysera tekstu usuwa nieobsługiwany tag i zachowuje słowa
-        def mock_llm(_prompt):
-            return "<directed_text>[robot_voice]Hello</directed_text>"
+        # 1. client_llm is None -> zwraca czysty tekst i domyślną instrukcję
+        clean_text, instruction = direct_voiceover(original, client_llm=None)
+        self.assertEqual(clean_text, original)
+        self.assertEqual(instruction, default_inst)
 
-        res = enrich_voiceover_tags("Hello", engine_type="qwen", client_llm=mock_llm)
-        self.assertEqual(res, "Hello")
+        # 2. client_llm zgłasza błąd -> fallback do domyślnej instrukcji
+        def failing_llm(_prompt):
+            raise RuntimeError("LLM request failed")
+
+        clean_failing, inst_failing = direct_voiceover(original, client_llm=failing_llm)
+        self.assertEqual(clean_failing, original)
+        self.assertEqual(inst_failing, default_inst)
+
+        # 3. Pusty tekst wejściowy
+        clean_empty, inst_empty = direct_voiceover("", client_llm=None)
+        self.assertEqual(clean_empty, "")
+        self.assertEqual(inst_empty, default_inst)
 
     def test_strip_voice_tags_multiword_brackets(self):
         # Weryfikacja całkowitego wycięcia tagów wielowyrazowych ze spacjami dla napisów SRT/ASS

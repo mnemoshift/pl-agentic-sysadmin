@@ -23,6 +23,7 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 # ==============================================================================
 # 0. SELF-BOOTSTRAPPING: Automatyczne przełączanie na środowisko .venv repozytorium
@@ -70,6 +71,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from text_director import (  # noqa: E402
     clean_voiceover_text,
+    direct_voiceover,
     enrich_voiceover_tags,
     strip_voice_tags,
     supports_voice_tags,
@@ -1186,20 +1188,39 @@ def process_single_short(
             active_engine_name = active_engine_instance.name
 
         llm_director_client = None
-        if expressive and supports_voice_tags(selected_engine):
+        if expressive and (supports_voice_tags(selected_engine) or selected_engine == "qwen"):
             target_llm = "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M" if llm_model in ("auto", "bielik") else llm_model
             candidate_llm = OllamaTranslator(model_name=target_llm)
             if candidate_llm.is_available():
                 llm_director_client = candidate_llm
-                log_info(f"Reżyser tekstu: Włączono wzbogacanie Two-Pass TTS Voice Tags ({selected_engine.upper()}, model: {target_llm}).")
+                if selected_engine == "qwen":
+                    log_info(f"Reżyser tekstu: Włączono Acting Direction (Instruct TTS) ({selected_engine.upper()}, model: {target_llm}).")
+                else:
+                    log_info(f"Reżyser tekstu: Włączono wzbogacanie Two-Pass TTS Voice Tags ({selected_engine.upper()}, model: {target_llm}).")
             else:
-                log_warn("Ollama nie jest dostępna dla Reżysera tekstu. Użycie czystego tekstu.")
+                log_warn("Ollama nie jest dostępna dla Reżysera tekstu. Użycie standardowej ekspresji / czystego tekstu.")
 
         log_info(f"Generowanie mowy dla poszczególnych scen (silnik: {selected_engine.upper()})...")
         with run_mgr.measure_stage("tts_generation"):
+            acting_directions_log: dict[str, Any] = {}
             for sc in scenes:
                 clean_vo = clean_voiceover_text(sc.get("text_en", ""))
-                if expressive and supports_voice_tags(selected_engine) and llm_director_client:
+                active_instruction = instruction
+
+                if selected_engine == "qwen":
+                    if expressive and llm_director_client:
+                        clean_vo, acting_instruction = direct_voiceover(clean_vo, client_llm=llm_director_client)
+                        if acting_instruction:
+                            active_instruction = acting_instruction
+                    else:
+                        clean_vo = strip_voice_tags(clean_vo)
+                    directed_vo = clean_vo
+                    sc["acting_instruction"] = active_instruction
+                    acting_directions_log[f"scene_{sc['id']:03d}"] = {
+                        "text": clean_vo,
+                        "instruction": active_instruction,
+                    }
+                elif expressive and supports_voice_tags(selected_engine) and llm_director_client:
                     directed_vo = enrich_voiceover_tags(clean_vo, selected_engine, client_llm=llm_director_client)
                 else:
                     directed_vo = strip_voice_tags(clean_vo)
@@ -1230,7 +1251,7 @@ def process_single_short(
                     out_wav=part_wav,
                     ref_audio=ref_audio,
                     ref_transcript=ref_transcript,
-                    instruction=instruction,
+                    instruction=active_instruction,
                 )
 
                 if not synth_ok:
@@ -1251,6 +1272,15 @@ def process_single_short(
                 if part_wav.exists() and part_wav.stat().st_size > 1000:
                     txt_marker.write_text(directed_vo.strip() + "\n", encoding="utf-8")
                 segment_wavs.append(part_wav)
+
+            if acting_directions_log:
+                directions_file = run_mgr.llm_adaptation_dir / f"{short_id}_Acting_Directions.json"
+                directions_file.write_text(
+                    json.dumps(acting_directions_log, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                log_ok(f"Zapisano instrukcje reżyserskie TTS: {directions_file.name}")
+                run_mgr.record_stats(acting_directions_count=len(acting_directions_log))
 
         if llm_director_client is not None:
             llm_director_client.unload()
