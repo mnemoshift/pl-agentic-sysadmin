@@ -99,7 +99,6 @@ def build_project(workspace: Path, name: str, seq_uuid: str, ref_kdenlive_path: 
 
     # Dynamiczne dostosowanie długości osi czasu do rzeczywistego czasu audio
     dur_str = format_ts_mlt(audio_duration)
-    frames = int(round(audio_duration * 60))
 
     content = re.sub(r'<property name="kdenlive:duration">00:00:30\.\d+</property>', f'<property name="kdenlive:duration">{dur_str}</property>', content)
     content = re.sub(r'<chain id="chain0" out="00:00:30\.\d+">', f'<chain id="chain0" out="{dur_str}">', content)

@@ -692,7 +692,7 @@ ZERO DŁUBANIA.&lt;/content>
 </property>
   <property name="kdenlive:sequenceproperties.subtitlesList">[
     {
-        "file": "/home/jarek/projects/ghostshift/mnemoshift-channel/episodes/EP002_agentic_sysadmin_desktop/01_youtube/EP002_Short_Agentic_SysAdmin.kdenlive{d2e1ab66-a2fb-4e67-a630-734b7bdff6a6}-1.ass",
+        "file": "assets/subtitles.ass",
         "id": 1,
         "name": "Subtitle 2"
     }
@@ -855,7 +855,7 @@ ZERO DŁUBANIA.&lt;/content>
   <property name="kdenlive:docproperties.activetimeline">{d2e1ab66-a2fb-4e67-a630-734b7bdff6a6}</property>
   <property name="kdenlive:docproperties.audioChannels">2</property>
   <property name="kdenlive:docproperties.binsort">0</property>
-  <property name="kdenlive:docproperties.browserurl">/home/jarek/projects/ghostshift/mnemoshift-channel/episodes/EP001_zorin_ai_setup/01_youtube/</property>
+  <property name="kdenlive:docproperties.browserurl">./</property>
   <property name="kdenlive:docproperties.documentid">ep002short01</property>
   <property name="kdenlive:docproperties.enableTimelineZone">0</property>
   <property name="kdenlive:docproperties.enableexternalproxy">0</property>

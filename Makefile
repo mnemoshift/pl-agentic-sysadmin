@@ -1,4 +1,4 @@
-.PHONY: help setup-env media-setup-models audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-studio desktop-cyber-hud desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short media-clean-work media-prepare-demo media-extract-sample media-dub-short media-dub-ep002 media-dub-ep001 media-dub-batch media-dub-clean gdrive-status gdrive-install gdrive-auth gdrive-list gdrive-folders gdrive-add gdrive-remove gdrive-sync gdrive-timer-enable gdrive-timer-disable gdrive-mount gdrive-unmount tts-status tts-install tts-config tts-test tts-uninstall
+.PHONY: help setup setup-env test lint media-setup-models audit inventory all-audits session-status session-log check restore-dry-run desktop-macos desktop-studio desktop-cyber-hud desktop-reset desktop-status media-check-mcp media-setup-mcp media-clean-audio media-karaoke media-build-short media-clean-work media-prepare-demo media-extract-sample media-dub-short media-dub-ep002 media-dub-ep001 media-dub-batch media-dub-clean gdrive-status gdrive-install gdrive-auth gdrive-list gdrive-folders gdrive-add gdrive-remove gdrive-sync gdrive-timer-enable gdrive-timer-disable gdrive-mount gdrive-unmount tts-status tts-install tts-config tts-test tts-uninstall
 
 # Domyślny cel
 help:
@@ -6,7 +6,10 @@ help:
 	@echo "  WORKSTATION HUB — SYSTEM CONTROL INTERFACE"
 	@echo "=========================================================="
 	@echo "Dostępne komendy:"
-	@echo "  make setup-env       - Inicjalizuje środowisko Python (.venv) przez uv sync"
+	@echo "  make setup           - Inicjalizuje środowisko Python (.venv) przez uv sync"
+	@echo "  make test            - Uruchamia testy jednostkowe (pytest tests/)"
+	@echo "  make lint            - Weryfikuje jakość kodu (Ruff check + ShellCheck)"
+	@echo "  make setup-env       - Alias dla make setup"
 	@echo "  make audit           - Wykonuje audyt fizycznego sprzętu (CPU, RAM, Storage, GPU, Audio, Kamery)"
 	@echo "  make inventory       - Wykonuje inwentaryzację oprogramowania (APT, Flatpak, Repozytoria, Runtimes)"
 	@echo "  make all-audits      - Uruchamia pełny zestaw audytów (sprzęt + oprogramowanie)"
@@ -50,11 +53,28 @@ help:
 	@echo "  make gdrive-unmount [MOUNTPOINT=...] - Odmontowuje dysk VFS"
 	@echo "=========================================================="
 
+setup: setup-env
+
 setup-env:
 	@echo "Inicjalizacja środowiska wirtualnego Python (.venv) przez uv..."
 	@command -v uv >/dev/null 2>&1 || { echo "[BŁĄD] Wymagane narzędzie 'uv'. Zainstaluj: curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
 	@uv sync
 	@echo "[OK] Środowisko .venv gotowe do użycia."
+
+test:
+	@echo "Uruchamianie testów jednostkowych (pytest)..."
+	@uv run pytest tests/
+
+lint:
+	@echo "Uruchamianie lintera Pythona (Ruff)..."
+	@uv run ruff check .
+	@echo "Uruchamianie lintera skryptów Bash (ShellCheck)..."
+	@if command -v shellcheck >/dev/null 2>&1; then \
+		shellcheck scripts/*.sh scripts/media/*.sh; \
+		echo "[OK] ShellCheck: wszystkie skrypty zweryfikowane pomyślnie."; \
+	else \
+		echo "[WARN] Brak polecenia 'shellcheck'. Zainstaluj: sudo apt install -y shellcheck"; \
+	fi
 
 audit:
 	@chmod +x scripts/audit_hardware.sh

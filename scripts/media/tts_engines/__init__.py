@@ -5,12 +5,13 @@ Gwarantuje leniwą inicjalizację (lazy loading), eliminując kolizje bibliotek 
 """
 
 from pathlib import Path
+
 from .base import BaseTTSEngine
-from .qwen import QwenTTSEngine
-from .kokoclone import KokoCloneEngine
-from .chatterbox import ChatterboxEngine
 from .breeze import BreezeTTSEngine
+from .chatterbox import ChatterboxEngine
 from .edge import EdgeTTSEngine
+from .kokoclone import KokoCloneEngine
+from .qwen import QwenTTSEngine
 
 AVAILABLE_ENGINES = {
     "qwen": QwenTTSEngine,

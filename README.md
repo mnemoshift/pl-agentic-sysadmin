@@ -11,15 +11,51 @@ Tradycyjne podejście do konfiguracji systemu (ręczne wklepywanie komend, niesp
 
 ---
 
-## 🚀 Szybki Start: Uruchomienie w Antigravity 2.0
+## 🖥️ Wymagania Sprzętowe i Systemowe (Requirements)
 
-### Krok 1: Pobranie repozytorium (Terminal)
-Wklej w terminalu polecenie klonowania:
+Repozytorium zostało zaprojektowane z myślą o pełnej elastyczności — od lekkich zadań administracyjnych po zaawansowane lokalne potoki generatywne AI:
+
+| Komponent | Minimalne | Zalecane | Uwagi |
+| :--- | :--- | :--- | :--- |
+| **System operacyjny** | Zorin OS 17+ / Ubuntu 22.04+ | Zorin OS 17+ Pro / Ubuntu 24.04 LTS | GNOME Desktop (obsługa X11 oraz Wayland) |
+| **Procesor (CPU)** | 4 rdzenie / 8 wątków | 8+ rdzeni (x86_64) | Wymagany do kompilacji i operacji systemowych |
+| **Pamięć RAM** | 16 GB | 32 GB+ | Niezbędna do płynnej pracy z modelami AI i Kdenlive |
+| **Dysk** | 20 GB wolnego miejsca | NVMe SSD (PCIe 4.0) | Szybki odczyt wag modeli AI i cache multimediów |
+| **Karta graficzna (GPU)** | *Brak (CPU fallback)* | NVIDIA RTX (8–12+ GB VRAM) | CUDA + oficjalne sterowniki NVIDIA (do Whisper/Breeze-TTS) |
+
+> 💡 **Ważna uwaga:** Wszystkie podstawowe funkcje SysAdmina (zarządzanie pulpitem, motywami, profilami CSD, audyt sprzętu, żywy inwentarz, czytnik TTS Edge) **działają w 100% na CPU** i nie wymagają dedykowanej karty graficznej. Akceleracja GPU NVIDIA jest wykorzystywana wyłącznie przez opcjonalne lokalne potoki audio/wideo (Whisper, Breeze-TTS-2, neuronowy dubbing).
+
+---
+
+## ⚡ Szybki Start (3 minuty do uruchomienia)
+
+Wystarczą cztery komendy, aby przygotować środowisko i przeprowadzić pełny audyt stacji roboczej:
+
 ```bash
+# 1. Klonowanie repozytorium
 git clone https://github.com/mnemoshift/pl-agentic-sysadmin.git ~/workspaces/pl-agentic-sysadmin
+cd ~/workspaces/pl-agentic-sysadmin
+
+# 2. Przygotowanie pliku konfiguracyjnego (opcjonalne nadpisania)
+cp .env.example .env
+
+# 3. Autonomiczna instalacja środowiska Python i narzędzi (uv workspace)
+make setup
+
+# 4. Wygenerowanie Living Inventory Twojej stacji roboczej (CPU, GPU, audio, ekrany)
+make audit
+
+# 5. Uruchomienie testów integralności
+make test
 ```
 
-### Krok 2: Otwarcie i konfiguracja projektu w Antigravity 2.0
+---
+
+## 🚀 Uruchomienie w Antigravity 2.0 / Claude Code
+
+Po wykonaniu szybkiego startu możesz oddać kontrolę agentowi AI w IDE:
+
+### Krok 1: Otwarcie projektu w Antigravity 2.0
 1. Uruchom **Antigravity 2.0** (z menu aplikacji Zorina lub poleceniem `antigravity`).
 2. W lewym panelu bocznym przejdź do sekcji **Projects** $\rightarrow$ kliknij **Add Project** (lub **Open Folder**) i wskaż sklonowany katalog:  
    `~/workspaces/pl-agentic-sysadmin`
@@ -30,7 +66,7 @@ git clone https://github.com/mnemoshift/pl-agentic-sysadmin.git ~/workspaces/pl-
    * Ustaw **Agent Behavior -> Artifact Review Policy** na `Always Ask`
 	   * Dzięki temu Agent przed każdą modyfikacją systemu zaprezentuje plan operacyjny (*Implementation Plan*) do akceptacji.
    * Jeżeli nabierzesz zaufania, zmęczysz się ciągłą akceptacją, lub po prostu chcesz zostawić agenta by działał a ty zajmował się innymi sprawami, można rozluźnić te restrykcje by Agent otrzymał większą autonomię w działaniu.
-1. Gotowe — Agent natychmiast załaduje reguły `AGENTS.md` oraz Core Skill `desktop-manager`.
+4. Gotowe — Agent natychmiast załaduje reguły `AGENTS.md` oraz Core Skill `desktop-manager`.
 
 ---
 

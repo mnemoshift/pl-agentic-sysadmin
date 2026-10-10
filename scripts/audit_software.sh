@@ -10,6 +10,20 @@ SOURCES_DIR="${PKG_DIR}/sources.list.d"
 
 mkdir -p "${PKG_DIR}" "${SOURCES_DIR}"
 
+check_tool() {
+    local cmd="$1"
+    local install_pkg="${2:-$1}"
+    local install_cmd="${3:-sudo apt install -y $install_pkg}"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo -e "\033[1;31m[ERROR]\033[0m Brak wymaganego narzędzia '${cmd}'. Zainstaluj je poleceniem:\n  ${install_cmd}" >&2
+        return 1
+    fi
+    return 0
+}
+
+check_tool dpkg-query dpkg "sudo apt install -y dpkg"
+check_tool python3 python3 "sudo apt install -y python3"
+
 echo "=========================================================="
 echo "  WORKSTATION HUB — AUDYT OPROGRAMOWANIA"
 echo "  Data: $(date '+%Y-%m-%d %H:%M:%S %Z')"

@@ -17,19 +17,52 @@ Full walkthrough showing the contrast between 47 minutes of manual terminal conf
 * 🎬 **MnemoShift EP002:** *"Commands Are in the Man Pages." Why I Delegated Linux Config to an AI Agent* — **[Watch on YouTube](https://www.youtube.com/watch?v=wEVas1TWCns)**  
   *(Note: Audio is available in both Polish and English via YouTube's Multi-Language Audio feature).*
 
+## 🖥️ Hardware & System Requirements
+
+The workstation hub is engineered for maximum flexibility — spanning lightweight headless administration up to high-throughput on-prem generative AI pipelines:
+
+| Component | Minimum | Recommended | Notes |
+| :--- | :--- | :--- | :--- |
+| **Operating System** | Zorin OS 17+ / Ubuntu 22.04+ | Zorin OS 17+ Pro / Ubuntu 24.04 LTS | GNOME Desktop (X11 & Wayland support) |
+| **Processor (CPU)** | 4 cores / 8 threads | 8+ cores (x86_64) | Required for package builds and system automation |
+| **System RAM** | 16 GB | 32 GB+ | Required for running local AI models and Kdenlive |
+| **Storage** | 20 GB free space | NVMe SSD (PCIe 4.0) | High IOPS for neural model weights and media caching |
+| **Graphics (GPU)** | *None (CPU fallback)* | NVIDIA RTX (8–12+ GB VRAM) | CUDA + official NVIDIA drivers (for Whisper/Breeze-TTS) |
+
+> 💡 **Important Note:** All core SysAdmin workflows (desktop theming, CSD window control harmonization, hardware inventory, disaster recovery, Edge neural TTS) **run 100% on CPU** and do not require a dedicated GPU. NVIDIA GPU acceleration is solely utilized by optional local media pipelines (Whisper transcription, Breeze-TTS-2 speech synthesis, neural dubbing).
+
 ---
 
-## 🚀 Quick Start: Running with Antigravity 2.0
+## ⚡ Quickstart (3 Minutes to Launch)
 
-### Step 1: Clone the Repository
-Clone the hub into your local workspace directory:
+Bootstrap the environment and run a full hardware audit in four commands:
+
 ```bash
+# 1. Clone the repository
 git clone https://github.com/mnemoshift/pl-agentic-sysadmin.git ~/workspaces/pl-agentic-sysadmin
 cd ~/workspaces/pl-agentic-sysadmin
+
+# 2. Configure environment overrides (optional)
+cp .env.example .env
+
+# 3. Bootstrap Python environment and tools (uv workspace)
+make setup
+
+# 4. Generate the Living Inventory of your workstation (CPU, GPU, audio, displays)
+make audit
+
+# 5. Run test suite verification
+make test
 ```
 
-### Step 2: Open and Configure in Antigravity 2.0
-1. Launch **Antigravity 2.0** (from the Zorin application menu or via terminal: `antigravity`).
+---
+
+## 🚀 Running with Antigravity 2.0 / Claude Code
+
+Once initialized, delegate workstation control to your AI agent:
+
+### Step 1: Open and Configure in Antigravity 2.0
+1. Launch **Antigravity 2.0** (from the application menu or via terminal: `antigravity`).
 2. In the left sidebar, navigate to **Projects** $\rightarrow$ click **Add Project** (or **Open Folder**) and select:  
    `~/workspaces/pl-agentic-sysadmin`
 3. **Security & Review Configuration:**

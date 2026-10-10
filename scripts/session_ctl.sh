@@ -10,6 +10,17 @@ JOURNAL_FILE="${MEMORY_DIR}/JOURNAL.md"
 
 mkdir -p "${MEMORY_DIR}"
 
+check_tool() {
+    local cmd="$1"
+    local install_pkg="${2:-$1}"
+    local install_cmd="${3:-sudo apt install -y $install_pkg}"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo -e "\033[1;31m[ERROR]\033[0m Brak wymaganego narzędzia '${cmd}'. Zainstaluj je poleceniem:\n  ${install_cmd}" >&2
+        return 1
+    fi
+    return 0
+}
+
 usage() {
     echo "Użycie: $0 {status|log <komunikat>|check}"
     echo ""

@@ -5,6 +5,17 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TARGET_DIR="${REPO_ROOT}/models/Breeze-TTS-2"
 
+check_tool() {
+    local cmd="$1"
+    local install_pkg="${2:-$1}"
+    local install_cmd="${3:-sudo apt install -y $install_pkg}"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo -e "\033[1;31m[ERROR]\033[0m Brak wymaganego narzędzia '${cmd}'. Zainstaluj je poleceniem:\n  ${install_cmd}" >&2
+        return 1
+    fi
+    return 0
+}
+
 echo "[INFO] Weryfikacja wag modeli AI w ${TARGET_DIR}..."
 
 # 1. Sprawdzenie czy wagi Breeze-TTS-2 już istnieją w repo
@@ -13,10 +24,8 @@ if [ -d "${TARGET_DIR}" ] && ls "${TARGET_DIR}"/*.safetensors 1>/dev/null 2>&1; 
 else
     mkdir -p "${REPO_ROOT}/models"
     
-    # 2. Sprawdzenie znanych lokalizacji w systemie pod kątem symlinka (zero marnowania dysku)
+    # 2. Sprawdzenie lokalnego cache Hugging Face pod kątem symlinka (zero marnowania dysku)
     KNOWN_PATHS=(
-        "${HOME}/projects/ghostshift/exploration/experiments/breeze2-tts-local/models/Breeze-TTS-2"
-        "${REPO_ROOT}/../ghostshift/exploration/experiments/breeze2-tts-local/models/Breeze-TTS-2"
         "${HOME}/.cache/huggingface/hub/models--MediaTek-Research--Breeze-TTS-2/snapshots"/*
     )
     

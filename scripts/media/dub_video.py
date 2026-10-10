@@ -12,9 +12,9 @@ Wszystkie komponenty działają w 100% lokalnie i offline w dedykowanym środowi
 """
 
 import os
-import sys
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 # ==============================================================================
@@ -63,7 +63,6 @@ try:
 except Exception:
     pass
 
-import soundfile as sf
 import torch
 from faster_whisper import WhisperModel
 from transformers import MarianMTModel, MarianTokenizer
@@ -75,10 +74,8 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from tts_engines import (
     BaseTTSEngine,
-    get_tts_engine,
     detect_best_engine,
-    list_available_engines,
-    AVAILABLE_ENGINES,
+    get_tts_engine,
 )
 
 
@@ -437,7 +434,6 @@ class OllamaTranslator:
                 f"Output ONLY the spoken English voiceover text:"
             )
         else:
-            diff = abs(prev_words - pacing.target_words)
             direction = "too short" if prev_words < pacing.target_words else "too long"
             if direction == "too short":
                 guidance = (
@@ -682,67 +678,89 @@ def extract_voice_sample_clip(source_path: Path, start: str, end: str, output_wa
 
 
 def resolve_reference_audio(
-    ref_audio: Path | None = None,
+    ref_audio: Path | str | None = None,
     work_dir: Path | None = None,
     ref_transcript: str = "",
     target_lang: str = "en",
-) -> tuple[Path | None, str]:
+) -> tuple[Path, str]:
     """
     Jednolita detekcja pliku referencyjnego głosu lektora (WAV) oraz opcjonalnej transkrypcji (TXT).
-    Sprawdza ścieżkę podaną explicite oraz domyślne lokalizacje repozytorium (DRY).
-    W zależności od target_lang priorytetyzuje próbkę angielską (jarek_en_reference) lub polską (jarek_clean_reference).
+    Zgodnie z konwencją pl-agentic-sysadmin jedyną lokalizacją próbek jest: work/voice_sample/
+
+    Reguły:
+    1. Jeśli ref_audio nie podano, sprawdzana jest zmienna środowiskowa VOICE_REF_FILE.
+    2. Jeśli wskazano konkretną próbkę (jawny parametr lub env):
+       - Sprawdza istnienie bezpośrednio oraz w katalogu work/voice_sample/.
+       - Jeśli plik nie istnieje: zgłasza błąd z listą dostępnych próbek w work/voice_sample/.
+    3. Jeśli nie wskazano żadnej próbki:
+       - Skanuje katalog work/voice_sample/ w poszukiwaniu plików audio (*.wav, *.mp3, *.flac).
+       - Jeśli jest dokładnie 1 plik: staje się on automatycznie domyślnym bez względu na nazwę.
+       - Jeśli jest więcej niż 1 plik: zgłasza błąd informujący, że wymagany jest parametr
+         --voice-ref / --ref-audio lub zmienna VOICE_REF_FILE, i wyświetla listę dostępnych opcji.
+       - Jeśli brak próbek: zgłasza błąd z instrukcją jak dodać próbkę do work/voice_sample/.
     """
-    if ref_audio:
-        ref_audio = Path(ref_audio).resolve()
-        if not ref_audio.exists():
-            log_warn(f"Podana próbka referencyjna nie istnieje ({ref_audio}). Szukanie w domyślnych lokalizacjach...")
-            ref_audio = None
+    sample_dir = REPO_ROOT / "work" / "voice_sample"
 
     if not ref_audio:
-        candidates = []
-        if target_lang == "en":
-            candidates.extend([
-                REPO_ROOT / "voice" / "jarek_en_reference.wav",
-                REPO_ROOT / "voice" / "ref_voice_sample_en.wav",
-                REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample_en.wav",
-            ])
-            if work_dir:
-                candidates.extend([
-                    work_dir / "input" / "ref_voice_sample_en.wav",
-                    work_dir / "ref_voice_sample_en.wav",
-                ])
-            candidates.extend([
-                Path("voice/jarek_en_reference.wav").resolve(),
-                Path("work/voice_sample/ref_voice_sample_en.wav").resolve(),
-            ])
+        env_ref = os.environ.get("VOICE_REF_FILE")
+        if env_ref:
+            ref_audio = Path(env_ref)
 
-        # Ogólne / domyślne próbki (w tym polski wzorzec lektorski jako solidny fallback)
-        candidates.extend([
-            REPO_ROOT / "voice" / "jarek_clean_reference.wav",
-            REPO_ROOT / "voice" / "ref_voice_sample.wav",
-            REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample.wav",
-        ])
-        if work_dir:
-            candidates.extend([
-                work_dir / "input" / "ref_voice_sample.wav",
-                work_dir / "ref_voice_sample.wav",
-            ])
-        candidates.extend([
-            Path("work/voice_sample/ref_voice_sample.wav").resolve(),
-            Path("voice/jarek_clean_reference.wav").resolve(),
-            Path("work/ref_voice_sample.wav").resolve(),
-        ])
-        for cand in candidates:
+    if ref_audio:
+        cand = Path(ref_audio)
+        resolved: Path | None = None
+        if not cand.is_absolute():
             if cand.exists():
-                ref_audio = cand.resolve()
-                break
+                resolved = cand.resolve()
+            elif (sample_dir / cand).exists():
+                resolved = (sample_dir / cand).resolve()
+            elif (REPO_ROOT / cand).exists():
+                resolved = (REPO_ROOT / cand).resolve()
+            elif work_dir and (work_dir / cand).exists():
+                resolved = (work_dir / cand).resolve()
+        else:
+            if cand.exists():
+                resolved = cand.resolve()
 
-    if ref_audio and not ref_transcript:
-        txt_cand = ref_audio.with_suffix(".txt")
+        if resolved is None:
+            available = [p.name for p in sorted(sample_dir.glob("*.wav"))] if sample_dir.exists() else []
+            opts_msg = f"Dostępne próbki w work/voice_sample/: {available}" if available else "Katalog work/voice_sample/ jest pusty."
+            raise FileNotFoundError(
+                f"Wskazana próbka referencyjna '{ref_audio}' nie istnieje.\n{opts_msg}\n"
+                f"Wskaż poprawny plik parametrem --voice-ref lub umieść próbkę w work/voice_sample/."
+            )
+        resolved_path = resolved
+    else:
+        if not sample_dir.exists():
+            sample_dir.mkdir(parents=True, exist_ok=True)
+        available = sorted([
+            p for p in sample_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in {".wav", ".mp3", ".flac"}
+        ])
+
+        if len(available) == 1:
+            resolved_path = available[0].resolve()
+            log_info(f"Wykryto pojedynczą próbkę lektorską w work/voice_sample/: {resolved_path.name} (użycie jako domyślnej)")
+        elif len(available) > 1:
+            opts = [p.name for p in available]
+            raise ValueError(
+                f"W katalogu work/voice_sample/ wykryto wiele próbek: {opts}.\n"
+                f"Wymagane jest wskazanie konkretnego pliku za pomocą parametru --voice-ref <plik> "
+                f"lub zmiennej środowiskowej VOICE_REF_FILE."
+            )
+        else:
+            raise FileNotFoundError(
+                "Brak próbek głosu w katalogu work/voice_sample/.\n"
+                "Zgodnie z konwencją open-source umieść tam plik WAV (np. 10-15s czystego audio 24kHz mono) "
+                "lub wyodrębnij próbkę za pomocą: make media-extract-sample INPUT=... START=... END=... OUTPUT=work/voice_sample/sample.wav"
+            )
+
+    if resolved_path and not ref_transcript:
+        txt_cand = resolved_path.with_suffix(".txt")
         if txt_cand.exists():
             ref_transcript = txt_cand.read_text(encoding="utf-8").strip()
 
-    return ref_audio, ref_transcript
+    return resolved_path, ref_transcript
 
 
 def sec_to_srt_time(sec: float) -> str:
@@ -976,9 +994,9 @@ def time_sync_and_master(
         if enable_room_tone:
             # Subtelny, ciepły szum tła (room tone) na poziomie -58 dB eliminujący cyfrową próżnię w pauzach
             filter_complex.append(f"anoisesrc=d={total_duration:.2f}:c=pink:r=48000:a=0.0005,lowpass=f=3500,highpass=f=120,volume=-58dB[roomtone]")
-            filter_complex.append(f"[vo_raw][roomtone]amix=inputs=2:dropout_transition=0:normalize=0[mixed]")
+            filter_complex.append("[vo_raw][roomtone]amix=inputs=2:dropout_transition=0:normalize=0[mixed]")
         else:
-            filter_complex.append(f"[vo_raw]acopy[mixed]")
+            filter_complex.append("[vo_raw]acopy[mixed]")
 
         # Broadcast Presence EQ (odcięcie subsoniczne 70Hz + blask 8kHz) + emisyjny standard EBU R128
         filter_complex.append(f"[mixed]highpass=f=70,treble=g=1.5:f=8000,loudnorm=I={target_lufs}:TP={target_tp}:LRA=11[mastered]")
@@ -1054,9 +1072,10 @@ def process_single_short(
     log_info(f"Silnik TTS:       {engine.upper()}")
 
     # Walidacja i automatyczna detekcja próbki referencyjnej głosu
-    ref_audio, ref_transcript = resolve_reference_audio(ref_audio, work_dir=work_dir, ref_transcript=ref_transcript)
-    if ref_audio:
-        log_info(f"Próbka głosu:     {ref_audio.name} ({'z transkrypcją' if ref_transcript else 'bez transkrypcji'})")
+    if not transcribe_only and engine != "edge":
+        ref_audio, ref_transcript = resolve_reference_audio(ref_audio, work_dir=work_dir, ref_transcript=ref_transcript)
+        if ref_audio:
+            log_info(f"Próbka głosu:     {ref_audio.name} ({'z transkrypcją' if ref_transcript else 'bez transkrypcji'})")
 
     # 1. Ekstrakcja czystego audio ze źródła lub dedykowany plik lektorski
 
@@ -1230,12 +1249,12 @@ def process_single_short(
         f.write(f"# Raport Dubbingu AI: {short_id}\n\n")
         f.write(f"- **Wideo źródłowe:** `{input_video.name}` ({total_duration:.2f}s)\n")
         f.write(f"- **Silnik syntezy:** `{active_engine_name}`\n")
-        f.write(f"- **Standard emisyjny audio:** `EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS)`\n\n")
+        f.write("- **Standard emisyjny audio:** `EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS)`\n\n")
         f.write("## Wygenerowane Pliki Produkcyjne (Deliverables)\n\n")
-        f.write(f"1. **Plik dźwiękowy lektora (YouTube Multi-Language Audio):**\n")
+        f.write("1. **Plik dźwiękowy lektora (YouTube Multi-Language Audio):**\n")
         f.write(f"   `{mastered_wav.name}` (WAV 48kHz stereo, -14.0 LUFS — do wrzucenia w YouTube Studio jako alternatywna ścieżka językowa).\n\n")
         if output_video:
-            f.write(f"2. **Zdubbingowany film EN (Full Video + Dubbing):**\n")
+            f.write("2. **Zdubbingowany film EN (Full Video + Dubbing):**\n")
             f.write(f"   `{output_video_file.name}` (wideo + zsynchronizowany dubbing EN).\n\n")
         f.write(f"3. **Napisy w języku angielskim:** `{srt_en_file.name}`\n")
         f.write(f"4. **Napisy w języku polskim:** `{srt_pl_file.name}`\n\n")
@@ -1277,7 +1296,7 @@ def main():
     parser.add_argument("--batch", nargs="+", help="Lista katalogów projektów do przetworzenia wsadowego")
 
     # Próbka głosu
-    parser.add_argument("--ref-audio", type=Path, default=None, help="Ścieżka do gotowej próbki referencyjnej WAV")
+    parser.add_argument("--voice-ref", "--ref-audio", dest="voice_ref", type=Path, default=None, help="Ścieżka do próbki referencyjnej WAV (domyślnie z work/voice_sample/)")
     parser.add_argument("--ref-transcript", type=str, default="", help="Transkrypcja próbki referencyjnej")
     parser.add_argument("--ref-source", type=Path, default=None, help="Plik źródłowy do wycięcia próbki w locie")
     parser.add_argument("--ref-start", type=str, default="00:00:12.000", help="Początek wycinka próbki")
@@ -1302,14 +1321,18 @@ def main():
     active_edge_voice = args.edge_voice or accent_cfg["edge_voice"]
 
     # Wycięcie próbki referencyjnej w locie jeśli wskazano --ref-source
-    ref_audio = args.ref_audio
+    ref_audio = args.voice_ref
     ref_transcript = args.ref_transcript
     if args.ref_source and args.ref_source.exists():
         sample_out = REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample.wav"
         extract_voice_sample_clip(args.ref_source, args.ref_start, args.ref_end, sample_out, ref_transcript)
         ref_audio = sample_out
 
-    ref_audio, ref_transcript = resolve_reference_audio(ref_audio, work_dir=args.work_dir, ref_transcript=ref_transcript)
+    try:
+        ref_audio, ref_transcript = resolve_reference_audio(ref_audio, work_dir=args.work_dir, ref_transcript=ref_transcript)
+    except (FileNotFoundError, ValueError) as err:
+        log_err(str(err))
+        sys.exit(1)
 
     # Leniwa inicjalizacja modeli (GPU VRAM jest zwalniane sekwencyjnie)
 

@@ -31,6 +31,17 @@ log_err() {
     echo -e "\033[1;31m[ERROR]\033[0m $*"
 }
 
+check_tool() {
+    local cmd="$1"
+    local install_pkg="${2:-$1}"
+    local install_cmd="${3:-sudo apt install -y $install_pkg}"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        log_err "Brak pakietu/narzędzia '$cmd'. Zainstaluj je poleceniem:\n  $install_cmd"
+        return 1
+    fi
+    return 0
+}
+
 # ------------------------------------------------------------------------------
 # 1. Detekcja i instalacja rclone (User-Space by default)
 # ------------------------------------------------------------------------------

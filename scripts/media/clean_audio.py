@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 def parse_time_to_seconds(ts_str: str) -> float:
     ts_str = ts_str.strip()
     if ":" in ts_str:
@@ -53,7 +54,7 @@ def clean_audio(input_file: Path, output_file: Path, start: str | None, end: str
         cmd.extend(["-ss", str(start)])
     if end:
         cmd.extend(["-to", str(end)])
-    
+
     cmd.extend(["-i", str(input_file)])
 
     # Budowanie filtrów audio

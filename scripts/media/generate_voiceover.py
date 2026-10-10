@@ -2,29 +2,32 @@
 """
 Workstation Hub: Autonomiczny generator lektora / voiceoveru AI w języku polskim.
 Generuje profesjonalną ścieżkę lektorską na podstawie pliku Markdown (.md),
-odwzorowując barwę głosu i dykcję twórcy (Jarek) za pomocą lokalnej konwersji głosu (Kanade Zero-Shot).
+odwzorowując barwę głosu i dykcję lektora za pomocą lokalnej konwersji głosu (Kanade Zero-Shot).
 
 Funkcjonalności:
 - Inteligentny parser skryptów czytanych Markdown (usuwanie metadanych, wtrąceń reżyserskich `*(...)*`,
   nagłówków i znaczników intonacyjnych `[akcent]`, precyzyjna obsługa pauz `[pauza 1s]`).
 - Dwuetapowa synteza z klonowaniem barwy:
     1. Czysta polska artykulacja i dykcja (Edge-TTS pl-PL-MarekNeural).
-    2. Zero-shot transfer barwy i tembru głosu (Kanade Voice Conversion z wagami Jarka).
+    2. Zero-shot transfer barwy i tembru głosu lektora (Kanade Voice Conversion).
 - Inteligentne wznawianie (cache per akapit/zdanie).
 - Emisyjny mastering audio EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS, 48kHz, Broadcast EQ).
 - Automatyczne generowanie zsynchronizowanych napisów SRT oraz raportu Markdown.
 """
 
 import argparse
-import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
-import time
 from pathlib import Path
+
+# Upewnienie się, że moduły z scripts/media są dostępne
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from dub_video import resolve_reference_audio
 
 # ==============================================================================
 # 0. SELF-BOOTSTRAPPING: Automatyczne przełączanie na środowisko .venv repozytorium
@@ -39,7 +42,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from tts_engines import get_tts_engine, KokoCloneEngine, EdgeTTSEngine
+from tts_engines import EdgeTTSEngine, KokoCloneEngine
 
 
 def log_info(msg: str):
@@ -312,7 +315,7 @@ def generate_voiceover(
     parts_dir.mkdir(parents=True, exist_ok=True)
 
     log_info("=" * 65)
-    log_info(f" Workstation Hub: Generator Voiceoveru PL (Profil Twórcy: Jarek)")
+    log_info(" Workstation Hub: Generator Voiceoveru PL (Profil Lektora: work/voice_sample)")
     log_info("=" * 65)
     log_info(f"Skrypt Markdown:    {script_path.name}")
     log_info(f"Katalog roboczy:    {work_dir}")
@@ -438,7 +441,7 @@ def generate_voiceover(
         f.write(f"- **Długość całkowita:** `{total_dur:.2f}s` ({total_dur / 60.0:.2f} min)\n")
         f.write(f"- **Styl / Głos bazowy:** `{polish_voice}`\n")
         f.write(f"- **Konwersja barwy (Kanade):** `{'TAK (' + ref_audio.name + ')' if use_voice_conversion else 'NIE'}`\n")
-        f.write(f"- **Standard emisyjny:** `EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS, 48kHz stereo)`\n\n")
+        f.write("- **Standard emisyjny:** `EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS, 48kHz stereo)`\n\n")
         f.write("## Wygenerowane Pliki Produkcyjne (Deliverables)\n\n")
         f.write(f"1. **Czysty lektor (Gotowy master do Kdenlive):** `{mastered_wav.name}`\n")
         f.write(f"2. **Zsynchronizowane napisy lektorskie:** `{subtitles_srt.name}`\n\n")
@@ -468,7 +471,7 @@ def main():
     parser = argparse.ArgumentParser(description="Autonomiczny potok generowania polskiego voiceoveru z Markdown.")
     parser.add_argument("-s", "--script", type=Path, required=True, help="Ścieżka do pliku Markdown ze skryptem czytanym (.md)")
     parser.add_argument("-w", "--work-dir", type=Path, default=None, help="Katalog roboczy projektu (domyślnie work/<nazwa_skryptu>)")
-    parser.add_argument("--ref-audio", type=Path, default=None, help="Ścieżka do próbki referencyjnej WAV (barwa głosu twórcy)")
+    parser.add_argument("--voice-ref", "--ref-audio", dest="voice_ref", type=Path, default=None, help="Ścieżka do próbki referencyjnej WAV (domyślnie z work/voice_sample/)")
     parser.add_argument("--voice", type=str, default="pl-PL-MarekNeural", help="Głos bazowy lektora (domyślnie pl-PL-MarekNeural)")
     parser.add_argument("--no-cloning", action="store_true", default=False, help="Wyłącz konwersję barwy Kanade (generuj czystego Marka)")
     parser.add_argument("--section", type=str, default=None, help="Ogranicz generowanie do wybranej sekcji/wieszaka (np. 'WIESZAK 1')")
@@ -484,20 +487,13 @@ def main():
     if not work_dir:
         work_dir = REPO_ROOT / "work" / script_path.stem.replace("_read_script", "")
 
-    ref_audio = args.ref_audio
-    if not ref_audio:
-        candidates = [
-            REPO_ROOT / "voice" / "jarek_clean_reference.wav",
-            REPO_ROOT / "voice" / "ref_voice_sample.wav",
-            REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample.wav",
-            Path.home() / "workspaces" / "pl-agentic-sysadmin-work" / "voice" / "jarek_clean_reference.wav",
-            Path.home() / "workspaces" / "pl-agentic-sysadmin-work" / "work" / "voice_sample" / "ref_voice_sample.wav",
-            REPO_ROOT / "work" / "voice_source" / "EP003_VoiceOver_CLEAN.wav",
-        ]
-        for c in candidates:
-            if c.exists():
-                ref_audio = c
-                break
+    ref_audio = None
+    if not args.no_cloning:
+        try:
+            ref_audio, _ = resolve_reference_audio(args.voice_ref, work_dir=work_dir)
+        except (FileNotFoundError, ValueError) as err:
+            log_err(str(err))
+            sys.exit(1)
 
     success = generate_voiceover(
         script_path=script_path,

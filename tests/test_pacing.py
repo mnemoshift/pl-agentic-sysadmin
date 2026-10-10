@@ -8,19 +8,19 @@ Weryfikują:
 - resolve_reference_audio (wyszukiwanie próbek głosu referencyjnego)
 """
 
+import sys
 import unittest
 from pathlib import Path
-import sys
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "media"))
 
 from dub_video import (
-    compute_pacing_target,
-    clean_llm_translation,
-    apply_tech_terms,
-    resolve_reference_audio,
     PacingTarget,
+    apply_tech_terms,
+    clean_llm_translation,
+    compute_pacing_target,
+    resolve_reference_audio,
 )
 
 
@@ -70,19 +70,17 @@ class TestPacingController(unittest.TestCase):
         text2 = "Dokładnie tak to działa w doku."
         self.assertEqual(apply_tech_terms(text2, tech_terms), "Dokładnie tak to działa w doku.")
 
-    def test_resolve_reference_audio_en(self):
-        ref_audio, ref_transcript = resolve_reference_audio(target_lang="en")
-        self.assertIsNotNone(ref_audio)
-        self.assertTrue(ref_audio.exists())
-        self.assertIn("en_reference", ref_audio.name)
-        self.assertIn("Hello everyone", ref_transcript)
+    def test_resolve_reference_audio_explicit(self):
+        sample_path = REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample.wav"
+        if sample_path.exists():
+            ref_audio, ref_transcript = resolve_reference_audio(ref_audio=sample_path)
+            self.assertIsNotNone(ref_audio)
+            self.assertTrue(ref_audio.exists())
+            self.assertEqual(ref_audio.name, "ref_voice_sample.wav")
 
-    def test_resolve_reference_audio_pl(self):
-        ref_audio, ref_transcript = resolve_reference_audio(target_lang="pl")
-        self.assertIsNotNone(ref_audio)
-        self.assertTrue(ref_audio.exists())
-        self.assertTrue("clean_reference" in ref_audio.name or "voice_sample" in ref_audio.name)
-        self.assertIn("Zmontowałem to", ref_transcript)
+    def test_resolve_reference_audio_nonexistent_raises(self):
+        with self.assertRaises(FileNotFoundError):
+            resolve_reference_audio(ref_audio="nonexistent_sample_xyz.wav")
 
 
 if __name__ == "__main__":

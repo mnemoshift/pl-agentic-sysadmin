@@ -37,6 +37,85 @@ detect_display_server() {
     echo "$session" | tr '[:upper:]' '[:lower:]'
 }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+check_tool() {
+    local cmd="$1"
+    local install_pkg="${2:-$1}"
+    local install_cmd="${3:-sudo apt install -y $install_pkg}"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        log_err "Brak pakietu/narzędzia '$cmd'. Zainstaluj go poleceniem:\n  $install_cmd"
+        return 1
+    fi
+    return 0
+}
+
+ensure_hardware_inventory() {
+    local inv_json="$REPO_ROOT/inventory/hardware.json"
+    if [ ! -f "$inv_json" ] || ! python3 -c "import json; d=json.load(open('$inv_json')); assert 'displays' in d and d['displays']" 2>/dev/null; then
+        log_info "Brak spopulowanego inventory/hardware.json. Uruchamianie procedury audytu sprzętowego..."
+        "$REPO_ROOT/scripts/audit_hardware.sh" >/dev/null 2>&1 || true
+    fi
+}
+
+detect_displays() {
+    ensure_hardware_inventory
+    local inv_json="$REPO_ROOT/inventory/hardware.json"
+
+    local prim_detected=""
+    local sec_detected=""
+
+    if [ -f "$inv_json" ]; then
+        local parsed
+        parsed=$(python3 -c "
+import json
+try:
+    with open('$inv_json') as f:
+        d = json.load(f)
+    mons = d.get('displays', [])
+    for m in mons:
+        parts = m.strip().split()
+        if parts:
+            name = parts[-1]
+            is_prim = '*' in parts[1] if len(parts) > 1 else False
+            print(f'{name}:{'1' if is_prim else '0'}')
+except Exception:
+    pass
+" 2>/dev/null)
+        while IFS=: read -r name is_prim; do
+            [ -z "$name" ] && continue
+            if [ "$is_prim" = "1" ] && [ -z "$prim_detected" ]; then
+                prim_detected="$name"
+            elif [ -z "$prim_detected" ]; then
+                prim_detected="$name"
+            elif [ -z "$sec_detected" ] && [ "$name" != "$prim_detected" ]; then
+                sec_detected="$name"
+            fi
+        done <<< "$parsed"
+    fi
+
+    # Fallback do xrandr jeśli inventory nadal nie posiada wpisów
+    if [ -z "$prim_detected" ] && command -v xrandr >/dev/null 2>&1; then
+        local xrandr_mons=()
+        mapfile -t xrandr_mons < <(xrandr --query 2>/dev/null | grep -E " connected" | awk '{print $1}')
+        prim_detected="${xrandr_mons[0]:-}"
+        sec_detected="${xrandr_mons[1]:-}"
+    fi
+
+    PRIMARY_DISPLAY="${CLI_PRIMARY_DISPLAY:-${PRIMARY_DISPLAY:-$prim_detected}}"
+    SECONDARY_DISPLAY="${CLI_SECONDARY_DISPLAY:-${SECONDARY_DISPLAY:-$sec_detected}}"
+
+    if [ -n "$PRIMARY_DISPLAY" ] && [ -n "$SECONDARY_DISPLAY" ]; then
+        MONITOR_COUNT=2
+    elif [ -n "$PRIMARY_DISPLAY" ]; then
+        MONITOR_COUNT=1
+    else
+        MONITOR_COUNT=1
+        PRIMARY_DISPLAY="default"
+    fi
+}
+
 # ------------------------------------------------------------------------------
 # 1. Konfiguracja aplikacji CSD (Client-Side Decoration: VS Code, Chrome)
 # ------------------------------------------------------------------------------
@@ -163,8 +242,8 @@ ensure_theme_repositories() {
 
 configure_plank_dual_dock() {
     local theme_name="${1:-Transparent}"
-    local mon_count
-    mon_count=$(xrandr --listmonitors 2>/dev/null | grep -c '^[ ]*[0-9]:' || echo 1)
+    detect_displays
+    local mon_count="$MONITOR_COUNT"
 
     if [ "$mon_count" -le 1 ]; then
         log_info "Konfiguracja doku Plank (Pojedynczy ekran / laptop, motyw: $theme_name)..."
@@ -180,17 +259,17 @@ configure_plank_dual_dock() {
         dconf write /net/launchpad/plank/docks/dock1/show-dock-item "false"
         mkdir -p "$HOME/.config/plank/dock1/launchers"
     else
-        log_info "Konfiguracja podwójnego doku Plank (Dual-Dock: DP-4 + HDMI-0, motyw: $theme_name)..."
+        log_info "Konfiguracja podwójnego doku Plank (Dual-Dock: $PRIMARY_DISPLAY + $SECONDARY_DISPLAY, motyw: $theme_name)..."
         dconf write /net/launchpad/plank/enabled-docks "['dock1', 'dock2']"
 
-        dconf write /net/launchpad/plank/docks/dock1/monitor "'DP-4'"
+        dconf write /net/launchpad/plank/docks/dock1/monitor "'$PRIMARY_DISPLAY'"
         dconf write /net/launchpad/plank/docks/dock1/position "'bottom'"
         dconf write /net/launchpad/plank/docks/dock1/alignment "'center'"
         dconf write /net/launchpad/plank/docks/dock1/theme "'$theme_name'"
         dconf write /net/launchpad/plank/docks/dock1/zoom-enabled "true"
         dconf write /net/launchpad/plank/docks/dock1/show-dock-item "false"
 
-        dconf write /net/launchpad/plank/docks/dock2/monitor "'HDMI-0'"
+        dconf write /net/launchpad/plank/docks/dock2/monitor "'$SECONDARY_DISPLAY'"
         dconf write /net/launchpad/plank/docks/dock2/position "'bottom'"
         dconf write /net/launchpad/plank/docks/dock2/alignment "'center'"
         dconf write /net/launchpad/plank/docks/dock2/theme "'$theme_name'"
@@ -216,13 +295,13 @@ EOF
         fi
 
         if [ -f "$HOME/.local/share/applications/show-applications.desktop" ]; then
-            cat << 'EOF' > "$HOME/.config/plank/dock2/launchers/show-applications.dockitem"
+            cat << EOF > "$HOME/.config/plank/dock2/launchers/show-applications.dockitem"
 [PlankDockItemPreferences]
-Launcher=file:///home/jarek/.local/share/applications/show-applications.desktop
+Launcher=file://$HOME/.local/share/applications/show-applications.desktop
 EOF
         fi
 
-        # Usuń z doku nagraniowego dock2 zbędne przypięte aplikacje (mają być tylko te aktualnie otwarte na HDMI-0)
+        # Usuń z doku nagraniowego dock2 zbędne przypięte aplikacje (mają być tylko te aktualnie otwarte na $SECONDARY_DISPLAY)
         rm -f "$HOME/.config/plank/dock2/launchers/"{antigravity,org.gnome.Terminal,org.gnome.Nautilus,google-chrome,code-url-handler,capcut}.dockitem 2>/dev/null || true
     fi
 
@@ -627,11 +706,13 @@ emission_elements = [
 elem_dict = {
     '0': primary_elements,
     '1': emission_elements,
-    'DP-4': primary_elements,
-    'HDMI-0': emission_elements,
-    'XMI-0x00000000': primary_elements,
-    'SAM-0x5a5a3848': emission_elements
 }
+prim = '$PRIMARY_DISPLAY'
+sec = '$SECONDARY_DISPLAY'
+if prim and prim != 'default':
+    elem_dict[prim] = primary_elements
+if sec:
+    elem_dict[sec] = emission_elements
 
 try:
     import dbus
@@ -670,30 +751,20 @@ apply_studio_wallpapers() {
     local wp1_ultrawide="$wp_dir/ultrawide_crop/01-sovereign-cockpit-deck.jpg"
     local wp3_1080p="$wp_dir/1080p/03-tactical-hud-blueprint.jpg"
 
-    local connected
-    connected=$(xrandr --query 2>/dev/null | grep -E " connected" | awk '{print $1}')
-    local has_dp4=false
-    local has_hdmi0=false
+    detect_displays
 
-    if echo "$connected" | grep -q "DP-4"; then
-        has_dp4=true
-    fi
-    if echo "$connected" | grep -q "HDMI-0"; then
-        has_hdmi0=true
-    fi
-
-    if [ "$has_dp4" = true ] && [ "$has_hdmi0" = true ] && [ -f "$spanned_master" ]; then
-        log_info "Aktywacja tapety w trybie spanned (5360x1440: DP-4 Cockpit + HDMI-0 Blueprint)..."
+    if [ "$MONITOR_COUNT" -gt 1 ] && [ -f "$spanned_master" ]; then
+        log_info "Aktywacja tapety w trybie spanned (Dual-Monitor: $PRIMARY_DISPLAY + $SECONDARY_DISPLAY)..."
         gsettings set org.gnome.desktop.background picture-options 'spanned'
         gsettings set org.gnome.desktop.background picture-uri "file://$spanned_master"
         gsettings set org.gnome.desktop.background picture-uri-dark "file://$spanned_master"
-    elif [ "$has_dp4" = true ] && [ -f "$wp1_ultrawide" ]; then
-        log_info "Aktywacja tapety Ultrawide (DP-4: Cockpit)..."
+    elif [ -f "$wp1_ultrawide" ]; then
+        log_info "Aktywacja tapety Ultrawide (Primary: $PRIMARY_DISPLAY)..."
         gsettings set org.gnome.desktop.background picture-options 'zoom'
         gsettings set org.gnome.desktop.background picture-uri "file://$wp1_ultrawide"
         gsettings set org.gnome.desktop.background picture-uri-dark "file://$wp1_ultrawide"
     elif [ -f "$wp3_1080p" ]; then
-        log_info "Aktywacja tapety 1080p (HDMI-0: Blueprint)..."
+        log_info "Aktywacja tapety standardowej..."
         gsettings set org.gnome.desktop.background picture-options 'zoom'
         gsettings set org.gnome.desktop.background picture-uri "file://$wp3_1080p"
         gsettings set org.gnome.desktop.background picture-uri-dark "file://$wp3_1080p"
@@ -707,28 +778,20 @@ apply_studio_wallpapers() {
 start_conky_multi() {
     killall conky 2>/dev/null || true
     sleep 0.5
-    local config_dp4="$HOME/.config/conky/mnemoshift_hud_dp4.conf"
-    local config_hdmi0="$HOME/.config/conky/mnemoshift_hud_hdmi0.conf"
+    local config_prim="$HOME/.config/conky/mnemoshift_hud_primary.conf"
+    local config_sec="$HOME/.config/conky/mnemoshift_hud_secondary.conf"
+    [ ! -f "$config_prim" ] && config_prim="$HOME/.config/conky/mnemoshift_hud_dp4.conf"
+    [ ! -f "$config_sec" ] && config_sec="$HOME/.config/conky/mnemoshift_hud_hdmi0.conf"
 
-    local displays
-    displays=$(xrandr --query 2>/dev/null | grep -E " connected" | awk '{print $1}')
-    local has_dp4=false
-    local has_hdmi0=false
+    detect_displays
 
-    if echo "$displays" | grep -q "DP-4"; then
-        has_dp4=true
-    fi
-    if echo "$displays" | grep -q "HDMI-0"; then
-        has_hdmi0=true
-    fi
-
-    if [ "$has_dp4" = true ] && [ "$has_hdmi0" = true ]; then
-        /usr/bin/conky -c "$config_dp4" -m 0 -d 2>/dev/null || true
-        /usr/bin/conky -c "$config_hdmi0" -m 1 -d 2>/dev/null || true
-    elif [ "$has_dp4" = true ]; then
-        /usr/bin/conky -c "$config_dp4" -m 0 -d 2>/dev/null || true
+    if [ "$MONITOR_COUNT" -gt 1 ]; then
+        log_info "Uruchamianie Conky HUD: $PRIMARY_DISPLAY (head 0) oraz $SECONDARY_DISPLAY (head 1)..."
+        conky -c "$config_prim" -m 0 -d 2>/dev/null || true
+        conky -c "$config_sec" -m 1 -d 2>/dev/null || true
     else
-        /usr/bin/conky -c "$config_hdmi0" -m 0 -d 2>/dev/null || true
+        log_info "Uruchamianie Conky HUD: $PRIMARY_DISPLAY (head 0)..."
+        conky -c "$config_prim" -m 0 -d 2>/dev/null || true
     fi
 }
 
@@ -747,13 +810,8 @@ apply_studio() {
     # 1. Pakiety systemowe (conky-all, plank dla X11)
     if [ "$session_type" = "x11" ]; then
         log_info "Weryfikacja pakietów systemowych dla sesji X11..."
-        if ! command -v conky >/dev/null 2>&1 || ! command -v plank >/dev/null 2>&1; then
-            if sudo -n true 2>/dev/null; then
-                sudo apt update && sudo apt install -y conky-all plank
-            else
-                log_warn "Conky lub Plank nie są zainstalowane. W sesji X11 zainstaluj: sudo apt install -y conky-all plank"
-            fi
-        fi
+        check_tool conky conky-all "sudo apt install -y conky-all" || true
+        check_tool plank plank "sudo apt install -y plank" || true
     else
         log_info "Wykryto sesję Wayland — profil Cyber Studio wykorzysta natywny dok Wayland zamiast Planka/Conky."
     fi
@@ -782,8 +840,10 @@ apply_studio() {
     if [ "$session_type" = "x11" ]; then
         log_info "Konfiguracja Conky HUD (przydymione szkło multi-monitor)..."
         mkdir -p "$HOME/.config/conky"
-        cp "$repo_dir/templates/conky/mnemoshift_hud_dp4.conf" "$HOME/.config/conky/"
-        cp "$repo_dir/templates/conky/mnemoshift_hud_hdmi0.conf" "$HOME/.config/conky/"
+        cp "$repo_dir/templates/conky/mnemoshift_hud_primary.conf" "$HOME/.config/conky/" 2>/dev/null || true
+        cp "$repo_dir/templates/conky/mnemoshift_hud_secondary.conf" "$HOME/.config/conky/" 2>/dev/null || true
+        cp "$repo_dir/templates/conky/mnemoshift_hud_dp4.conf" "$HOME/.config/conky/" 2>/dev/null || true
+        cp "$repo_dir/templates/conky/mnemoshift_hud_hdmi0.conf" "$HOME/.config/conky/" 2>/dev/null || true
     fi
 
     # 5. Instalacja i włączenie rozszerzenia GNOME Shell MnemoShift Emission HUD
@@ -1047,6 +1107,9 @@ show_status() {
     fi
     echo -n "Tapeta systemowa:       "
     gsettings get org.gnome.desktop.background picture-uri 2>/dev/null || echo "N/A"
+    detect_displays
+    echo -n "Ekrany (Living Inventory): "
+    echo -e "Primary: \033[1;32m${PRIMARY_DISPLAY:-N/A}\033[0m, Secondary: \033[1;36m${SECONDARY_DISPLAY:-brak}\033[0m (Wykryto: $MONITOR_COUNT)"
     echo "=========================================================="
 }
 
@@ -1054,7 +1117,35 @@ show_status() {
 # Główny dyspozytor
 # ------------------------------------------------------------------------------
 
-case "${1:-status}" in
+CLI_PRIMARY_DISPLAY=""
+CLI_SECONDARY_DISPLAY=""
+ACTION=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --primary-display|-p)
+            CLI_PRIMARY_DISPLAY="$2"
+            shift 2
+            ;;
+        --secondary-display|-s)
+            CLI_SECONDARY_DISPLAY="$2"
+            shift 2
+            ;;
+        apply-macos|apply-studio|apply-cyber-hud|reset|status)
+            ACTION="$1"
+            shift
+            ;;
+        *)
+            echo "Nieznana opcja: $1"
+            echo "Użycie: $0 {apply-macos|apply-studio|reset|status} [--primary-display <NAME>] [--secondary-display <NAME>]"
+            exit 1
+            ;;
+    esac
+done
+
+ACTION="${ACTION:-status}"
+
+case "$ACTION" in
     apply-macos)
         apply_macos
         ;;
@@ -1066,9 +1157,5 @@ case "${1:-status}" in
         ;;
     status)
         show_status
-        ;;
-    *)
-        echo "Użycie: $0 {apply-macos|apply-studio|reset|status}"
-        exit 1
         ;;
 esac

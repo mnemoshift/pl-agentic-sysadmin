@@ -8,6 +8,7 @@ Działa w odizolowanym środowisku Pythona (.venv-chatterbox) w celu ochrony prz
 import subprocess
 import sys
 from pathlib import Path
+
 from .base import BaseTTSEngine
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -21,8 +22,8 @@ class ChatterboxEngine(BaseTTSEngine):
 
         # Opcjonalna próba inicjalizacji in-process, jeśli transformers>=5 jest w bieżącym venv
         try:
-            from chatterbox.tts_turbo import ChatterboxTurboTTS
             import torch
+            from chatterbox.tts_turbo import ChatterboxTurboTTS
             device = "cuda" if torch.cuda.is_available() else "cpu"
             self._model = ChatterboxTurboTTS.from_pretrained(device=device)
             self.in_process = True

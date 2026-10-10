@@ -7,11 +7,15 @@ inventory/pkg-lists/*
 !inventory/pkg-lists/.gitkeep
 
 # Active local session memory (keep templates in git)
-memory/SESSION_STATE.md
-memory/JOURNAL.md
+memory/*.md
+!memory/*.md.template
 
-# User workstation overrides (keep template AGENTS.local.md.template in git)
+# User workstation overrides and local profiles
+*.local.*
 AGENTS.local.md
+.env
+.env.*
+!.env.example
 
 # Machine-specific backups and snapshots
 .backup/
@@ -38,17 +42,22 @@ scripts/local_*
 /work/
 work/
 /workspaces/
-# Python artifacts
+
+# Python artifacts and virtual environments
 __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
 /.venv/
+/.venv-*/
+.venv/
+.venv-*/
 /models/
 /model/
-/voice/*
-!/voice/*.wav
-!/voice/*.txt
-!/voice/*.md
-!/voice/.gitkeep
 /.cache/
+
+# Private voice reference samples (strictly excluded from git)
+voice/*
+!voice/README.md
+!voice/.gitkeep
+voice/custom/

@@ -171,11 +171,11 @@ def transcribe(audio_path: Path, output_json: Path, output_md: Path, fast: bool,
             print(f"[Whisper Info] Błąd transkrypcji Whisper: {e}")
 
     if not scenes:
-        print(f"[BŁĄD] Nie udało się wygenerować scen (brak scenariusza oraz brak transkrypcji).", file=sys.stderr)
+        print("[BŁĄD] Nie udało się wygenerować scen (brak scenariusza oraz brak transkrypcji).", file=sys.stderr)
         sys.exit(1)
 
     if not whisper_success and not fast:
-        print(f"[Whisper Info] Użyto znaczników ze scenariusza lub bazy referencyjnej.")
+        print("[Whisper Info] Użyto znaczników ze scenariusza lub bazy referencyjnej.")
 
     # Wyliczanie długości
     for s in scenes:

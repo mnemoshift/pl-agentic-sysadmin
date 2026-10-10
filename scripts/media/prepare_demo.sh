@@ -11,6 +11,17 @@ WORK_ROOT="$REPO_ROOT/work/EP002_Short"
 
 echo "[DEMO-PREP] Inicjalizacja środowiska demonstracyjnego w: $WORK_ROOT"
 
+check_tool() {
+    local cmd="$1"
+    local install_pkg="${2:-$1}"
+    local install_cmd="${3:-sudo apt install -y $install_pkg}"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo -e "\033[1;31m[ERROR]\033[0m Brak wymaganego narzędzia '${cmd}'. Zainstaluj je poleceniem:\n  ${install_cmd}" >&2
+        return 1
+    fi
+    return 0
+}
+
 # 1. Przygotuj katalogi
 mkdir -p "$WORK_INPUT"
 
@@ -18,7 +29,7 @@ mkdir -p "$WORK_INPUT"
 rm -rf "$WORK_ROOT/assets" "$WORK_ROOT"/*.kdenlive* "$WORK_ROOT"/*.mp4 "$WORK_ROOT"/*.ass 2>/dev/null || true
 
 # 3. Sprawdź / odtwórz surowy voiceover
-VOICEOVER_SRC="${VOICEOVER_SRC:-${HOME}/projects/obs/output/2026-09-28 17-52-10.mp4}"
+VOICEOVER_SRC="${VOICEOVER_SRC:-}"
 if [ ! -f "$WORK_INPUT/raw_voiceover.mp4" ]; then
     if [ -n "$VOICEOVER_SRC" ] && [ -f "$VOICEOVER_SRC" ]; then
         echo "[DEMO-PREP] Kopiowanie surowego nagrania OBS ($VOICEOVER_SRC)..."

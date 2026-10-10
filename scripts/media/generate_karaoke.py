@@ -16,7 +16,6 @@ Parametry domyślne:
 - Margines pionowy: MarginV=720 (optymalny dla formatu 1080x1920)
 """
 import argparse
-import os
 import re
 import shutil
 import sys

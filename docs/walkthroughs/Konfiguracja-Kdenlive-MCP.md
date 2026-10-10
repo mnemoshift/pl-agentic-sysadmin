@@ -133,11 +133,11 @@ Aby Antigravity widział serwer MCP, dodajemy konfigurację w pliku `~/.gemini/c
 {
   "mcpServers": {
     "kdenlive": {
-      "command": "/home/jarek/.local/share/kdenlive-mcp/.venv/bin/kdenlive-mcp",
+      "command": "/home/<twoj_user>/.local/share/kdenlive-mcp/.venv/bin/kdenlive-mcp",
       "args": [],
       "env": {
-        "KDENLIVE_MCP_KDENLIVE": "/home/jarek/.local/bin/kdenlive",
-        "KDENLIVE_MCP_MELT": "/home/jarek/.local/bin/melt"
+        "KDENLIVE_MCP_KDENLIVE": "/home/<twoj_user>/.local/bin/kdenlive",
+        "KDENLIVE_MCP_MELT": "/home/<twoj_user>/.local/bin/melt"
       }
     }
   }
@@ -160,13 +160,13 @@ Wynik audytu:
 [*] Sprawdzanie stanu instalacji Kdenlive i serwera MCP...
 
   [✓] Flatpak Kdenlive zainstalowany: 26.08.1
-  [✓] Wrapper CLI kdenlive: /home/jarek/.local/bin/kdenlive
-  [✓] Wrapper CLI melt: /home/jarek/.local/bin/melt (melt 7.41.0)
-  [✓] Katalog serwera MCP obecny: /home/jarek/.local/share/kdenlive-mcp
+  [✓] Wrapper CLI kdenlive: ~/.local/bin/kdenlive
+  [✓] Wrapper CLI melt: ~/.local/bin/melt (melt 7.41.0)
+  [✓] Katalog serwera MCP obecny: ~/.local/share/kdenlive-mcp
   [✓] Środowisko Python venv serwera MCP aktywne
   [✓] Poprawka kaskady kompozycji (qtblend) zainstalowana
   [✓] Poprawka unikalności Sequence UUID zainstalowana
-  [✓] Konfiguracja MCP w Antigravity obecna: /home/jarek/.gemini/config/mcp_config.json
+  [✓] Konfiguracja MCP w Antigravity obecna: ~/.gemini/config/mcp_config.json
 
 Status: [GOTOWY] Środowisko Kdenlive MCP jest w 100% zoptymalizowane i gotowe do montażu.
 ==========================================================
