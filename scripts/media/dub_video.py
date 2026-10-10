@@ -685,10 +685,12 @@ def resolve_reference_audio(
     ref_audio: Path | None = None,
     work_dir: Path | None = None,
     ref_transcript: str = "",
+    target_lang: str = "en",
 ) -> tuple[Path | None, str]:
     """
     Jednolita detekcja pliku referencyjnego głosu lektora (WAV) oraz opcjonalnej transkrypcji (TXT).
     Sprawdza ścieżkę podaną explicite oraz domyślne lokalizacje repozytorium (DRY).
+    W zależności od target_lang priorytetyzuje próbkę angielską (jarek_en_reference) lub polską (jarek_clean_reference).
     """
     if ref_audio:
         ref_audio = Path(ref_audio).resolve()
@@ -697,11 +699,29 @@ def resolve_reference_audio(
             ref_audio = None
 
     if not ref_audio:
-        candidates = [
-            REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample.wav",
+        candidates = []
+        if target_lang == "en":
+            candidates.extend([
+                REPO_ROOT / "voice" / "jarek_en_reference.wav",
+                REPO_ROOT / "voice" / "ref_voice_sample_en.wav",
+                REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample_en.wav",
+            ])
+            if work_dir:
+                candidates.extend([
+                    work_dir / "input" / "ref_voice_sample_en.wav",
+                    work_dir / "ref_voice_sample_en.wav",
+                ])
+            candidates.extend([
+                Path("voice/jarek_en_reference.wav").resolve(),
+                Path("work/voice_sample/ref_voice_sample_en.wav").resolve(),
+            ])
+
+        # Ogólne / domyślne próbki (w tym polski wzorzec lektorski jako solidny fallback)
+        candidates.extend([
             REPO_ROOT / "voice" / "jarek_clean_reference.wav",
             REPO_ROOT / "voice" / "ref_voice_sample.wav",
-        ]
+            REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample.wav",
+        ])
         if work_dir:
             candidates.extend([
                 work_dir / "input" / "ref_voice_sample.wav",

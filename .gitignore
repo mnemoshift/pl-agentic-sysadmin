@@ -46,5 +46,9 @@ __pycache__/
 /.venv/
 /models/
 /model/
-/voice/
+/voice/*
+!/voice/*.wav
+!/voice/*.txt
+!/voice/*.md
+!/voice/.gitkeep
 /.cache/

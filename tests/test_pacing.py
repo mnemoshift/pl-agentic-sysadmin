@@ -70,11 +70,19 @@ class TestPacingController(unittest.TestCase):
         text2 = "Dokładnie tak to działa w doku."
         self.assertEqual(apply_tech_terms(text2, tech_terms), "Dokładnie tak to działa w doku.")
 
-    def test_resolve_reference_audio(self):
-        ref_audio, ref_transcript = resolve_reference_audio()
+    def test_resolve_reference_audio_en(self):
+        ref_audio, ref_transcript = resolve_reference_audio(target_lang="en")
         self.assertIsNotNone(ref_audio)
         self.assertTrue(ref_audio.exists())
-        self.assertIsInstance(ref_transcript, str)
+        self.assertIn("en_reference", ref_audio.name)
+        self.assertIn("Hello everyone", ref_transcript)
+
+    def test_resolve_reference_audio_pl(self):
+        ref_audio, ref_transcript = resolve_reference_audio(target_lang="pl")
+        self.assertIsNotNone(ref_audio)
+        self.assertTrue(ref_audio.exists())
+        self.assertTrue("clean_reference" in ref_audio.name or "voice_sample" in ref_audio.name)
+        self.assertIn("Zmontowałem to", ref_transcript)
 
 
 if __name__ == "__main__":

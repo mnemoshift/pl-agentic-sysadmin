@@ -487,7 +487,10 @@ def main():
     ref_audio = args.ref_audio
     if not ref_audio:
         candidates = [
+            REPO_ROOT / "voice" / "jarek_clean_reference.wav",
+            REPO_ROOT / "voice" / "ref_voice_sample.wav",
             REPO_ROOT / "work" / "voice_sample" / "ref_voice_sample.wav",
+            Path.home() / "workspaces" / "pl-agentic-sysadmin-work" / "voice" / "jarek_clean_reference.wav",
             Path.home() / "workspaces" / "pl-agentic-sysadmin-work" / "work" / "voice_sample" / "ref_voice_sample.wav",
             REPO_ROOT / "work" / "voice_source" / "EP003_VoiceOver_CLEAN.wav",
         ]
