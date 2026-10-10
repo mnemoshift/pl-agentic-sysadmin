@@ -15,7 +15,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "media"))
 
-from dub_video import (
+from dub_video import (  # noqa: E402
     PacingTarget,
     apply_tech_terms,
     clean_llm_translation,

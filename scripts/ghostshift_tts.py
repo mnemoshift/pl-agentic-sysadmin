@@ -5,21 +5,20 @@ Autonomiczne narzędzie Text-To-Speech dla ekosystemu GhostShift (Zorin OS / Lin
 Wspiera bezpośredni odczyt zaznaczenia (X11 & Wayland), filtr Markdown i streaming do mpv.
 """
 
+import asyncio
+import json
 import os
+import re
+import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 # Automatyczna relokacja do dedykowanego venv jeśli skrypt uruchomiono interpreterem systemowym
 VENV_PYTHON = Path.home() / ".local/share/ghostshift-tts/venv/bin/python3"
 if VENV_PYTHON.exists() and sys.executable != str(VENV_PYTHON):
     os.execv(str(VENV_PYTHON), [str(VENV_PYTHON)] + sys.argv)
-
-import asyncio
-import json
-import re
-import signal
-import subprocess
-import time
 
 # Ścieżki konfiguracyjne
 CONFIG_DIR = Path.home() / ".config" / "ghostshift-tts"

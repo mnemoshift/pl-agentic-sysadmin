@@ -22,13 +22,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Upewnienie się, że moduły z scripts/media są dostępne
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-from dub_video import resolve_reference_audio
-
 # ==============================================================================
 # 0. SELF-BOOTSTRAPPING: Automatyczne przełączanie na środowisko .venv repozytorium
 # ==============================================================================
@@ -38,11 +31,13 @@ VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 if sys.executable != str(VENV_PYTHON) and VENV_PYTHON.exists() and os.access(str(VENV_PYTHON), os.X_OK):
     os.execv(str(VENV_PYTHON), [str(VENV_PYTHON)] + sys.argv)
 
+# Upewnienie się, że moduły z scripts/media są dostępne
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from tts_engines import EdgeTTSEngine, KokoCloneEngine
+from dub_video import resolve_reference_audio  # noqa: E402
+from tts_engines import EdgeTTSEngine, KokoCloneEngine  # noqa: E402
 
 
 def log_info(msg: str):
@@ -491,8 +486,13 @@ def main():
     if not args.no_cloning:
         try:
             ref_audio, _ = resolve_reference_audio(args.voice_ref, work_dir=work_dir)
-        except (FileNotFoundError, ValueError) as err:
-            log_err(str(err))
+            if not ref_audio.exists():
+                raise FileNotFoundError(f"Plik {ref_audio} nie istnieje.")
+        except (FileNotFoundError, ValueError):
+            print(
+                "Błąd: Nie znaleziono próbki referencyjnej głosu. Nagraj 10s audio i umieść w voice/ lub ustaw VOICE_REF_FILE w .env.",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     success = generate_voiceover(

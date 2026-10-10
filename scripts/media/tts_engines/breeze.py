@@ -58,7 +58,11 @@ class BreezeTTSEngine(BaseTTSEngine):
         if str(BREEZE_TOOL_DIR) not in sys.path:
             sys.path.insert(0, str(BREEZE_TOOL_DIR))
 
-        from breeze_infer.runtime import load_runtime, resolve_device, update_generation_config_for_breeze
+        from breeze_infer.runtime import (
+            load_runtime,
+            resolve_device,
+            update_generation_config_for_breeze,
+        )
         from models.fast_streaming import FastBreezeStreamingRuntime, FastStreamingConfig
 
         device = resolve_device()

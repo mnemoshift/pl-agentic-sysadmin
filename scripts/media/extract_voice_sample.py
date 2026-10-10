@@ -29,7 +29,10 @@ def main():
     output_path = args.output.resolve()
 
     if not input_path.exists():
-        print(f"[BŁĄD] Plik wejściowy nie istnieje: {input_path}", file=sys.stderr)
+        print(
+            "Błąd: Nie znaleziono próbki referencyjnej głosu. Nagraj 10s audio i umieść w voice/ lub ustaw VOICE_REF_FILE w .env.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

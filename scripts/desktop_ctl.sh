@@ -66,7 +66,29 @@ detect_displays() {
     local prim_detected=""
     local sec_detected=""
 
-    if [ -f "$inv_json" ]; then
+    # 1. Detekcja monitorów w sesjach Wayland lub przy obecności tylko XWAYLAND0
+    local is_wayland=false
+    if [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
+        is_wayland=true
+    elif command -v xrandr >/dev/null 2>&1; then
+        local xrandr_check=()
+        mapfile -t xrandr_check < <(xrandr --query 2>/dev/null | grep -E " connected" | awk '{print $1}')
+        if [ ${#xrandr_check[@]} -eq 1 ] && [ "${xrandr_check[0]}" = "XWAYLAND0" ]; then
+            is_wayland=true
+        fi
+    fi
+
+    if [ "$is_wayland" = true ]; then
+        local drm_mons=()
+        mapfile -t drm_mons < <(find /sys/class/drm/ -maxdepth 1 -name "card*-*" -exec sh -c 'grep -q "^connected$" "$1/status" && basename "$1"' _ {} \; 2>/dev/null | sed 's/^card[0-9]-//')
+        if [ ${#drm_mons[@]} -gt 0 ]; then
+            prim_detected="${drm_mons[0]:-}"
+            sec_detected="${drm_mons[1]:-}"
+        fi
+    fi
+
+    # 2. Odczyt z Living Inventory (dla X11 lub fallback)
+    if [ -z "$prim_detected" ] && [ -f "$inv_json" ]; then
         local parsed
         parsed=$(python3 -c "
 import json
@@ -85,6 +107,7 @@ except Exception:
 " 2>/dev/null)
         while IFS=: read -r name is_prim; do
             [ -z "$name" ] && continue
+            [ "$name" = "XWAYLAND0" ] && continue
             if [ "$is_prim" = "1" ] && [ -z "$prim_detected" ]; then
                 prim_detected="$name"
             elif [ -z "$prim_detected" ]; then
@@ -95,18 +118,20 @@ except Exception:
         done <<< "$parsed"
     fi
 
-    # Fallback do xrandr jeśli inventory nadal nie posiada wpisów
+    # 3. Standardowy fallback do xrandr dla sesji X11
     if [ -z "$prim_detected" ] && command -v xrandr >/dev/null 2>&1; then
         local xrandr_mons=()
         mapfile -t xrandr_mons < <(xrandr --query 2>/dev/null | grep -E " connected" | awk '{print $1}')
-        prim_detected="${xrandr_mons[0]:-}"
-        sec_detected="${xrandr_mons[1]:-}"
+        if [ ${#xrandr_mons[@]} -gt 0 ] && [ "${xrandr_mons[0]}" != "XWAYLAND0" ]; then
+            prim_detected="${xrandr_mons[0]:-}"
+            sec_detected="${xrandr_mons[1]:-}"
+        fi
     fi
 
     PRIMARY_DISPLAY="${CLI_PRIMARY_DISPLAY:-${PRIMARY_DISPLAY:-$prim_detected}}"
     SECONDARY_DISPLAY="${CLI_SECONDARY_DISPLAY:-${SECONDARY_DISPLAY:-$sec_detected}}"
 
-    if [ -n "$PRIMARY_DISPLAY" ] && [ -n "$SECONDARY_DISPLAY" ]; then
+    if [ -n "$PRIMARY_DISPLAY" ] && [ -n "$SECONDARY_DISPLAY" ] && [ "$PRIMARY_DISPLAY" != "$SECONDARY_DISPLAY" ]; then
         MONITOR_COUNT=2
     elif [ -n "$PRIMARY_DISPLAY" ]; then
         MONITOR_COUNT=1
@@ -780,8 +805,6 @@ start_conky_multi() {
     sleep 0.5
     local config_prim="$HOME/.config/conky/mnemoshift_hud_primary.conf"
     local config_sec="$HOME/.config/conky/mnemoshift_hud_secondary.conf"
-    [ ! -f "$config_prim" ] && config_prim="$HOME/.config/conky/mnemoshift_hud_dp4.conf"
-    [ ! -f "$config_sec" ] && config_sec="$HOME/.config/conky/mnemoshift_hud_hdmi0.conf"
 
     detect_displays
 
@@ -842,8 +865,6 @@ apply_studio() {
         mkdir -p "$HOME/.config/conky"
         cp "$repo_dir/templates/conky/mnemoshift_hud_primary.conf" "$HOME/.config/conky/" 2>/dev/null || true
         cp "$repo_dir/templates/conky/mnemoshift_hud_secondary.conf" "$HOME/.config/conky/" 2>/dev/null || true
-        cp "$repo_dir/templates/conky/mnemoshift_hud_dp4.conf" "$HOME/.config/conky/" 2>/dev/null || true
-        cp "$repo_dir/templates/conky/mnemoshift_hud_hdmi0.conf" "$HOME/.config/conky/" 2>/dev/null || true
     fi
 
     # 5. Instalacja i włączenie rozszerzenia GNOME Shell MnemoShift Emission HUD

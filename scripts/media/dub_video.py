@@ -11,10 +11,17 @@ Wszystkie komponenty działają w 100% lokalnie i offline w dedykowanym środowi
 - Generowanie podwójnego pakietu produkcyjnego: WAV (YouTube Studio) oraz MP4 (Full Video EN)
 """
 
+import argparse
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
+import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 # ==============================================================================
@@ -31,17 +38,6 @@ elif sys.executable != str(VENV_PYTHON) and not VENV_PYTHON.exists():
         subprocess.run(["uv", "sync"], cwd=str(REPO_ROOT), check=True)
         if VENV_PYTHON.exists():
             os.execv(str(VENV_PYTHON), [str(VENV_PYTHON)] + sys.argv)
-
-# ==============================================================================
-# 1. BEZPOŚREDNIE IMPORTY BIBLIOTEK W PROCESIE (DIRECT IN-PROCESS IMPORTS)
-# ==============================================================================
-import argparse
-import json
-import re
-import tempfile
-import time
-import urllib.request
-from dataclasses import dataclass
 
 # Preload bibliotek CUDA (libcublasLt first, then libcublas) dla akceleracji CTranslate2 / faster-whisper jeśli dostępne
 try:
@@ -63,16 +59,16 @@ try:
 except Exception:
     pass
 
-import torch
-from faster_whisper import WhisperModel
-from transformers import MarianMTModel, MarianTokenizer
+import torch  # noqa: E402
+from faster_whisper import WhisperModel  # noqa: E402
+from transformers import MarianMTModel, MarianTokenizer  # noqa: E402
 
 # Rejestracja ścieżki skryptów w sys.path dla pakietów wewnętrznych
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from tts_engines import (
+from tts_engines import (  # noqa: E402
     BaseTTSEngine,
     detect_best_engine,
     get_tts_engine,
@@ -716,6 +712,8 @@ def resolve_reference_audio(
                 resolved = (sample_dir / cand).resolve()
             elif (REPO_ROOT / cand).exists():
                 resolved = (REPO_ROOT / cand).resolve()
+            elif (REPO_ROOT / "voice" / cand).exists():
+                resolved = (REPO_ROOT / "voice" / cand).resolve()
             elif work_dir and (work_dir / cand).exists():
                 resolved = (work_dir / cand).resolve()
         else:
@@ -726,8 +724,7 @@ def resolve_reference_audio(
             available = [p.name for p in sorted(sample_dir.glob("*.wav"))] if sample_dir.exists() else []
             opts_msg = f"Dostępne próbki w work/voice_sample/: {available}" if available else "Katalog work/voice_sample/ jest pusty."
             raise FileNotFoundError(
-                f"Wskazana próbka referencyjna '{ref_audio}' nie istnieje.\n{opts_msg}\n"
-                f"Wskaż poprawny plik parametrem --voice-ref lub umieść próbkę w work/voice_sample/."
+                f"Błąd: Nie znaleziono próbki referencyjnej głosu '{ref_audio}'. Nagraj 10s audio i umieść w voice/ lub ustaw VOICE_REF_FILE w .env.\n{opts_msg}"
             )
         resolved_path = resolved
     else:
@@ -748,11 +745,12 @@ def resolve_reference_audio(
                 f"Wymagane jest wskazanie konkretnego pliku za pomocą parametru --voice-ref <plik> "
                 f"lub zmiennej środowiskowej VOICE_REF_FILE."
             )
+        elif (REPO_ROOT / "voice" / "sample_reference.wav").exists():
+            resolved_path = (REPO_ROOT / "voice" / "sample_reference.wav").resolve()
+            log_info(f"Użycie domyślnej próbki referencyjnej: {resolved_path.name}")
         else:
             raise FileNotFoundError(
-                "Brak próbek głosu w katalogu work/voice_sample/.\n"
-                "Zgodnie z konwencją open-source umieść tam plik WAV (np. 10-15s czystego audio 24kHz mono) "
-                "lub wyodrębnij próbkę za pomocą: make media-extract-sample INPUT=... START=... END=... OUTPUT=work/voice_sample/sample.wav"
+                "Błąd: Nie znaleziono próbki referencyjnej głosu. Nagraj 10s audio i umieść w voice/ lub ustaw VOICE_REF_FILE w .env."
             )
 
     if resolved_path and not ref_transcript:
@@ -1330,8 +1328,11 @@ def main():
 
     try:
         ref_audio, ref_transcript = resolve_reference_audio(ref_audio, work_dir=args.work_dir, ref_transcript=ref_transcript)
-    except (FileNotFoundError, ValueError) as err:
-        log_err(str(err))
+    except (FileNotFoundError, ValueError):
+        print(
+            "Błąd: Nie znaleziono próbki referencyjnej głosu. Nagraj 10s audio i umieść w voice/ lub ustaw VOICE_REF_FILE w .env.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Leniwa inicjalizacja modeli (GPU VRAM jest zwalniane sekwencyjnie)
