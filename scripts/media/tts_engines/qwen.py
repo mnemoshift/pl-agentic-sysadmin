@@ -85,13 +85,14 @@ class QwenTTSEngine(BaseTTSEngine):
             self._ensure_model()
             prompt = self.get_prompt(ref_audio, ref_transcript)
 
-            acting_instruction = instruction.strip() if instruction else "Speak naturally in a clear, engaging tone."
+            acting_instruction = instruction.strip() if instruction else ""
             gen_kwargs = dict(kwargs)
-            try:
-                ins_text = self._model._build_instruct_text(acting_instruction)
-                gen_kwargs["instruct_ids"] = self._model._tokenize_texts([ins_text])
-            except Exception as e:
-                logging.getLogger(__name__).warning("Nie udało się stokenizować instruct_ids dla Qwen3-TTS: %s", e)
+            if acting_instruction:
+                try:
+                    ins_text = self._model._build_instruct_text(acting_instruction)
+                    gen_kwargs["instruct_ids"] = self._model._tokenize_texts([ins_text])
+                except Exception as e:
+                    logging.getLogger(__name__).warning("Nie udało się stokenizować instruct_ids dla Qwen3-TTS: %s", e)
 
             wavs, sr = self._model.generate_voice_clone(
                 text=safe_text,

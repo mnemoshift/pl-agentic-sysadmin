@@ -225,6 +225,14 @@ media-dub-ep002-long:
 	@chmod +x scripts/media/dub_video.py
 	@./scripts/media/dub_video.py -w work/EP002 $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)") $(if $(ACCENT),--accent "$(ACCENT)") $(if $(LLM_MODEL),--llm-model "$(LLM_MODEL)") $(if $(filter 1 true yes TRUE YES,$(EXPRESSIVE)),--expressive)
 
+
+media-dub-ep004-long:
+	@./scripts/media/dub_video.py -w work/EP004a $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(ENGINE),--engine "$(ENGINE)") $(if $(ACCENT),--accent "$(ACCENT)") $(if $(LLM_MODEL),--llm-model "$(LLM_MODEL)") $(if $(filter 1 true yes TRUE YES,$(EXPRESSIVE)),--expressive)
+
+media-test-acting:
+	@chmod +x scripts/media/compare_qwen_acting.py
+	@./scripts/media/compare_qwen_acting.py $(if $(TEXT),--text "$(TEXT)") $(if $(INSTRUCTION),--instruction "$(INSTRUCTION)") $(if $(REF_AUDIO),--ref-audio "$(REF_AUDIO)") $(if $(OUT_DIR),--output-dir "$(OUT_DIR)") $(if $(filter 1 true yes TRUE YES,$(PLAY)),--play)
+
 media-dub-ep002: media-dub-ep002-short
 
 media-dub-ep001:
