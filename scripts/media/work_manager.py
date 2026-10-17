@@ -294,29 +294,41 @@ class WorkRunManager:
         if latest_link.is_symlink() or latest_link.exists():
             latest_link.unlink(missing_ok=True)
 
-    def _update_latest_symlink(self) -> None:
-        """Atomowo aktualizuje symlink work/latest wskazujący na bieżący run."""
+    def _atomic_symlink(self, target: Path, link_path: Path) -> None:
+        """Tworzy lub atomowo podmienia symlink względny."""
+        link_path.parent.mkdir(parents=True, exist_ok=True)
+        rel_target = os.path.relpath(target, link_path.parent)
+        temp_link = link_path.with_name(f".{link_path.name}_tmp_{os.getpid()}")
+        if temp_link.is_symlink() or temp_link.exists():
+            temp_link.unlink(missing_ok=True)
+
+        os.symlink(rel_target, temp_link)
         try:
-            # work/latest tworzony jest o jeden poziom wyżej niż katalog runs/
-            latest_link = self.base_dir.parent / "latest"
-            latest_link.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(temp_link, link_path)
+        except OSError:
+            if link_path.is_symlink() or link_path.exists():
+                link_path.unlink(missing_ok=True)
+            os.replace(temp_link, link_path)
 
-            # Ścieżka względna dla pełnej przenośności
-            rel_target = os.path.relpath(self.run_dir, latest_link.parent)
+    def _update_latest_symlink(self) -> None:
+        """Atomowo aktualizuje symlinki latest oraz output wskazujące na bieżący run."""
+        try:
+            parent_dir = self.base_dir.parent
+            # 1. Lokalny symlink <projekt>/latest -> runs/<bieżący_run>
+            latest_link = parent_dir / "latest"
+            self._atomic_symlink(self.run_dir, latest_link)
 
-            temp_link = latest_link.with_name(f".latest_tmp_{os.getpid()}")
-            if temp_link.is_symlink() or temp_link.exists():
-                temp_link.unlink(missing_ok=True)
+            # 2. Lokalny symlink <projekt>/output -> runs/<bieżący_run>/06_output (gdy w konwencji <projekt>/runs)
+            if self.base_dir.name == "runs" and parent_dir.name != "work":
+                output_link = parent_dir / "output"
+                if not output_link.exists() or output_link.is_symlink():
+                    self._atomic_symlink(self.output_dir, output_link)
 
-            os.symlink(rel_target, temp_link)
-            try:
-                os.replace(temp_link, latest_link)
-            except OSError:
-                if latest_link.is_symlink() or latest_link.exists():
-                    latest_link.unlink(missing_ok=True)
-                os.replace(temp_link, latest_link)
+            # 3. Globalny symlink work/latest -> <projekt>/runs/<bieżący_run>
+            if parent_dir.name != "work" and parent_dir.parent.name == "work":
+                self._atomic_symlink(self.run_dir, parent_dir.parent / "latest")
         except Exception as e:
-            logger.warning("Nie udało się zaktualizować symlinku latest: %s", e)
+            logger.warning("Nie udało się zaktualizować symlinku latest/output: %s", e)
 
     # Właściwości ścieżek
     @property

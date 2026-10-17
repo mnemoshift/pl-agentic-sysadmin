@@ -64,15 +64,16 @@ Repozytorium utrzymuje ciągłość wiedzy między sesjami za pomocą dwóch uzu
 
 Repozytorium wykorzystuje dwupoziomowy, bezkolizyjny system skilli dla agentów AI:
 
-1. **Core Skills (`.agents/skills/<nazwa>/SKILL.md` — Wersjonowane w Git):**
+1. **Core Skills (`.agents/skills/<nazwa>/SKILL.md` - Wersjonowane w Git):**
    - Oficjalne standardy inżynieryjne dostarczane z repozytorium:
-     * `desktop-manager` — zarządzanie profilami pulpitu (macOS / vanilla Zorin), unifikacja CSD i dok Plank.
-     * `media-short-editor` — automatyzacja montażu wideo 9:16 w Kdenlive, obróbka audio z OBS-a i napisy Whisper Karaoke.
-     * `gdrive-sync` — selektywna, dwukierunkowa synchronizacja Dysku Google (rclone bisync/vfs) z dyskiem NVMe, eliminacja tarć FUSE/GVFS, zawieszania uśpienia i problemów z KeePassXC/uploadem w przeglądarkach.
+     * `desktop-manager` - zarządzanie profilami pulpitu (macOS / Cyber Studio / vanilla Zorin), unifikacja CSD i dok Plank.
+     * `media-short-editor` - automatyzacja montażu wideo 9:16 w Kdenlive, obróbka audio z OBS-a i napisy Whisper Karaoke.
+     * `voice-dubber` - suwerenny potok lokalnego dubbingu AI (Whisper large-v3-turbo -> Bielik 11B ASR Cleanup & Translation & Acting Direction -> Qwen3-TTS 1.7B CustomVoice + OpenVoice v2 Timbre Converter -> EBU R128 -14 LUFS) w izolowanej strukturze `work/<projekt>/`.
+     * `gdrive-sync` - selektywna, dwukierunkowa synchronizacja Dysku Google (rclone bisync/vfs) z dyskiem NVMe, eliminacja tarć FUSE/GVFS, zawieszania uśpienia i problemów z KeePassXC/uploadem w przeglądarkach.
    - Wdrażają uniwersalne mechanizmy stacji roboczej, audyty oraz obsługę specyfiki systemowej.
    - Agent korzysta z nich w pierwszej kolejności na bazie krótkich, jednozdaniowych promptów intencyjnych.
 
-2. **Local / User Skills (`.agents/skills/local-*/SKILL.md` — Prywatne, objęte `.gitignore`):**
+2. **Local / User Skills (`.agents/skills/local-*/SKILL.md` - Prywatne, objęte `.gitignore`):**
    - Gdy stacja robocza wymaga unikalnej procedury (np. nietypowy układ trzech monitorów, dedykowany routing audio, niestandardowy menedżer okien), Agent tworzy lokalny skill o prefiksie `local-*` (np. `.agents/skills/local-monitors/SKILL.md`).
    - Przestrzeń `local-*` jest całkowicie ignorowana przez Git, co gwarantuje, że użytkownik może bezkolizyjnie wykonywać `git pull` bez utraty wygenerowanych procedur.
 
@@ -81,22 +82,26 @@ Repozytorium wykorzystuje dwupoziomowy, bezkolizyjny system skilli dla agentów 
 ## 4. INTERFEJS OPERACYJNY (MAKEFILE)
 
 Główne operacje stacji roboczej wywołuj poprzez ustandaryzowane komendy:
-- `make setup-env` — inicjalizacja środowiska Python (.venv) przez `uv sync`,
-- `make media-setup-models` — pobranie wag modeli AI (Breeze-TTS-2, MarianMT) do `models/` lub podpięcie lokalnego cache,
-- `make desktop-studio` — wdrożenie profilu Cyber Studio (MnemoShift Cyber-Blueprint, Top Bar Emission HUD, Conky HUD, Plank HUD),
-- `make desktop-macos` — wdrożenie profilu emisyjnego macOS (WhiteSur, kropki po lewej, Plank, CSD fix),
-- `make desktop-reset` — natychmiastowe przywrócenie stanu fabryczny pulpitu Zorin OS,
-- `make desktop-status` — podgląd aktywnego stanu motywów, paska, kontrolek, doku i telemetrii,
-- `make audit` — audyt fizycznego sprzętu (CPU, RAM, GPU, monitory, audio, kamery),
-- `make inventory` — audyt zainstalowanego oprogramowania i usług,
-- `make session-status` — podgląd aktywnego stanu pamięci sesyjnej,
-- `make restore-dry-run` — symulacja odtworzenia stacji roboczej (Disaster Recovery),
-- `make check` — weryfikacja integralności repozytorium,
-- `make media-clean-audio` — audyt, przycięcie ciszy/falstartów i normalizacja audio do -14 LUFS (EBU R128),
-- `make media-karaoke` — generowanie dynamicznych napisów ASS (CapCut Karaoke) z lokalnym Whisperem,
-- `make media-build-short` — automatyczny montaż wertykalnego projektu Kdenlive 9:16 (kaskada rozmycia + napisy),
-- `make media-extract-sample` — wycięcie 3-10s próbki referencyjnej głosu lektora ze wskazanego nagrania w `work/`,
-- `make media-dub-short` — automatyczny dubbing i mastering shorta (Whisper + inżynierskie tłumaczenie PL->EN + synteza mowy Breeze-TTS + mastering -14 LUFS).
+- `make setup-env` - inicjalizacja środowiska Python (.venv) przez `uv sync`,
+- `make media-setup-models` - pobranie wag modeli AI (Qwen3-TTS, OpenVoice v2, Breeze-TTS-2, MarianMT) do `models/` lub podpięcie lokalnego cache,
+- `make desktop-studio` - wdrożenie profilu Cyber Studio (MnemoShift Cyber-Blueprint, Top Bar Emission HUD, Conky HUD, Plank HUD),
+- `make desktop-macos` - wdrożenie profilu emisyjnego macOS (WhiteSur, kropki po lewej, Plank, CSD fix),
+- `make desktop-reset` - natychmiastowe przywrócenie stanu fabrycznego pulpitu Zorin OS,
+- `make desktop-status` - podgląd aktywnego stanu motywów, paska, kontrolek, doku i telemetrii,
+- `make audit` - audyt fizycznego sprzętu (CPU, RAM, GPU, monitory, audio, kamery),
+- `make inventory` - audyt zainstalowanego oprogramowania i usług,
+- `make session-status` - podgląd aktywnego stanu pamięci sesyjnej,
+- `make restore-dry-run` - symulacja odtworzenia stacji roboczej (Disaster Recovery),
+- `make check` - weryfikacja integralności repozytorium,
+- `make dub WORK=<folder> [FROM=translate|tts|master] [CHUNKS=auto|short|long] [ENGINE=qwen|qwen-base|kokoro|chatterbox|breeze|edge]` - kompletny, 6-etapowy lokalny dubbing wideo w `work/<folder>/` (z możliwością restartu od wybranego etapu i kontrolą wielkości kwestii; domyślnie: Whisper -> Bielik 11B -> Qwen3-TTS CustomVoice + OpenVoice v2 -> EBU R128 -14 LUFS),
+- `make dub-init WORK=<folder> [INPUT=/sciezka/wideo.mp4]` - utworzenie izolowanej przestrzeni `work/<folder>/input/` dla nowego materiału,
+- `make dub-transcribe WORK=<folder>` - wyłącznie transkrypcja Whisper + korekta Bielik + tłumaczenie EN i napisy SRT (bez syntezy TTS),
+- `make dub-status` - podgląd stanu projektów w `work/`, próbek głosu w `work/voice_sample/` i ostatniego przebiegu,
+- `make media-test-acting` - 3-etapowy benchmark porównawczy Acting Direction + konwersji barwy głosu OpenVoice v2,
+- `make media-clean-audio` - audyt, przycięcie ciszy/falstartów i normalizacja audio do -14 LUFS (EBU R128),
+- `make media-karaoke` - generowanie dynamicznych napisów ASS (CapCut Karaoke) z lokalnym Whisperem,
+- `make media-build-short` - automatyczny montaż wertykalnego projektu Kdenlive 9:16 (kaskada rozmycia + napisy),
+- `make media-extract-sample` - wycięcie 6-15s próbki referencyjnej głosu lektora do `work/voice_sample/`.
 
 ---
 
@@ -104,13 +109,12 @@ Główne operacje stacji roboczej wywołuj poprzez ustandaryzowane komendy:
 
 1. **Pełna autonomia repozytorium:**
    - Repozytorium zarządza własnym środowiskiem wirtualnym `.venv` za pośrednictwem `uv` (`pyproject.toml`, `uv.lock`).
-   - Wszystkie zależności i silniki generatywne (m.in. vendored Breeze-TTS-2 w `tools/breeze_tts/`) są samowystarczalne.
+   - Wszystkie zależności i silniki generatywne są samowystarczalne.
    - **Zakaz odwołań zewnętrznych:** Żaden skrypt ani konfiguracja nie może odwoływać się do ścieżek innych projektów (np. `/projects/ghostshift/...`).
    - Modele AI przechowywane są w `models/` (z obsługą symlinków do lokalnego cache Hugging Face w celu oszczędzania dysku).
 
-2. **In-Process AI Pipeline (Zero Niepotrzebnych Subprocessów):**
-   - Transkrypcja (Faster-Whisper), neuronowy przekład techniczny (MarianMT) oraz synteza mowy z klonowaniem głosu (Breeze-TTS-2) wykonują się bezpośrednio w procesie Pythona.
-   - Wagi GPU ładowane są do VRAM jednorazowo na całą sesję generowania, eliminując wielokrotne przeładowywanie z dysku.
+2. **Sekwencyjny Potok AI (Sequential VRAM Handover):**
+   - Transkrypcja (`faster-whisper large-v3-turbo`), korekta ASR, tłumaczenie z kontrolą Pacing Guardrail i Acting Direction (`Bielik 11B v3.0 Instruct` w Ollamie) oraz hybrydowa synteza mowy (`Qwen3-TTS 1.7B CustomVoice` + `OpenVoice v2 Tone Color Converter`) przekazują sobie pamięć GPU sekwencyjnie, zwalniając VRAM po każdym etapie (`keep_alive: 0`, `torch.cuda.empty_cache()`).
    - Skrypty CLI posiadają mechanizm self-bootstrappingu (automatyczne przełączanie na interpreter `.venv/bin/python`).
 
 3. **Zero Hardcodingu Transkrypcji:**

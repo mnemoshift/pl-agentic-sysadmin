@@ -1,13 +1,16 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """
-Workstation Hub: Skrypt demonstracyjno-testowy Qwen3-TTS (Acting Direction Comparison).
+Workstation Hub: Skrypt demonstracyjno-testowy Qwen3-TTS & Breeze-TTS (Acting Direction Comparison).
 
 Porównuje syntezę mowy tego samego tekstu w dwóch wariantach:
-1. Baseline (BEZ Acting Direction): czysty zero-shot voice cloning bez wektora instruct_ids.
-2. Acting Direction (Z Reżyserią): synteza z dołączonym wektorem instruct_ids definiującym
-   ton, emocje, tempo i prozodię wypowiedzi.
+1. Baseline (BEZ Acting Direction): neutralna wypowiedź bez instrukcji.
+2. Acting Direction (Z Reżyserią): synteza z instrukcją reżyserską (instruct)
+   definiującą emocje, dynamikę, tempo i prozodię.
 
-Idealny do demonstracji na żywo w terminalu podczas nagrania screencastu EP004b.
+Wspiera:
+- Qwen3-TTS 1.7B CustomVoice (natywne wsparcie instruct, wbudowani lektorzy np. Ryan, Aiden)
+- Qwen3-TTS 0.6B Base (zero-shot voice clone z próbki ref_audio)
+- Breeze-TTS-2 (zero-shot voice clone + natywna instrukcja instruct)
 """
 
 from __future__ import annotations
@@ -15,24 +18,23 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-# Dołączamy moduły z scripts/media
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "media"))
 
-from text_director import clean_voiceover_text, strip_voice_tags
-from tts_engines.qwen import QwenTTSEngine
+from convert_voice_timbre import ToneColorConverterEngine  # noqa: E402
+from text_director import clean_voiceover_text, strip_voice_tags  # noqa: E402
+from tts_engines.qwen import QwenTTSEngine  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("compare_qwen_acting")
+logger = logging.getLogger("compare_acting")
 
-# ANSI Colors
+# Kolory ANSI
 CLR_RESET = "\033[0m"
 CLR_BOLD = "\033[1m"
 CLR_CYAN = "\033[1;36m"
@@ -57,7 +59,6 @@ def find_default_reference_audio(repo_root: Path) -> tuple[Path | None, str]:
             transcript = txt_cand.read_text(encoding="utf-8").strip() if txt_cand.exists() else ""
             return cand, transcript
 
-    # Fallback: dowolny plik .wav w work/voice_sample/
     sample_dir = repo_root / "work" / "voice_sample"
     if sample_dir.exists():
         wavs = list(sample_dir.glob("*.wav"))
@@ -71,7 +72,7 @@ def find_default_reference_audio(repo_root: Path) -> tuple[Path | None, str]:
 
 
 def get_audio_duration_and_sr(wav_path: Path) -> tuple[float, int]:
-    """Odczytuje czas trwania i częstotliwość próbkowania pliku WAV za pomocą soundfile lub ffprobe."""
+    """Odczytuje czas trwania i częstotliwość próbkowania pliku WAV."""
     try:
         import soundfile as sf
         info = sf.info(str(wav_path))
@@ -90,7 +91,7 @@ def get_audio_duration_and_sr(wav_path: Path) -> tuple[float, int]:
 
 
 def play_audio(wav_path: Path) -> None:
-    """Odtwarza plik audio w tle za pomocą mpv, ffplay lub aplay."""
+    """Odtwarza plik audio za pomocą mpv, ffplay lub aplay."""
     player = shutil.which("mpv") or shutil.which("ffplay") or shutil.which("aplay")
     if not player:
         print(f"{CLR_YELLOW}[WARN] Brak zainstalowanego odtwarzacza (mpv/ffplay/aplay). Pomiń odsłuch.{CLR_RESET}")
@@ -110,7 +111,7 @@ def play_audio(wav_path: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Porównanie syntezy Qwen3-TTS: Bez Acting Direction vs Z Acting Direction (EP004b Demo)",
+        description="Porównanie syntezy mowy: Bez Acting Direction vs Z Acting Direction (EP004b Benchmark)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -123,13 +124,32 @@ def main() -> int:
         "--instruction",
         type=str,
         default="Speak naturally in a calm, authoritative engineering tone, pacing slightly relaxed.",
-        help="Instrukcja reżyserska (Acting Direction) przekazywana przez instruct_ids",
+        help="Instrukcja reżyserska (Acting Direction) przekazywana modelowi",
+    )
+    parser.add_argument(
+        "--engine",
+        type=str,
+        choices=["qwen", "breeze"],
+        default="qwen",
+        help="Silnik TTS: qwen (Qwen3-TTS) lub breeze (Breeze-TTS-2)",
+    )
+    parser.add_argument(
+        "--model-id",
+        type=str,
+        default="Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+        help="Model Qwen: np. Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice (lub skrót 'custom'), Qwen/Qwen3-TTS-12Hz-0.6B-Base (lub 'base')",
+    )
+    parser.add_argument(
+        "--speaker",
+        type=str,
+        default="Ryan",
+        help="Głos dla trybu CustomVoice (np. Ryan - dynamic English, Aiden - sunny American English)",
     )
     parser.add_argument(
         "--ref-audio",
         type=Path,
         default=None,
-        help="Ścieżka do pliku WAV z próbką referencyjną głosu lektora (10-15s)",
+        help="Ścieżka do próbki referencyjnej głosu lektora (wymagana dla modeli Base i Breeze)",
     )
     parser.add_argument(
         "--ref-transcript",
@@ -140,14 +160,8 @@ def main() -> int:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=REPO_ROOT / "work" / "qwen_acting_test",
+        default=REPO_ROOT / "work" / "acting_test",
         help="Katalog docelowy dla wygenerowanych próbek audio",
-    )
-    parser.add_argument(
-        "--model-id",
-        type=str,
-        default="Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-        help="Identyfikator modelu Qwen na HuggingFace",
     )
     parser.add_argument(
         "--play",
@@ -165,6 +179,17 @@ def main() -> int:
         help="Wygeneruj wyłącznie wersję z Acting Direction",
     )
     parser.add_argument(
+        "--no-timbre",
+        action="store_true",
+        help="Wyłącz etap 3: transfer barwy głosu (pozostawia czyste wyjście lektora)",
+    )
+    parser.add_argument(
+        "--tau",
+        type=float,
+        default=0.3,
+        help="Współczynnik transferu barwy (tau) dla OpenVoice V2 (0.15 - 0.45)",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -173,7 +198,16 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    # Wyszukanie próbki referencyjnej
+    # Normalizacja skrótów model-id
+    mid = args.model_id.lower().strip()
+    if mid in ("custom", "customvoice", "1.7b", "1.7b-customvoice"):
+        args.model_id = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+    elif mid in ("base", "0.6b", "0.6b-base"):
+        args.model_id = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+
+    is_custom_voice = "customvoice" in args.model_id.lower() and args.engine == "qwen"
+
+    # Wyszukanie próbki referencyjnej głosu
     ref_audio = args.ref_audio
     ref_transcript = args.ref_transcript
     if not ref_audio:
@@ -181,47 +215,67 @@ def main() -> int:
         if not ref_transcript:
             ref_transcript = default_transcript
 
-    if not ref_audio or not ref_audio.exists():
-        print(f"{CLR_RED}[BŁĄD] Nie znaleziono próbki referencyjnej głosu!{CLR_RESET}")
-        print(f"Umieść plik .wav w {REPO_ROOT}/work/voice_sample/ lub wskaż go parametrem --ref-audio.")
-        return 1
+    if not is_custom_voice:
+        if not ref_audio or not ref_audio.exists():
+            print(f"{CLR_RED}[BŁĄD] Model typu Base / Breeze wymaga próbki referencyjnej głosu!{CLR_RESET}")
+            print(f"Umieść plik .wav w {REPO_ROOT}/work/voice_sample/ lub wskaż go parametrem --ref-audio.")
+            return 1
 
-    # Oczyszczenie tekstu
     clean_text = strip_voice_tags(clean_voiceover_text(args.text))
     acting_instruction = args.instruction.strip()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     out_baseline = args.output_dir / "1_baseline_without_acting.wav"
     out_acting = args.output_dir / "2_with_acting_direction.wav"
+    out_timbre = args.output_dir / "3_with_acting_and_timbre.wav"
     report_json = args.output_dir / "acting_comparison_report.json"
 
     # Nagłówek CLI
+    engine_label = (
+        f"Qwen3-TTS 1.7B CustomVoice (Głos: {args.speaker}, Apache 2.0)"
+        if is_custom_voice
+        else "Qwen3-TTS 0.6B Base (Klon z pliku audio, Apache 2.0)"
+        if args.engine == "qwen"
+        else "Breeze-TTS-2 (MediaTek Zero-Shot Clone, CC-BY-NC)"
+    )
+
     print(f"\n{CLR_CYAN}{CLR_BOLD}═══════════════════════════════════════════════════════════════════════════{CLR_RESET}")
-    print(f"{CLR_CYAN}{CLR_BOLD}   MNEMOSHIFT // QWEN3-TTS ACTING DIRECTION COMPARISON BENCHMARK   {CLR_RESET}")
+    print(f"{CLR_CYAN}{CLR_BOLD}             MNEMOSHIFT // ACTING DIRECTION BENCHMARK              {CLR_RESET}")
     print(f"{CLR_CYAN}{CLR_BOLD}═══════════════════════════════════════════════════════════════════════════{CLR_RESET}")
+    print(f"{CLR_BOLD}Silnik i model:{CLR_RESET}     {CLR_CYAN}{engine_label}{CLR_RESET}")
     print(f"{CLR_BOLD}Tekst do syntezy:{CLR_RESET}   \"{CLR_GREEN}{clean_text}{CLR_RESET}\"")
     print(f"{CLR_BOLD}Reżyseria (Acting):{CLR_RESET} \"{CLR_YELLOW}{acting_instruction}{CLR_RESET}\"")
-    print(f"{CLR_BOLD}Próbka referencyjna:{CLR_RESET} {ref_audio} ({CLR_DIM}{ref_audio.stat().st_size // 1024} KB{CLR_RESET})")
+    if is_custom_voice:
+        print(f"{CLR_BOLD}Lektor bazowy:{CLR_RESET}      {args.speaker}")
+        if ref_audio and ref_audio.exists() and not args.no_timbre:
+            print(f"{CLR_BOLD}Transfer barwy:{CLR_RESET}     ➔ {ref_audio.name} (OpenVoice V2 MIT, tau={args.tau})")
+    else:
+        print(f"{CLR_BOLD}Próbka audio (Ref):{CLR_RESET} {ref_audio} ({CLR_DIM}{ref_audio.stat().st_size // 1024} KB{CLR_RESET})")
     print(f"{CLR_BOLD}Katalog wyjściowy:{CLR_RESET}  {args.output_dir}")
     print(f"{CLR_CYAN}───────────────────────────────────────────────────────────────────────────{CLR_RESET}\n")
 
-    # Inicjalizacja silnika Qwen3-TTS
-    print(f"{CLR_BLUE}[1/3] Inicjalizacja modelu {args.model_id} na GPU...{CLR_RESET}")
-    engine = QwenTTSEngine(model_id=args.model_id)
+    # Inicjalizacja instancji silnika
+    if args.engine == "breeze":
+        from tts_engines.breeze import BreezeTTSEngine
+        engine = BreezeTTSEngine()
+    else:
+        engine = QwenTTSEngine(model_id=args.model_id)
 
-    results: dict[str, dict[str, float | str | int]] = {}
+    results: dict[str, dict[str, float | str | int | None]] = {}
 
     # FAZA 1: Baseline (bez Acting Direction)
     if not args.only_acting:
-        print(f"\n{CLR_BOLD}▶ FAZA 1: Generowanie BEZ Acting Direction (Baseline voice clone)...{CLR_RESET}")
-        print(f"{CLR_DIM}  Wektor instruct_ids jest całkowicie pominięty (czysty wzorzec głosu).{CLR_RESET}")
+        print(f"\n{CLR_BOLD}▶ FAZA 1: Generowanie BEZ Acting Direction (Baseline)...{CLR_RESET}")
+        print(f"{CLR_DIM}  Instrukcja jest całkowicie wyłączona (wzorzec neutralny).{CLR_RESET}")
         t0 = time.time()
         ok_base = engine.synthesize(
             text=clean_text,
             out_wav=out_baseline,
             ref_audio=ref_audio,
             ref_transcript=ref_transcript,
-            instruction="",  # PUSTA instrukcja -> brak instruct_ids
+            instruction="",  # PUSTA instrukcja
+            speaker=args.speaker,
+            apply_timbre=False,
             seed=args.seed,
         )
         t_base = time.time() - t0
@@ -242,15 +296,17 @@ def main() -> int:
 
     # FAZA 2: Z Acting Direction
     if not args.only_baseline:
-        print(f"\n{CLR_BOLD}▶ FAZA 2: Generowanie Z Acting Direction (Instruct TTS)...{CLR_RESET}")
-        print(f"{CLR_DIM}  Dołączony wektor instruct_ids: \"{acting_instruction}\"{CLR_RESET}")
+        print(f"\n{CLR_BOLD}▶ FAZA 2: Generowanie Z Acting Direction (Instruct Control)...{CLR_RESET}")
+        print(f"{CLR_DIM}  Przekazana instrukcja reżyserska: \"{acting_instruction}\"{CLR_RESET}")
         t0 = time.time()
         ok_act = engine.synthesize(
             text=clean_text,
             out_wav=out_acting,
             ref_audio=ref_audio,
             ref_transcript=ref_transcript,
-            instruction=acting_instruction,  # PEŁNA instrukcja -> instruct_ids
+            instruction=acting_instruction,  # PEŁNA instrukcja
+            speaker=args.speaker,
+            apply_timbre=False,
             seed=args.seed,
         )
         t_act = time.time() - t0
@@ -269,6 +325,41 @@ def main() -> int:
             print(f"{CLR_RED}✗ Błąd generowania wersji z acting direction!{CLR_RESET}")
             return 1
 
+    # FAZA 3: Transfer Barwy Głosu (OpenVoice V2 Tone Color Converter MIT)
+    should_run_timbre = (
+        is_custom_voice
+        and not args.no_timbre
+        and not args.only_baseline
+        and ref_audio
+        and ref_audio.exists()
+        and out_acting.exists()
+    )
+    if should_run_timbre:
+        print(f"\n{CLR_BOLD}▶ FAZA 3: Transfer Barwy Głosu na Twój głos (OpenVoice V2 MIT)...{CLR_RESET}")
+        print(f"{CLR_DIM}  Docelowa próbka krtani/rezonansu: {ref_audio.name} | tau: {args.tau}{CLR_RESET}")
+        t0 = time.time()
+        try:
+            converter = ToneColorConverterEngine()
+            converter.convert_timbre(
+                source_audio=out_acting,
+                target_ref_audio=ref_audio,
+                output_audio=out_timbre,
+                tau=args.tau,
+            )
+            t_timbre = time.time() - t0
+            dur_timbre, sr_timbre = get_audio_duration_and_sr(out_timbre)
+            print(f"{CLR_GREEN}✓ Gotowe w {t_timbre:.2f}s{CLR_RESET} | Długość audio: {CLR_BOLD}{dur_timbre:.2f}s{CLR_RESET} | Zapisano: {out_timbre.name}")
+            results["acting_and_timbre"] = {
+                "file": str(out_timbre),
+                "duration_seconds": round(dur_timbre, 2),
+                "generation_time_seconds": round(t_timbre, 2),
+                "sample_rate": sr_timbre,
+                "target_ref_audio": str(ref_audio),
+                "tau": args.tau,
+            }
+        except Exception as e:
+            logger.warning("Błąd transferu barwy głosu w fazie 3: %s", e)
+
     # Podsumowanie i raport
     print(f"\n{CLR_CYAN}{CLR_BOLD}═══════════════════════════════════════════════════════════════════════════{CLR_RESET}")
     print(f"{CLR_CYAN}{CLR_BOLD}                          PODSUMOWANIE TESTU                               {CLR_RESET}")
@@ -281,26 +372,33 @@ def main() -> int:
         diff_pct = (diff_s / dur_b) * 100 if dur_b > 0 else 0.0
         sign = "+" if diff_s > 0 else ""
 
-        print(f"1. Baseline (Bez reżyserii):  {CLR_BOLD}{dur_b:.2f}s{CLR_RESET}  ➔  {out_baseline}")
-        print(f"2. Z Acting Direction:        {CLR_BOLD}{dur_a:.2f}s{CLR_RESET}  ➔  {out_acting}")
-        print(f"───────────────────────────────────────────────────────────────────────────")
+        print(f"1. Baseline (Bez reżyserii):     {CLR_BOLD}{dur_b:.2f}s{CLR_RESET}  ➔  {out_baseline}")
+        print(f"2. Z Acting Direction:           {CLR_BOLD}{dur_a:.2f}s{CLR_RESET}  ➔  {out_acting}")
+        if "acting_and_timbre" in results:
+            dur_t = float(results["acting_and_timbre"]["duration_seconds"])
+            print(f"3. Z Twoją barwą głosu (Jarek):  {CLR_BOLD}{dur_t:.2f}s{CLR_RESET}  ➔  {out_timbre}")
+        print("───────────────────────────────────────────────────────────────────────────")
         print(f"Wpływ reżysera na czas trwania: {CLR_YELLOW}{CLR_BOLD}{sign}{diff_s:.2f}s ({sign}{diff_pct:.1f}%){CLR_RESET}")
-        print(f"Wpływ na brzmienie: Zmiana dynamiki, modulacja kadencji i naturalniejszy oddech.")
 
-    # Zapis raportu JSON
     report_data = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "engine": args.engine,
+        "model_id": args.model_id,
+        "speaker": args.speaker if is_custom_voice else None,
         "text": clean_text,
-        "ref_audio": str(ref_audio),
         "results": results,
     }
     report_json.write_text(json.dumps(report_data, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"\n{CLR_DIM}Zapisano metadane testu do: {report_json}{CLR_RESET}")
+    print(f"\n{CLR_DIM}Zapisano raport JSON do: {report_json}{CLR_RESET}")
 
     print(f"\n{CLR_BOLD}Jak odsłuchać pliki w terminalu:{CLR_RESET}")
     print(f"  {CLR_GREEN}mpv {out_baseline}{CLR_RESET}   # 1. Posłuchaj wersji surowej (baseline)")
     print(f"  {CLR_YELLOW}mpv {out_acting}{CLR_RESET}     # 2. Posłuchaj wersji z reżyserią (acting direction)")
-    print(f"  {CLR_CYAN}mpv {out_baseline} {out_acting}{CLR_RESET} # 3. Odsłuchaj jedno po drugim dla natychmiastowego porównania")
+    if "acting_and_timbre" in results:
+        print(f"  {CLR_CYAN}mpv {out_timbre}{CLR_RESET}     # 3. Posłuchaj wersji z Twoją barwą głosu (reżyseria + Twój głos)")
+        print(f"  {CLR_BOLD}mpv {out_baseline} {out_acting} {out_timbre}{CLR_RESET} # 4. Odsłuchaj wszystkie 3 po kolei dla pełnego porównania")
+    else:
+        print(f"  {CLR_CYAN}mpv {out_baseline} {out_acting}{CLR_RESET} # 3. Odsłuchaj jedno po drugim dla natychmiastowego porównania")
 
     if args.play:
         print(f"\n{CLR_BOLD}Odtwarzanie porównawcze...{CLR_RESET}")
@@ -311,6 +409,10 @@ def main() -> int:
         if out_acting.exists():
             print(f"▶ Odtwarzam 2. Acting Direction: {out_acting.name}...")
             play_audio(out_acting)
+            time.sleep(0.5)
+        if out_timbre.exists():
+            print(f"▶ Odtwarzam 3. Twoja barwa głosu: {out_timbre.name}...")
+            play_audio(out_timbre)
 
     print(f"\n{CLR_GREEN}{CLR_BOLD}[OK] Test zakończony pomyślnie.{CLR_RESET}\n")
     return 0

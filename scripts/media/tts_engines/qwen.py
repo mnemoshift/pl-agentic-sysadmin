@@ -12,9 +12,10 @@ from .base import BaseTTSEngine
 
 
 class QwenTTSEngine(BaseTTSEngine):
-    def __init__(self, model_id: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base", **kwargs):
+    def __init__(self, model_id: str = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice", **kwargs):
         self.model_id = model_id
         self._model = None
+        self._timbre_converter = None
         self.cached_prompt = None
         self.cached_ref_audio = None
 
@@ -37,8 +38,11 @@ class QwenTTSEngine(BaseTTSEngine):
 
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
         dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-        print(f"\033[1;34m[INFO]\033[0m Ładowanie wag Qwen3-TTS ({self.model_id}) do {device}...")
-        self._model = Qwen3TTSModel.from_pretrained(self.model_id, device_map=device, dtype=dtype)
+        repo_root = Path(__file__).resolve().parent.parent.parent.parent
+        local_cand = repo_root / "models" / self.model_id.split("/")[-1]
+        model_path = str(local_cand) if local_cand.exists() and (local_cand / "config.json").exists() else self.model_id
+        print(f"\033[1;34m[INFO]\033[0m Ładowanie wag Qwen3-TTS ({model_path}) do {device}...")
+        self._model = Qwen3TTSModel.from_pretrained(model_path, device_map=device, dtype=dtype)
         print("\033[1;32m[OK]\033[0m Zainicjalizowano model Qwen3-TTS w pamięci GPU.")
 
     def get_prompt(self, ref_audio: Path, ref_text: str):
@@ -68,11 +72,12 @@ class QwenTTSEngine(BaseTTSEngine):
         instruction: str = "",
         seed: int = 42,
         language: str = "English",
+        speaker: str = "Ryan",
+        apply_timbre: bool = True,
+        tau: float = 0.3,
         **kwargs,
     ) -> bool:
-        if not ref_audio or not ref_audio.exists():
-            print("\033[1;31m[ERROR]\033[0m Qwen3-TTS wymaga podania próbki referencyjnej (--ref-audio).", file=sys.stderr)
-            return False
+        self._ensure_model()
 
         try:
             import logging
@@ -82,10 +87,44 @@ class QwenTTSEngine(BaseTTSEngine):
 
             # Upewniamy się, że do generacji mowy trafia w 100% czysty tekst bez jakichkolwiek znaczników
             safe_text = strip_voice_tags(clean_voiceover_text(text))
-            self._ensure_model()
+            acting_instruction = instruction.strip() if instruction else None
+
+            # 1. Tryb CustomVoice (Qwen3-TTS-12Hz-1.7B-CustomVoice) ze wsparciem instruct
+            if getattr(self._model.model, "tts_model_type", "") == "custom_voice":
+                target_speaker = speaker or "Ryan"
+                wavs, sr = self._model.generate_custom_voice(
+                    text=safe_text,
+                    language=language,
+                    speaker=target_speaker,
+                    instruct=acting_instruction,
+                    **kwargs,
+                )
+                out_wav.parent.mkdir(parents=True, exist_ok=True)
+                sf.write(str(out_wav), wavs[0], sr)
+
+                # Etap 2 potoku docelowego: Transfer barwy głosu na próbkę referencyjną (OpenVoice V2 MIT)
+                if apply_timbre and ref_audio and ref_audio.exists():
+                    from convert_voice_timbre import ToneColorConverterEngine
+                    if self._timbre_converter is None:
+                        self._timbre_converter = ToneColorConverterEngine()
+                    raw_speaker_wav = out_wav.with_name(f"{out_wav.stem}_raw_speaker.wav")
+                    out_wav.replace(raw_speaker_wav)
+                    self._timbre_converter.convert_timbre(
+                        source_audio=raw_speaker_wav,
+                        target_ref_audio=ref_audio,
+                        output_audio=out_wav,
+                        tau=tau,
+                    )
+
+                return True
+
+            # 2. Tryb Base (Qwen3-TTS-12Hz-0.6B-Base / 1.7B-Base) wymagający próbki audio
+            if not ref_audio or not ref_audio.exists():
+                print("\033[1;31m[ERROR]\033[0m Qwen3-TTS (Base) wymaga podania próbki referencyjnej (--ref-audio).", file=sys.stderr)
+                return False
+
             prompt = self.get_prompt(ref_audio, ref_transcript)
 
-            acting_instruction = instruction.strip() if instruction else ""
             gen_kwargs = dict(kwargs)
             if acting_instruction:
                 try:
@@ -106,4 +145,12 @@ class QwenTTSEngine(BaseTTSEngine):
         except Exception as e:
             print(f"\033[1;31m[ERROR]\033[0m Błąd syntezy przez Qwen3-TTS: {e}", file=sys.stderr)
             return False
+
+
+class QwenBaseTTSEngine(QwenTTSEngine):
+    """Wariant Qwen3-TTS Base (in-context voice cloning bez warstwy CustomVoice + OpenVoice V2)."""
+
+    def __init__(self, model_id: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base", **kwargs):
+        super().__init__(model_id=model_id, **kwargs)
+
 

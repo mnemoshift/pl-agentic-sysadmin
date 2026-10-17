@@ -11,10 +11,12 @@ from .breeze import BreezeTTSEngine
 from .chatterbox import ChatterboxEngine
 from .edge import EdgeTTSEngine
 from .kokoclone import KokoCloneEngine
-from .qwen import QwenTTSEngine
+from .qwen import QwenBaseTTSEngine, QwenTTSEngine
 
 AVAILABLE_ENGINES = {
     "qwen": QwenTTSEngine,
+    "qwen-custom": QwenTTSEngine,
+    "qwen-base": QwenBaseTTSEngine,
     "kokoro": KokoCloneEngine,
     "chatterbox": ChatterboxEngine,
     "breeze": BreezeTTSEngine,

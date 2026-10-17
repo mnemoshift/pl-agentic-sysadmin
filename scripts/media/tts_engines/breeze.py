@@ -98,11 +98,11 @@ class BreezeTTSEngine(BaseTTSEngine):
             return False
 
         try:
+            self._ensure_runtime()
             import soundfile as sf
             from breeze_infer.runtime import set_all_seeds
             from breeze_infer.templates import get_template, prepare_inputs, select_template_name
 
-            self._ensure_runtime()
             set_all_seeds(seed)
             request = {
                 "id": "single-request",

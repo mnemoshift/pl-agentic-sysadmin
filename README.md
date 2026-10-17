@@ -94,9 +94,18 @@ make tts-install     # Autonomiczna instalacja, środowisko venv i skrót <Super
 make tts-config      # Graficzny wybór głosu (Marek, Zofia itp.) i tempa mowy
 make tts-test        # Odsłuch testowy jakości głosu
 
-# 🎬 Automatyzacja Mediów i Wideo (Nowość z EP003 - Kdenlive MCP & Whisper)
-make media-check-mcp # Audyt instalacji Kdenlive i serwera MCP
-make media-setup-mcp # Autonomiczna instalacja Kdenlive i serwera MCP w user-space
+# 🎬 Automatyzacja Mediów, Kdenlive MCP i Suwerenny Dubbing AI (EP003 & EP004)
+make dub-init WORK=moj_film INPUT=/sciezka/do/wideo.mp4  # Inicjalizacja izolowanego folderu work/moj_film/input/
+make dub WORK=moj_film                                   # Domyślny dubbing: Whisper -> Bielik 11B -> Qwen3-TTS Custom + OpenVoice v2 -> -14 LUFS
+make dub WORK=moj_film FROM=translate                    # Wznowienie od tłumaczenia po ręcznej edycji transkrypcji PL (03_scenes_pl_grouped.json)
+make dub WORK=moj_film FROM=tts                          # Wznowienie od syntezy po edycji kwestii EN/acting directions (re-synteza TYLKO zmienionych scen)
+make dub WORK=moj_film CHUNKS=short                      # Wymuszenie podziału krótkiego (2.5-7.5s dla Shorts; domyślnie 'auto')
+make dub WORK=moj_film ENGINE=kokoro                     # Dubbing z wyborem alternatywnego silnika (qwen-base, kokoro, chatterbox, breeze, edge)
+make dub-transcribe WORK=moj_film                        # Wyłącznie transkrypcja Whisper + korekta Bielik + tłumaczenie i napisy SRT
+make dub-status                                          # Podgląd projektów w work/, próbek głosu i ostatniego przebiegu
+make media-test-acting PLAY=1                            # Benchmark 3-krokowy: Bez reżyserii vs Acting Direction vs Twoja barwa głosu
+make media-check-mcp                                     # Audyt instalacji Kdenlive i serwera MCP
+make media-setup-mcp                                     # Autonomiczna instalacja Kdenlive i serwera MCP w user-space
 make media-clean-audio INPUT=work/EP002_Short/input/raw_voiceover.mp4 OUTPUT=work/EP002_Short/assets/clean.wav EXCLUDE=28.9-32.6
 make media-karaoke AUDIO=work/EP002_Short/assets/clean.wav OUTPUT=work/EP002_Short/assets/subtitles.ass FAST=1
 make media-build-short WORKSPACE=work/EP002_Short
@@ -158,12 +167,12 @@ Każda zainstalowana aplikacja, biblioteka czy usługa jest katalogowana w `inve
 ## 📚 Praktyczne Scenariusze i Przewodniki (Walkthroughs)
 
 W katalogu `docs/walkthroughs/` znajdziesz szczegółowe scenariusze sesji z agentem z porównaniem tradycyjnego klepania komend w terminalu vs podejścia agentowego:
-- 🖥️ [**Pulpit à la macOS na Zorin OS**](docs/walkthroughs/Desktop-a-la-MacOS.md) — transformacja środowiska graficznego GNOME, podwójny dok Plank, styl WhiteSur i naprawa belek CSD.
-- 🧭 [**Architektura Dwutorowa Pulpitu (X11 vs Wayland)**](docs/desktop/DUAL_ENGINE_GUIDE.md) — inżynieria doku TopChrome, wyzwalacz krawędziowy 2px oraz animacja unoszenia ikon (Zoom & Hop 1.2x) na laptopach i stacjach roboczych.
-- ⚙️ [**Konfiguracja Kdenlive i Serwera MCP w User-Space**](docs/walkthroughs/Konfiguracja-Kdenlive-MCP.md) — instalacja Flatpak bez roota, wrappery CLI silnika MLT melt, naprawa generatora XML i integracja z Antigravity.
-- 🎬 [**Autonomiczny Montaż Shorta w Kdenlive z Agentem AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) — bezpłatna, lokalna alternatywa dla CapCuta: audyt i normalizacja audio (-14 LUFS), kaskadowy montaż 9:16 i dynamiczne napisy karaoke (Whisper + ASS).
-- 🎙️ [**Suwerenny Dubbing i Voiceover AI na GPU**](docs/walkthroughs/Lokalny-Dubbing-AI-Shorts.md) — autonomiczny potok tłumaczenia i syntezy mowy na RTX 4060 Ti: ekstrakcja próbki głosu, Whisper, inżynierskie tłumaczenie PL->EN, mastering EBU R128 (-14 LUFS) i montaż wideo.
-- 🗣️ [**Czytnik Tekstu TTS 'Select & Listen'**](docs/walkthroughs/Czytnik-Glosowy-TTS.md) — neuronowy lektor Microsoft Edge TTS w przestrzeni użytkownika, potok streamingowy do mpv (<250ms), filtr Markdown i globalny skrót `<Super>+R`.
+- 🖥️ [**Pulpit à la macOS na Zorin OS**](docs/walkthroughs/Desktop-a-la-MacOS.md) - transformacja środowiska graficznego GNOME, podwójny dok Plank, styl WhiteSur i naprawa belek CSD.
+- 🧭 [**Architektura Dwutorowa Pulpitu (X11 vs Wayland)**](docs/desktop/DUAL_ENGINE_GUIDE.md) - inżynieria doku TopChrome, wyzwalacz krawędziowy 2px oraz animacja unoszenia ikon (Zoom & Hop 1.2x) na laptopach i stacjach roboczych.
+- ⚙️ [**Konfiguracja Kdenlive i Serwera MCP w User-Space**](docs/walkthroughs/Konfiguracja-Kdenlive-MCP.md) - instalacja Flatpak bez roota, wrappery CLI silnika MLT melt, naprawa generatora XML i integracja z Antigravity.
+- 🎬 [**Autonomiczny Montaż Shorta w Kdenlive z Agentem AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) - bezpłatna, lokalna alternatywa dla CapCuta: audyt i normalizacja audio (-14 LUFS), kaskadowy montaż 9:16 i dynamiczne napisy karaoke (Whisper + ASS).
+- 🎙️ [**Suwerenny Dubbing i Voiceover AI na GPU**](docs/walkthroughs/Lokalny-Dubbing-AI-Shorts.md) - 6-etapowy lokalny potok dubbingu na RTX 4060 Ti (`make dub WORK=<projekt>`): Whisper ASR, korekta i tłumaczenie Bielik 11B z Pacing Guardrail, Acting Direction, Qwen3-TTS 1.7B CustomVoice + OpenVoice v2 Timbre Converter i mastering EBU R128 (-14 LUFS).
+- 🗣️ [**Czytnik Tekstu TTS 'Select & Listen'**](docs/walkthroughs/Czytnik-Glosowy-TTS.md) - neuronowy lektor Microsoft Edge TTS w przestrzeni użytkownika, potok streamingowy do mpv (<250ms), filtr Markdown i globalny skrót `<Super>+R`.
 
 ---
 

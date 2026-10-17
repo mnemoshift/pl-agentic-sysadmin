@@ -276,7 +276,28 @@ class TestWorkRunManager(unittest.TestCase):
         # Powtórne usunięcie (missing_ok) nie powinno rzucać wyjątku
         mgr.remove_latest_symlink()
 
+    def test_project_scoped_runs_and_output_symlinks(self):
+        """Weryfikacja konwencji work/<projekt>/runs z lokalnymi symlinkami latest i output oraz globalnym work/latest."""
+        proj_dir = self.work_dir / "EP002_Short"
+        proj_runs = proj_dir / "runs"
+
+        mgr = WorkRunManager(
+            task_slug="EP002_Short",
+            engine="qwen",
+            base_dir=proj_runs,
+        )
+
+        self.assertTrue((proj_dir / "latest").is_symlink())
+        self.assertEqual((proj_dir / "latest").resolve(), mgr.run_dir.resolve())
+
+        self.assertTrue((proj_dir / "output").is_symlink())
+        self.assertEqual((proj_dir / "output").resolve(), mgr.output_dir.resolve())
+
+        self.assertTrue((self.work_dir / "latest").is_symlink())
+        self.assertEqual((self.work_dir / "latest").resolve(), mgr.run_dir.resolve())
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

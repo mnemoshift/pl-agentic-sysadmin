@@ -81,7 +81,14 @@ from tts_engines import (  # noqa: E402
     detect_best_engine,
     get_tts_engine,
 )
-from work_manager import WorkRunManager  # noqa: E402
+from work_manager import (  # noqa: E402
+    STAGE_LLM_ADAPTATION,
+    STAGE_SOURCE_EXTRACTED,
+    STAGE_SUBTITLES,
+    STAGE_TRANSCRIPTION,
+    STAGE_TTS_SEGMENTS,
+    WorkRunManager,
+)
 
 
 def log_info(msg: str):
@@ -100,7 +107,8 @@ def log_pacing(msg: str):
     print(f"\033[1;35m[PACING]\033[0m {msg}")
 
 # Kalibracja tempa lektora dla domkniętej pętli feedbacku (Closed-Loop Pacing Guardrail)
-SPEECH_WPS_BENCHMARK: float = 3.42  # Średnia prędkość mowy lektora Qwen3-TTS (słów / sekundę)
+# Ryan w Qwen3-TTS mówi ze średnią prędkością ~135-145 słów/minutę = 2.25-2.42 słów/sekundę
+SPEECH_WPS_BENCHMARK: float = 2.35
 DEFAULT_MAX_PACING_RETRIES: int = 10  # Domyślny limit prób rekalibracji na scenę
 
 
@@ -124,43 +132,49 @@ def compute_pacing_target(
 ) -> PacingTarget:
     """
     Wylicza zbalansowany budżet czasowy i docelową liczbę słów dla danej sceny:
-    - Uwzględnia gęstość semantyczną oryginału PL (pl_words), zapobiegając sztucznemu
-      rozdymaniu lakonicznych wypowiedzi (np. pauzy demonstracyjne na ekranie).
+    - Dla form krótkich / krótkich okien (window_dur < 8.0s): szybki oddech radiowy (0.3s - 0.6s)
+      i ścisły limit słów, zapobiegający wykraczaniu poza czas trwania sceny.
     - Dla intencjonalnych przerw w wideo (demonstracje > 2.0s): zachowuje oryginalną pauzę.
-    - Dla mowy ciągłej: celuje w naturalny oddech radiowy (1.0s - 1.3s).
-    - Progi akceptacji [min_acceptable_gap, max_acceptable_gap] zapobiegają fałszywym alarmom.
+    - Dla mowy ciągłej: celuje w naturalny oddech radiowy (1.0s - 1.2s).
+    - Uwzględnia gęstość semantyczną oryginału PL (pl_words), zapobiegając sztucznemu
+      rozdymaniu lakonicznych wypowiedzi.
     """
-    if orig_pause > 2.0:
+    if window_dur < 8.0:
+        # Krótkie okno (Shorts / szybkie cięcia): oddech 0.4s - 0.6s
+        desired_gap = min(0.5, max(0.2, orig_pause)) if orig_pause > 0.1 else 0.45
+        speech_target_sec = max(1.5, window_dur - desired_gap)
+        min_acceptable_gap = 0.15
+        max_acceptable_gap = min(1.2, window_dur * 0.4)
+    elif orig_pause > 2.0:
         speech_target_sec = max(2.0, window_dur - orig_pause)
         desired_gap = orig_pause
         min_acceptable_gap = max(0.8, orig_pause - 1.5)
         max_acceptable_gap = orig_pause + 2.0
     else:
-        # Mowa ciągła: naturalny oddech radiowy
+        # Mowa ciągła (Long-form): naturalny oddech radiowy
         speech_target_sec = max(2.0, window_dur - 1.2)
         desired_gap = 1.2
         min_acceptable_gap = 0.4
         max_acceptable_gap = 3.2
 
-    max_fit_words = max(5, int(round(speech_target_sec * wps)))
+    max_fit_words = max(3, int(round(speech_target_sec * wps)))
 
     if pl_words > 0:
         # Naturalna ekspansja językowa z polskiego na angielski (zwykle 1.15 - 1.35x)
-        natural_en_words = max(4, int(round(pl_words * 1.25)))
+        natural_en_words = max(3, int(round(pl_words * 1.25)))
         if natural_en_words < max_fit_words:
             # Polski lektor mówił wolno / z pauzami demonstracyjnymi na ekranie.
-            # Nie zmuszamy modelu do halucynacji podwójnej liczby słów.
             target_words = max(natural_en_words, int(round((natural_en_words + max_fit_words) / 2)))
-            min_words = max(4, int(round(natural_en_words * 0.85)))
+            min_words = max(3, int(round(natural_en_words * 0.85)))
             max_words = max_fit_words
         else:
             target_words = max_fit_words
-            min_words = max(4, int(round((window_dur - max_acceptable_gap) * wps)))
-            max_words = max(5, int(round((window_dur - min_acceptable_gap) * wps)))
+            min_words = max(3, int(round((window_dur - max_acceptable_gap) * wps)))
+            max_words = max(4, int(round((window_dur - min_acceptable_gap) * wps)))
     else:
         target_words = max_fit_words
-        min_words = max(4, int(round((window_dur - max_acceptable_gap) * wps)))
-        max_words = max(5, int(round((window_dur - min_acceptable_gap) * wps)))
+        min_words = max(3, int(round((window_dur - max_acceptable_gap) * wps)))
+        max_words = max(4, int(round((window_dur - min_acceptable_gap) * wps)))
 
     return PacingTarget(
         window_dur=round(window_dur, 2),
@@ -261,19 +275,204 @@ ACCENT_PRESETS = {
 }
 
 
-def group_whisper_segments(raw_segments, min_duration=12.0, max_duration=28.0) -> list[dict]:
+def sec_to_srt_time(sec: float) -> str:
+    sec = max(0.0, sec)
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = int(sec % 60)
+    ms = int(round((sec - int(sec)) * 1000))
+    if ms >= 1000:
+        s += 1
+        ms = 0
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def format_time_range_str(start_sec: float, end_sec: float) -> str:
+    return f"{sec_to_srt_time(start_sec)} -> {sec_to_srt_time(end_sec)}"
+
+
+def save_raw_transcription_artifacts(raw_segments: list[dict], stage_dir: Path, short_id: str = "") -> None:
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    json_path = stage_dir / "01_whisper_raw_segments.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(raw_segments, f, ensure_ascii=False, indent=2)
+
+    total_dur = raw_segments[-1]["end"] - raw_segments[0]["start"] if raw_segments else 0.0
+    md_lines = [
+        f"# 01. Surowa Transkrypcja Whisper ASR (`{short_id or 'audio'}`)",
+        "",
+        f"- **Liczba segmentów:** {len(raw_segments)}",
+        f"- **Szacowany czas całkowity:** {total_dur:.2f}s",
+        "",
+        "| ID | Okno czasowe | Czas trwania | Surowy tekst ASR |",
+        "|:---:|:---:|:---:|:---|",
+    ]
+    for s in raw_segments:
+        s_dur = round(s["end"] - s["start"], 2)
+        time_range = format_time_range_str(s["start"], s["end"])
+        safe_text = str(s.get("text", "")).replace("|", "\\|")
+        md_lines.append(f"| {s['id']:02d} | `{time_range}` | {s_dur:.1f}s | {safe_text} |")
+    md_lines.append("")
+
+    md_path = stage_dir / "01_whisper_raw_transcript.md"
+    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+    log_ok(f"Zapisano artefakty surowej transkrypcji: {json_path.name} oraz {md_path.name}")
+
+
+def save_cleaned_transcription_artifacts(cleaned_segments: list[dict], stage_dir: Path, short_id: str = "") -> None:
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    json_path = stage_dir / "02_bielik_cleaned_segments.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(cleaned_segments, f, ensure_ascii=False, indent=2)
+
+    mod_count = sum(1 for s in cleaned_segments if s.get("was_modified"))
+    total_dur = cleaned_segments[-1]["end"] - cleaned_segments[0]["start"] if cleaned_segments else 0.0
+
+    md_lines = [
+        f"# 02. Oczyszczona Transkrypcja Bielik LLM (`{short_id or 'audio'}`)",
+        "",
+        f"- **Liczba segmentów:** {len(cleaned_segments)}",
+        f"- **Skorygowane segmenty:** {mod_count} z {len(cleaned_segments)} ({round(mod_count / len(cleaned_segments) * 100, 1) if cleaned_segments else 0}%)",
+        f"- **Szacowany czas całkowity:** {total_dur:.2f}s",
+        "",
+        "| ID | Okno czasowe | Czas trwania | Oczyszczony tekst lektorski | Zmiana |",
+        "|:---:|:---:|:---:|:---|:---:|",
+    ]
+    for s in cleaned_segments:
+        s_dur = round(s["end"] - s["start"], 2)
+        time_range = format_time_range_str(s["start"], s["end"])
+        safe_text = str(s.get("text", "")).replace("|", "\\|")
+        mod_label = "**TAK**" if s.get("was_modified") else "-"
+        md_lines.append(f"| {s['id']:02d} | `{time_range}` | {s_dur:.1f}s | {safe_text} | {mod_label} |")
+    md_lines.append("")
+
+    md_path = stage_dir / "02_bielik_cleaned_transcript.md"
+    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+
+    diff_lines = [
+        f"# 02. Zestawienie Korekt ASR: Whisper (RAW) vs Bielik (CLEANED) (`{short_id or 'audio'}`)",
+        "",
+        f"Liczba zmodyfikowanych segmentów: {mod_count} z {len(cleaned_segments)}",
+        "",
+        "| ID | Okno czasowe | Przed korektą (Whisper RAW) | Po inżynierskiej korekcie (Bielik) |",
+        "|:---:|:---:|:---|:---|",
+    ]
+    for s in cleaned_segments:
+        if s.get("was_modified"):
+            time_range = format_time_range_str(s["start"], s["end"])
+            raw_safe = str(s.get("text_raw", "")).replace("|", "\\|")
+            clean_safe = str(s.get("text", "")).replace("|", "\\|")
+            diff_lines.append(f"| {s['id']:02d} | `{time_range}` | {raw_safe} | **{clean_safe}** |")
+    diff_lines.append("")
+
+    diff_path = stage_dir / "02_bielik_cleanup_diff.md"
+    diff_path.write_text("\n".join(diff_lines), encoding="utf-8")
+    log_ok(f"Zapisano artefakty oczyszczonej transkrypcji: {json_path.name}, {md_path.name} oraz {diff_path.name}")
+
+
+def save_grouped_scenes_artifacts(scenes: list[dict], stage_dir: Path, short_id: str = "") -> None:
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    json_path = stage_dir / "03_scenes_pl_grouped.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(scenes, f, ensure_ascii=False, indent=2)
+
+    total_dur = scenes[-1]["end"] - scenes[0]["start"] if scenes else 0.0
+    md_lines = [
+        f"# 03. Pogrupowane Kwestie Lektorskie PL (`{short_id or 'audio'}`)",
+        "",
+        f"- **Liczba scen (kwestii):** {len(scenes)}",
+        f"- **Szacowany czas całkowity:** {total_dur:.2f}s",
+        "",
+        "| ID | Okno czasowe | Czas [s] | Słowa PL | Pogrupowana kwestia lektorska (PL) | Segmenty źródłowe |",
+        "|:---:|:---:|:---:|:---:|:---|:---:|",
+    ]
+    for sc in scenes:
+        dur = round(sc["end"] - sc["start"], 2)
+        words_pl = len(sc.get("text_pl", "").split())
+        time_range = format_time_range_str(sc["start"], sc["end"])
+        safe_text = str(sc.get("text_pl", "")).replace("|", "\\|")
+        raw_ids = ", ".join(str(i) for i in sc.get("raw_segment_ids", [])) or "-"
+        md_lines.append(f"| {sc['id']:02d} | `{time_range}` | {dur:.1f}s | {words_pl} | {safe_text} | {raw_ids} |")
+    md_lines.append("")
+
+    md_path = stage_dir / "03_scenes_pl_grouped.md"
+    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+    log_ok(f"Zapisano pogrupowane kwestie lektorskie: {json_path.name} oraz {md_path.name}")
+
+
+def save_llm_adaptation_artifacts(
+    scenes: list[dict],
+    stage_dir: Path,
+    short_id: str = "",
+    pacing_log: dict[str, Any] | None = None,
+) -> None:
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    json_path = stage_dir / "04_translated_scenes_en.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(scenes, f, ensure_ascii=False, indent=2)
+
+    total_dur = scenes[-1]["end"] - scenes[0]["start"] if scenes else 0.0
+    md_lines = [
+        f"# 04. Inżynierskie Tłumaczenie EN z Kontrolą Tempa (`{short_id or 'audio'}`)",
+        "",
+        f"- **Liczba scen:** {len(scenes)}",
+        f"- **Szacowany czas całkowity:** {total_dur:.2f}s",
+        "",
+        "| ID | Okno czasowe | Czas [s] | Słowa PL | Słowa EN | Status kalibracji | Oryginał PL | Tłumaczenie EN |",
+        "|:---:|:---:|:---:|:---:|:---:|:---:|:---|:---|",
+    ]
+    for sc in scenes:
+        dur = round(sc["end"] - sc["start"], 2)
+        words_pl = len(sc.get("text_pl", "").split())
+        words_en = len(sc.get("text_en", "").split())
+        time_range = format_time_range_str(sc["start"], sc["end"])
+        status = sc.get("calibration_status", "-")
+        safe_pl = str(sc.get("text_pl", "")).replace("|", "\\|")
+        safe_en = str(sc.get("text_en", "")).replace("|", "\\|")
+        md_lines.append(f"| {sc['id']:02d} | `{time_range}` | {dur:.1f}s | {words_pl} | {words_en} | {status} | {safe_pl} | {safe_en} |")
+    md_lines.append("")
+
+    md_path = stage_dir / "04_translated_scenes_en.md"
+    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+
+    if pacing_log:
+        pacing_path = stage_dir / "04_pacing_calibration_log.json"
+        with open(pacing_path, "w", encoding="utf-8") as f:
+            json.dump(pacing_log, f, ensure_ascii=False, indent=2)
+        log_ok(f"Zapisano artefakty adaptacji LLM: {json_path.name}, {md_path.name} oraz {pacing_path.name}")
+    else:
+        log_ok(f"Zapisano artefakty adaptacji LLM: {json_path.name} oraz {md_path.name}")
+
+
+def group_whisper_segments(
+    raw_segments: list[dict],
+    min_duration: float = 12.0,
+    max_duration: float = 28.0,
+    stage_dir: Path | None = None,
+    short_id: str = "",
+    chunk_mode: str = "auto",
+    total_duration: float = 0.0,
+) -> list[dict]:
     """
-    Łączy drobne segmenty ASR w spójne grupy zdań/paragrafów (15-25s),
-    eliminując ucinanie zdań w połowie i redukując liczbę zapytań do TTS.
+    Łączy drobne segmenty ASR w spójne grupy zdań/paragrafów:
+    - Dla form krótkich (Shorts <= 120s lub chunk_mode='short'): zachowuje krótkie, zwarte kwestie (2.5-7.5s)
+      dopasowane 1:1 do cięć montażowych i szybkiego tempa napisów karaoke.
+    - Dla form długich (Episodes > 120s lub chunk_mode='long'): łączy segmenty w pełne akapity semantyczne (12-28s).
     """
+    is_short = (chunk_mode == "short") or (chunk_mode == "auto" and 0.0 < total_duration <= 120.0)
+    effective_min = 2.5 if is_short else min_duration
+    effective_max = 7.5 if is_short else max_duration
+    effective_gap = 0.7 if is_short else 1.2
+
     merged = []
-    curr = {"start": None, "end": None, "text": ""}
+    curr = {"start": None, "end": None, "text": "", "raw_segment_ids": []}
 
     for s in raw_segments:
-        s_start = getattr(s, "start", None) if hasattr(s, "start") else s.get("start")
-        s_end = getattr(s, "end", None) if hasattr(s, "end") else s.get("end")
-        s_text = getattr(s, "text", "") if hasattr(s, "text") else s.get("text", "")
-        s_text = s_text.strip()
+        s_id = s.get("id") if isinstance(s, dict) else getattr(s, "id", None)
+        s_start = s.get("start") if isinstance(s, dict) else getattr(s, "start", None)
+        s_end = s.get("end") if isinstance(s, dict) else getattr(s, "end", None)
+        s_text = s.get("text", "") if isinstance(s, dict) else getattr(s, "text", "")
+        s_text = str(s_text).strip()
         if not s_text:
             continue
 
@@ -281,6 +480,7 @@ def group_whisper_segments(raw_segments, min_duration=12.0, max_duration=28.0) -
             curr["start"] = round(s_start, 2)
             curr["end"] = round(s_end, 2)
             curr["text"] = s_text
+            curr["raw_segment_ids"] = [s_id] if s_id is not None else []
             continue
 
         dur = s_end - curr["start"]
@@ -288,25 +488,42 @@ def group_whisper_segments(raw_segments, min_duration=12.0, max_duration=28.0) -
         gap = s_start - curr["end"]
         ends_sentence = curr["text"].rstrip().endswith((".", "?", "!", ":"))
 
-        if (curr_dur >= min_duration and ends_sentence) or (gap >= 1.2 and curr_dur >= 10.0) or (dur > max_duration):
+        if is_short:
+            should_split = (curr_dur >= effective_min and ends_sentence) or (gap >= effective_gap) or (dur > effective_max)
+        else:
+            should_split = (curr_dur >= effective_min and ends_sentence) or (gap >= effective_gap and curr_dur >= 10.0) or (dur > effective_max)
+
+        if should_split:
             merged.append(curr)
-            curr = {"start": round(s_start, 2), "end": round(s_end, 2), "text": s_text}
+            curr = {
+                "start": round(s_start, 2),
+                "end": round(s_end, 2),
+                "text": s_text,
+                "raw_segment_ids": [s_id] if s_id is not None else [],
+            }
         else:
             curr["end"] = round(s_end, 2)
             curr["text"] += " " + s_text
+            if s_id is not None:
+                curr["raw_segment_ids"].append(s_id)
 
     if curr["start"] is not None:
         merged.append(curr)
 
     scenes = []
     for idx, m in enumerate(merged, 1):
-        cleaned_pl = apply_asr_corrections(m["text"].strip())
+        clean_text = m["text"].strip()
         scenes.append({
             "id": idx,
             "start": m["start"],
             "end": m["end"],
-            "text_pl": cleaned_pl
+            "text_pl": clean_text,
+            "raw_segment_ids": m.get("raw_segment_ids", []),
         })
+
+    if stage_dir:
+        save_grouped_scenes_artifacts(scenes, stage_dir=stage_dir, short_id=short_id)
+
     return scenes
 
 
@@ -358,6 +575,40 @@ class OllamaTranslator:
         "   - No notes, no explanations, no quotes, no commentary outside or inside the tags."
     )
 
+    CLEANING_SYSTEM_PROMPT = (
+        "Jesteś doświadczonym inżynierem i edytorem technicznym języka polskiego.\n"
+        "Otrzymujesz listę segmentów transkrypcji mowy ASR (Whisper) w formacie JSON:\n"
+        '[{"id": 1, "text": "..."}, ...]\n\n'
+        "Twoim zadaniem jest zwrócić poprawny JSON z dokładnie taką samą liczbą elementów i tymi samymi 'id',\n"
+        "w którym tekst w polu 'text' został precyzyjnie oczyszczony z błędów ASR i terminologii IT:\n\n"
+        "Zasady inżynierskiej korekty:\n"
+        "1. Popraw fonetyczne przeinaczenia i błędy ASR w nazwach własnych i terminach IT:\n"
+        "   - 'wisper' / 'wispera' -> 'Whisper' / 'Whispera'\n"
+        "   - 'olama' / 'olamie' -> 'Ollama' / 'Ollamie'\n"
+        "   - 'bielik' / 'bielika' -> 'Bielik' / 'Bielika'\n"
+        "   - 'Quen' / 'QN3' / 'kłen' -> 'Qwen' / 'Qwen3'\n"
+        "   - 'Bass' / 'baza' (w kontekście wariantu modelu) -> 'Base'\n"
+        "   - 'Wave' / 'wave' (w kontekście formatu audio) -> 'WAV'\n"
+        "   - 'Custom Voice' / 'kustom vojs' -> 'CustomVoice'\n"
+        "   - 'Open Voice' -> 'OpenVoice'\n"
+        "   - 'WorldCount14' / 'world count' -> 'Word count: 14'\n"
+        "   - 'Instruct równa się Non' -> 'instruct = None'\n"
+        "   - 'taka głosowego' -> 'taga głosowego'\n"
+        "   - 'VRAM-u' / 'vramu' -> 'VRAM-u'\n"
+        "   - 'NVENC' / 'enwenk' -> 'NVENC'\n"
+        "   - 'Zorin OS' / 'zorin' -> 'Zorin OS'\n"
+        "   - 'Kdenlive' / 'kden lajf' -> 'Kdenlive'\n"
+        "   - 'Melt' / 'mlt' -> 'melt'\n"
+        "   - 'LUFS' / 'lufsy' -> 'LUFS'\n"
+        "   - 'AgentXsAdmin' / 'Agent XsAdmin' / 'agent x admin' / 'agent sizadmin' -> 'Agentic SysAdmin'\n"
+        "   - 'Agentic SysAdmin' / 'agentowy sysadmin' -> 'Agentic SysAdmin'\n"
+        "   - 'sysadmin' / 'agentowy sysadmin' -> 'sysadmin' / 'agentowy sysadmin'\n"
+        "2. Popraw błędy gramatyczne i fleksyjne wynikające z fonetycznych pomyłek ASR (np. 'z pełną powagu' -> 'z pełną powagą').\n"
+        "3. Popraw interpunkcję, przecinki i wielkie litery, zachowując naturalny, swobodny rytm wypowiedzi.\n"
+        "4. ZACHOWAJ 100% ORYGINALNEGO SENSU I KOLEJNOŚCI WYPOWIEDZI. Nie streszczaj, nie pomijaj słów i nie dopisuj własnych zdań.\n"
+        "5. Format wyjściowy: Zwróć WYŁĄCZNIE poprawny JSON opakowany w znaczniki <json>...</json>."
+    )
+
     def __init__(
         self,
         model_name: str = "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M",
@@ -376,7 +627,7 @@ class OllamaTranslator:
         except Exception:
             return False
 
-    def _call_ollama(self, messages: list[dict], temperature: float = 0.25) -> str:
+    def _call_ollama(self, messages: list[dict], temperature: float = 0.25, raw: bool = False) -> str:
         payload = {
             "model": self.model_name,
             "messages": messages,
@@ -394,7 +645,68 @@ class OllamaTranslator:
         with urllib.request.urlopen(req, timeout=90.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             raw_content = data.get("message", {}).get("content", "").strip()
-            return clean_voiceover_text(raw_content)
+            return raw_content if raw else clean_voiceover_text(raw_content)
+
+    def clean_pl_segments_batch(
+        self,
+        batch: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """
+        Oczyszcza paczkę segmentów ASR (Whisper) przez model Bielik:
+        - Stosuje dwustronną korektę deterministyczną (przed wysłaniem do Bielika oraz po odebraniu).
+        - Poprawia fonetyczne przeinaczenia IT, gramatykę i interpunkcję.
+        - Zachowuje nienaruszone identyfikatory 'id' i synchronizację czasową.
+        """
+        # Krok 1: Wstępna standaryzacja deterministyczna przed promptem LLM
+        payload_input = [
+            {"id": s["id"], "text": apply_asr_corrections(str(s["text"]).strip())}
+            for s in batch
+        ]
+        messages = [
+            {"role": "system", "content": self.CLEANING_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"<input_json>\n{json.dumps(payload_input, ensure_ascii=False, indent=2)}\n</input_json>\nZwróć poprawiony JSON w znacznikach <json>...</json>:",
+            },
+        ]
+        mapping: dict[int, str] = {}
+        try:
+            raw_response = self._call_ollama(messages, temperature=0.1, raw=True)
+            json_text = ""
+            if "<json>" in raw_response and "</json>" in raw_response:
+                json_text = raw_response.split("<json>")[1].split("</json>")[0].strip()
+            elif "[" in raw_response and "]" in raw_response:
+                start_idx = raw_response.find("[")
+                end_idx = raw_response.rfind("]") + 1
+                json_text = raw_response[start_idx:end_idx].strip()
+
+            if not json_text:
+                raise ValueError("Brak bloku JSON w odpowiedzi Bielika")
+
+            parsed = json.loads(json_text)
+            if isinstance(parsed, list):
+                for item in parsed:
+                    if isinstance(item, dict) and "id" in item and "text" in item:
+                        mapping[int(item["id"])] = str(item["text"]).strip()
+        except Exception as e:
+            log_warn(f"Błąd korekty wsadowej przez Bielika ({e}), stosowanie reguł heurystycznych ASR...")
+
+        cleaned_batch = []
+        for s in batch:
+            raw_text = str(s["text"]).strip()
+            pre_clean = apply_asr_corrections(raw_text)
+            candidate_text = mapping.get(int(s["id"]), pre_clean)
+            # Krok 2: Ostateczna weryfikacja deterministyczna po Bieliku
+            clean_text = apply_asr_corrections(candidate_text)
+            if not clean_text:
+                clean_text = raw_text
+            cleaned_batch.append({
+                **s,
+                "text": clean_text,
+                "text_raw": raw_text,
+                "was_modified": clean_text != raw_text,
+            })
+        return cleaned_batch
 
     def translate_chunk(
         self,
@@ -507,6 +819,8 @@ def translate_scenes_batch(
     translator=None,
     llm_model: str = "auto",
     max_pacing_retries: int = DEFAULT_MAX_PACING_RETRIES,
+    stage_dir: Path | None = None,
+    short_id: str = "",
 ) -> None:
     """
     Tłumaczy listę scen z języka polskiego na angielski.
@@ -515,6 +829,7 @@ def translate_scenes_batch(
     3. Stosuje adaptacyjne skalowanie temperatury oraz Best-of-N fallback minimalizujący odchylenie pauzy.
     4. Fallback: wsadowy przekład neuronowy MarianMT na CPU w przypadku braku Ollama.
     5. Standaryzuje słownictwo inżynierskie IT (config/tech_terms.json).
+    6. Zapisuje artefakty adaptacji LLM (04_translated_scenes_en.json/.md oraz log kalibracji tempa).
     """
     if not scenes:
         return
@@ -525,9 +840,16 @@ def translate_scenes_batch(
 
     tech_terms = load_tech_terms()
     target_llm = "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M" if llm_model in ("auto", "bielik") else llm_model
-    ollama_trans = OllamaTranslator(model_name=target_llm)
+    ollama_trans = OllamaTranslator(model_name=target_llm) if llm_model != "none" else None
 
-    if ollama_trans.is_available():
+    pacing_log: dict[str, Any] = {
+        "benchmark_wps": SPEECH_WPS_BENCHMARK,
+        "max_pacing_retries": max_pacing_retries,
+        "target_llm": target_llm,
+        "scenes": [],
+    }
+
+    if ollama_trans and ollama_trans.is_available():
         log_info(f"Inżynierskie tłumaczenie semantyczne przez model Bielik LLM ({target_llm}) z pętlą kalibracji tempa (max {max_pacing_retries} prób)...")
         t0 = time.time()
         for idx, sc in enumerate(scenes):
@@ -545,6 +867,18 @@ def translate_scenes_batch(
 
             cand = ""
             words = 0
+            scene_log_entry: dict[str, Any] = {
+                "scene_id": sc["id"],
+                "window_dur_sec": round(window_dur, 2),
+                "orig_pause_sec": round(orig_pause, 2),
+                "pl_words": pl_words,
+                "speech_target_sec": pacing.speech_target_sec,
+                "target_words": pacing.target_words,
+                "min_words": pacing.min_words,
+                "max_words": pacing.max_words,
+                "attempts": [],
+            }
+
             for attempt in range(1, max_pacing_retries + 1):
                 prev_words = words if attempt > 1 else None
                 try:
@@ -572,16 +906,25 @@ def translate_scenes_batch(
                 word_diff = abs(words - pacing.target_words)
                 history.append((cand, words, est_gap, gap_dev))
 
-                # Warunki akceptacji:
-                # 1. Szacowana luka mieści się w akceptowalnym oknie [min_acceptable_gap, max_acceptable_gap]
-                # 2. Liczba słów mieści się w dopuszczalnym przedziale [min_words, max_words]
-                # 3. Odchylenie liczby słów <= 5 (różnica <= 1.4s, bez problemu kompensowana przez atempo [0.94, 1.06])
-                # 4. Wypowiedź w pełni przekłada źródło PL (words >= pl_words * 0.9) a luka nie przekracza okna z marginesem
-                is_gap_ok = pacing.min_acceptable_gap <= est_gap <= pacing.max_acceptable_gap
-                is_words_ok = pacing.min_words <= words <= pacing.max_words or word_diff <= 5
-                is_fidelity_ok = (words >= int(pl_words * 0.9)) and (est_gap <= pacing.max_acceptable_gap + 1.5)
+                # Warunki akceptacji (z twardą gwarancją braku wykraczania poza okno czasowe):
+                is_not_overflowing = est_gap >= pacing.min_acceptable_gap
+                is_gap_ok = is_not_overflowing and (est_gap <= pacing.max_acceptable_gap)
+                is_words_ok = is_not_overflowing and (pacing.min_words <= words <= pacing.max_words or word_diff <= 3)
+                is_fidelity_ok = is_not_overflowing and (words >= max(3, int(pl_words * 0.85))) and (est_gap <= pacing.max_acceptable_gap + 1.2)
 
-                if is_gap_ok or is_words_ok or is_fidelity_ok or max_pacing_retries <= 1:
+                is_accepted = is_gap_ok or is_words_ok or is_fidelity_ok or max_pacing_retries <= 1
+
+                attempt_record = {
+                    "attempt": attempt,
+                    "words": words,
+                    "est_duration_sec": round(est_dur, 2),
+                    "est_gap_sec": round(est_gap, 2),
+                    "gap_deviation_sec": round(gap_dev, 2),
+                    "status": "ACCEPTED" if is_accepted else "RETRY",
+                }
+                scene_log_entry["attempts"].append(attempt_record)
+
+                if is_accepted:
                     sc["text_en"] = clean_voiceover_text(cand)
                     sc["calibration_retries"] = attempt
                     sc["calibration_status"] = f"{attempt} {'próba' if attempt == 1 else 'próby'} (Idealnie)"
@@ -602,6 +945,11 @@ def translate_scenes_batch(
                 sc["calibration_status"] = f"Najlepsza z {len(history)} ({best_attempt[1]} słów, luka: {best_attempt[2]:.1f}s)"
                 log_warn(f"Scena {sc['id']:02d}/{len(scenes)}: Wykorzystano {len(history)} prób. Wybrano wariant o najmniejszym odchyleniu pauzy: {best_attempt[1]} słów (szac. luka: {best_attempt[2]:.1f}s).")
 
+            scene_log_entry["final_words"] = len(sc.get("text_en", "").split())
+            scene_log_entry["calibration_retries"] = sc.get("calibration_retries", 1)
+            scene_log_entry["calibration_status"] = sc.get("calibration_status", "")
+            pacing_log["scenes"].append(scene_log_entry)
+
         dt = time.time() - t0
         log_ok(f"Zakończono tłumaczenie Bielik z walidacją budżetu czasowego w {dt:.2f}s.")
         ollama_trans.unload()
@@ -618,6 +966,16 @@ def translate_scenes_batch(
             sc["text_en"] = apply_tech_terms(clean_voiceover_text(text_en), tech_terms)
             sc["calibration_retries"] = 1
             sc["calibration_status"] = "MarianMT (Brak kalibracji)"
+            pacing_log["scenes"].append({
+                "scene_id": sc["id"],
+                "pl_words": len(sc.get("text_pl", "").split()),
+                "final_words": len(sc["text_en"].split()),
+                "calibration_status": "MarianMT",
+            })
+
+    if stage_dir:
+        save_llm_adaptation_artifacts(scenes, stage_dir=stage_dir, short_id=short_id, pacing_log=pacing_log)
+
 
 
 
@@ -700,6 +1058,17 @@ def resolve_reference_audio(
         if env_ref:
             ref_audio = Path(env_ref)
 
+    # 1. Lokalna próbka przypisana do projektu w work/<projekt>/input/ref_voice*.wav
+    if not ref_audio and work_dir:
+        proj_input = Path(work_dir) / "input"
+        if proj_input.exists():
+            for pat in ("ref_voice*.wav", "voice_ref*.wav", "sample_ref*.wav"):
+                matches = sorted(proj_input.glob(pat))
+                if matches:
+                    ref_audio = matches[0]
+                    log_info(f"Wykryto dedykowaną próbkę głosu w projekcie: {ref_audio.name}")
+                    break
+
     if ref_audio:
         cand = Path(ref_audio)
         resolved: Path | None = None
@@ -733,22 +1102,22 @@ def resolve_reference_audio(
             if p.is_file() and p.suffix.lower() in {".wav", ".mp3", ".flac"}
         ])
 
-        if len(available) == 1:
+        # Priorytet dla standardowych nazw próbek referencyjnych
+        preferred_names = ["ref_voice_sample_en.wav", "ref_voice_sample.wav"]
+        preferred_match = next(( sample_dir / name for name in preferred_names if (sample_dir / name).exists() ), None)
+
+        if preferred_match is not None:
+            resolved_path = preferred_match.resolve()
+            log_info(f"Użycie domyślnej próbki lektorskiej z work/voice_sample/: {resolved_path.name}")
+        elif len(available) >= 1:
             resolved_path = available[0].resolve()
-            log_info(f"Wykryto pojedynczą próbkę lektorską w work/voice_sample/: {resolved_path.name} (użycie jako domyślnej)")
-        elif len(available) > 1:
-            opts = [p.name for p in available]
-            raise ValueError(
-                f"W katalogu work/voice_sample/ wykryto wiele próbek: {opts}.\n"
-                f"Wymagane jest wskazanie konkretnego pliku za pomocą parametru --voice-ref <plik> "
-                f"lub zmiennej środowiskowej VOICE_REF_FILE."
-            )
+            log_info(f"Wykryto próbkę lektorską w work/voice_sample/: {resolved_path.name} (użycie jako domyślnej)")
         elif (REPO_ROOT / "voice" / "sample_reference.wav").exists():
             resolved_path = (REPO_ROOT / "voice" / "sample_reference.wav").resolve()
             log_info(f"Użycie domyślnej próbki referencyjnej: {resolved_path.name}")
         else:
             raise FileNotFoundError(
-                "Błąd: Nie znaleziono próbki referencyjnej głosu. Nagraj 10s audio i umieść w voice/ lub ustaw VOICE_REF_FILE w .env."
+                "Błąd: Nie znaleziono próbki referencyjnej głosu. Nagraj 10s audio i umieść w work/voice_sample/ lub ustaw VOICE_REF_FILE w .env."
             )
 
     if resolved_path and not ref_transcript:
@@ -757,19 +1126,6 @@ def resolve_reference_audio(
             ref_transcript = txt_cand.read_text(encoding="utf-8").strip()
 
     return resolved_path, ref_transcript
-
-
-def sec_to_srt_time(sec: float) -> str:
-    sec = max(0.0, sec)
-
-    h = int(sec // 3600)
-    m = int((sec % 3600) // 60)
-    s = int(sec % 60)
-    ms = int(round((sec - int(sec)) * 1000))
-    if ms >= 1000:
-        s += 1
-        ms = 0
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 def export_srt(scenes: list[dict], srt_path: Path, lang_key: str = "text_pl", use_synced: bool = False) -> None:
@@ -839,12 +1195,16 @@ def parse_short_script_md(script_path: Path) -> list[dict]:
     return scenes
 
 
-def transcribe_with_whisper(audio_path: Path, model_name: str = "large-v3-turbo") -> list[dict]:
-    log_info(f"Brak pliku scenariusza. Uruchamianie lokalnego modelu Whisper ({model_name})...")
+def transcribe_raw_with_whisper(audio_path: Path, model_name: str = "large-v3-turbo") -> list[dict]:
+    """
+    Ekstrakcja surowych segmentów transkrypcji mowy ze znacznikami czasu przez faster-whisper.
+    Zwraca znormalizowaną listę słowników: [{"id": int, "start": float, "end": float, "text": str}].
+    """
+    log_info(f"Uruchamianie lokalnego modelu Whisper ({model_name}) do ekstrakcji surowych segmentów...")
     initial_prompt = (
-        "W tym filmie omawiamy Zorin OS, Linux, stację roboczą, architekturę IT, "
+        "W tym filmie omawiamy Agentic SysAdmin, Zorin OS, Linux, stację roboczą, architekturę IT, "
         "Antigravity, Claude Code, Obsidian vault, pliki README, Markdown, Makefile, "
-        "VRAM, NVENC, zasadę zero guessing, na żywym organizmie."
+        "Qwen3, CustomVoice, OpenVoice, VRAM, NVENC, zasadę zero guessing, na żywym organizmie."
     )
 
     # 1. Próba na CUDA (FP16)
@@ -856,10 +1216,19 @@ def transcribe_with_whisper(audio_path: Path, model_name: str = "large-v3-turbo"
             del model
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            scenes = group_whisper_segments(raw_list)
-            if scenes:
-                log_ok(f"Whisper (CUDA/{cand}) wygenerował {len(scenes)} spójnych scen logicznych (ze {len(raw_list)} surowych segmentów).")
-                return scenes
+            if raw_list:
+                raw_segments = [
+                    {
+                        "id": idx,
+                        "start": round(s.start, 2),
+                        "end": round(s.end, 2),
+                        "text": s.text.strip(),
+                    }
+                    for idx, s in enumerate(raw_list, 1)
+                    if s.text.strip()
+                ]
+                log_ok(f"Whisper (CUDA/{cand}) wyodrębnił {len(raw_segments)} surowych segmentów ASR.")
+                return raw_segments
         except Exception as e_cuda:
             log_warn(f"Whisper (CUDA/{cand}) niedostępny: {e_cuda}")
             if cand == "base":
@@ -872,10 +1241,19 @@ def transcribe_with_whisper(audio_path: Path, model_name: str = "large-v3-turbo"
             segments, _ = model.transcribe(str(audio_path), beam_size=5, language="pl", initial_prompt=initial_prompt)
             raw_list = list(segments)
             del model
-            scenes = group_whisper_segments(raw_list)
-            if scenes:
-                log_ok(f"Whisper (CPU/{cand}) wygenerował {len(scenes)} spójnych scen.")
-                return scenes
+            if raw_list:
+                raw_segments = [
+                    {
+                        "id": idx,
+                        "start": round(s.start, 2),
+                        "end": round(s.end, 2),
+                        "text": s.text.strip(),
+                    }
+                    for idx, s in enumerate(raw_list, 1)
+                    if s.text.strip()
+                ]
+                log_ok(f"Whisper (CPU/{cand}) wyodrębnił {len(raw_segments)} surowych segmentów ASR.")
+                return raw_segments
         except Exception as e_cpu:
             log_warn(f"Whisper (CPU/{cand}) błąd: {e_cpu}")
 
@@ -884,8 +1262,92 @@ def transcribe_with_whisper(audio_path: Path, model_name: str = "large-v3-turbo"
         "id": 1,
         "start": 0.0,
         "end": round(duration, 2),
-        "text_pl": "Nagranie lektorskie do zsynchronizowania."
+        "text": "Nagranie lektorskie do zsynchronizowania.",
     }]
+
+
+def clean_transcript_with_bielik(
+    raw_segments: list[dict],
+    stage_dir: Path | None = None,
+    short_id: str = "",
+    llm_model: str = "auto",
+    batch_size: int = 12,
+) -> list[dict]:
+    """
+    Oczyszcza surowe segmenty transkrypcji Whispera przez model Bielik LLM:
+    1. Zapisuje surowe segmenty w 01_whisper_raw_*.
+    2. Jeśli model Bielik jest dostępny w Ollamie, przetwarza segmenty w paczkach (batch_size=12).
+    3. Naprawia fonetyczne błędy terminów IT, gramatykę oraz interpunkcję.
+    4. Zachowuje synchronizację czasową (start, end) każdego segmentu.
+    5. Zapisuje oczyszczone segmenty oraz tabelę różnic (Diff) w 02_bielik_cleaned_*.
+    """
+    if stage_dir:
+        save_raw_transcription_artifacts(raw_segments, stage_dir=stage_dir, short_id=short_id)
+
+    target_llm = "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M" if llm_model in ("auto", "bielik") else llm_model
+    ollama_trans = OllamaTranslator(model_name=target_llm) if llm_model != "none" else None
+
+    cleaned_segments: list[dict] = []
+
+    if ollama_trans and ollama_trans.is_available():
+        log_info(f"Oczyszczanie surowej transkrypcji ({len(raw_segments)} segmentów) przez model Bielik LLM ({target_llm})...")
+        t0 = time.time()
+        for i in range(0, len(raw_segments), batch_size):
+            batch = raw_segments[i : i + batch_size]
+            batch_cleaned = ollama_trans.clean_pl_segments_batch(batch)
+            cleaned_segments.extend(batch_cleaned)
+        dt = time.time() - t0
+        mod_count = sum(1 for s in cleaned_segments if s.get("was_modified"))
+        log_ok(f"Bielik oczyścił transkrypcję w {dt:.2f}s. Zmodyfikowano {mod_count} z {len(cleaned_segments)} segmentów.")
+    else:
+        log_info("Bielik/Ollama niedostępny dla etapu czyszczenia. Zastosowanie reguł heurystycznych ASR...")
+        for s in raw_segments:
+            raw_text = str(s["text"]).strip()
+            clean_text = apply_asr_corrections(raw_text)
+            cleaned_segments.append({
+                **s,
+                "text": clean_text,
+                "text_raw": raw_text,
+                "was_modified": clean_text != raw_text,
+            })
+
+    if stage_dir:
+        save_cleaned_transcription_artifacts(cleaned_segments, stage_dir=stage_dir, short_id=short_id)
+
+    return cleaned_segments
+
+
+def transcribe_with_whisper(
+    audio_path: Path,
+    model_name: str = "large-v3-turbo",
+    stage_dir: Path | None = None,
+    short_id: str = "",
+    llm_model: str = "auto",
+    chunk_mode: str = "auto",
+    total_duration: float = 0.0,
+) -> list[dict]:
+    """
+    Pełny potok transkrypcji:
+    1. Whisper ASR: ekstrakcja surowych segmentów ze znacznikami czasu.
+    2. Bielik LLM: inżynierskie oczyszczenie fonetyki IT i interpunkcji.
+    3. Grouping: podział oczyszczonych segmentów na spójne kwestie (adaptacyjny pod Shorts/Long).
+    """
+    raw_segments = transcribe_raw_with_whisper(audio_path, model_name=model_name)
+    cleaned_segments = clean_transcript_with_bielik(
+        raw_segments,
+        stage_dir=stage_dir,
+        short_id=short_id,
+        llm_model=llm_model,
+    )
+    scenes = group_whisper_segments(
+        cleaned_segments,
+        stage_dir=stage_dir,
+        short_id=short_id,
+        chunk_mode=chunk_mode,
+        total_duration=total_duration,
+    )
+    log_ok(f"Wygenerowano {len(scenes)} spójnych kwestii lektorskich (z {len(raw_segments)} surowych segmentów).")
+    return scenes
 
 
 def time_sync_and_master(
@@ -895,11 +1357,15 @@ def time_sync_and_master(
     output_wav: Path,
     target_lufs: float = -14.0,
     target_tp: float = -1.0,
-    max_speed_factor: float = 1.08,
-    min_inter_gap: float = 0.35,
+    max_speed_factor: float | None = None,
+    min_inter_gap: float | None = None,
     enable_room_tone: bool = True
 ) -> None:
-    log_info(f"Synchronizacja segmentów i mastering EBU R128 ({target_lufs} LUFS, oddech: {int(min_inter_gap*1000)}ms)...")
+    is_short = total_duration <= 120.0
+    effective_max_speed = max_speed_factor if max_speed_factor is not None else (1.25 if is_short else 1.15)
+    effective_min_gap = min_inter_gap if min_inter_gap is not None else (0.25 if is_short else 0.35)
+
+    log_info(f"Synchronizacja segmentów i mastering EBU R128 ({target_lufs} LUFS, max kompresja: x{effective_max_speed:.2f}, oddech: {int(effective_min_gap*1000)}ms)...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
@@ -912,37 +1378,56 @@ def time_sync_and_master(
             seg_dur = get_audio_duration(seg_wav)
             nominal_start = scene["start"]
 
-            # Anchor: start exactly at nominal_start (or immediately after prev_end + min_inter_gap if previous ran over)
-            actual_start = max(nominal_start, prev_end + min_inter_gap if idx > 0 else nominal_start)
+            # Anchor: start at nominal_start lub tuż po poprzedniej kwestii z zachowaniem minimalnego oddechu
+            actual_start = max(nominal_start, prev_end + effective_min_gap if idx > 0 else nominal_start)
 
-            if idx + 1 < len(scenes):
+            is_last_scene = (idx + 1 == len(scenes))
+            if not is_last_scene:
                 next_nominal = scenes[idx + 1]["start"]
                 orig_pause = max(0.0, scenes[idx + 1]["start"] - scene["end"])
-                avail_window = max(0.5, next_nominal - actual_start)
+                avail_window = max(0.4, next_nominal - actual_start)
+                effective_window = max(0.3, avail_window - effective_min_gap)
             else:
                 next_nominal = total_duration
                 orig_pause = max(0.0, total_duration - scene["end"])
-                avail_window = max(0.5, total_duration - actual_start)
+                # Finałowa kwestia: rezerwujemy co najmniej 0.25s czystego outro przed końcem filmu
+                avail_window = max(0.4, total_duration - actual_start)
+                effective_window = max(0.3, total_duration - actual_start - 0.25)
 
             # Intencjonalna pauza w oryginale (>2.0s np. demonstracja na ekranie) vs mowa ciągła (oddech 0.8s-1.3s)
             if orig_pause > 2.0:
                 desired_pause = orig_pause
+            elif is_short:
+                desired_pause = min(0.6, max(0.25, orig_pause + 0.1))
             else:
                 desired_pause = min(1.3, max(0.8, orig_pause + 0.4))
 
             target_dur = max(seg_dur, avail_window - desired_pause)
             out_seg = tmp_path / f"synced_{idx:03d}.wav"
 
-            if seg_dur > avail_window:
-                # Wypowiedź dłuższa niż okno — przyspieszamy z zachowaniem min_inter_gap na oddech
-                effective_window = max(0.5, avail_window - min_inter_gap)
+            clamp_duration = None
+            if is_last_scene and seg_dur > effective_window:
+                # Ostateczny strażnik wideo: lektor w scenie finałowej MUSI zmieścić się przed końcem filmu
+                needed_factor = seg_dur / effective_window
+                if needed_factor <= 1.30:
+                    speed_factor = needed_factor
+                    adj_dur = seg_dur / speed_factor
+                    scene["pacing_status"] = f"x{speed_factor:.2f} (Dociągnięcie outro)"
+                else:
+                    speed_factor = 1.30
+                    adj_dur = effective_window
+                    clamp_duration = effective_window
+                    scene["pacing_status"] = f"x{speed_factor:.2f} (Kompresja + przycięcie outro)"
+                log_info(f"Dopasowanie tempa sceny finałowej {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {adj_dur:.2f}s, okno wideo: {effective_window:.2f}s)")
+            elif seg_dur > effective_window:
+                # Wypowiedź dłuższa niż okno — kompresja WSOLA z zachowaniem oddechu
                 raw_factor = seg_dur / effective_window
-                speed_factor = min(raw_factor, max_speed_factor)
+                speed_factor = min(raw_factor, effective_max_speed)
+                adj_dur = seg_dur / speed_factor
                 scene["pacing_status"] = f"x{speed_factor:.2f} (Kompresja)"
-                log_info(f"Dopasowanie tempa (kompresja) dla sceny {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {seg_dur/speed_factor:.2f}s, okno: {avail_window:.2f}s)")
-            elif (avail_window - seg_dur) > desired_pause + 0.4:
+                log_info(f"Dopasowanie tempa (kompresja) dla sceny {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {adj_dur:.2f}s, okno: {effective_window:.2f}s)")
+            elif (avail_window - seg_dur) > desired_pause + 0.4 and not is_short:
                 # Nadmiarowa martwa cisza — subtelna relaksacja tempa mowy (bezpieczny zakres [0.92, 0.98])
-                # Używamy transparentnego filtru atempo (WSOLA w dziedzinie czasu) eliminującego metaliczny pogłos i drżenie
                 raw_speed = seg_dur / target_dur
                 speed_factor = max(0.92, min(0.98, raw_speed))
                 adj_dur = seg_dur / speed_factor
@@ -951,17 +1436,23 @@ def time_sync_and_master(
                 log_info(f"Dopasowanie tempa (relaksacja ciszy) dla sceny {scene['id']}: x{speed_factor:.2f} ({seg_dur:.2f}s -> {adj_dur:.2f}s, luka: {actual_gap:.2f}s, orig_gap: {orig_pause:.2f}s)")
             else:
                 speed_factor = 1.0
+                adj_dur = seg_dur
                 scene["pacing_status"] = "1.00x (Płynne)"
 
-            adj_dur = seg_dur / speed_factor
             cmd = ["ffmpeg", "-y", "-i", str(seg_wav)]
+            filter_ops = []
             if abs(speed_factor - 1.0) > 0.005:
-                cmd.extend(["-filter:a", f"atempo={speed_factor:.3f}"])
+                filter_ops.append(f"atempo={speed_factor:.3f}")
+            if clamp_duration is not None and clamp_duration > 0.2:
+                fade_start = max(0.1, clamp_duration - 0.15)
+                filter_ops.append(f"atrim=0:{clamp_duration:.3f},afade=t=out:st={fade_start:.3f}:d=0.15")
+
+            if filter_ops:
+                cmd.extend(["-filter:a", ",".join(filter_ops)])
             cmd.extend(["-ar", "48000", "-ac", "1", str(out_seg)])
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
             adjusted_wavs.append(out_seg)
-
             actual_starts.append(actual_start)
             prev_end = actual_start + adj_dur
 
@@ -1004,6 +1495,7 @@ def time_sync_and_master(
         cmd.extend([
             "-filter_complex", ";".join(filter_complex),
             "-map", "[mastered]",
+            "-t", f"{total_duration:.3f}",
             "-ar", "48000", "-ac", "2",
             str(output_wav)
         ])
@@ -1011,20 +1503,49 @@ def time_sync_and_master(
         log_ok(f"Zapisano zmasterowany plik audio z Broadcast EQ i Room Tone: {output_wav.name}")
 
 
+def resolve_work_dir(raw_work_dir: Path | str) -> Path:
+    """
+    Rozwiązuje ścieżkę folderu roboczego projektu:
+    - 'EP002_Short' -> '<REPO_ROOT>/work/EP002_Short'
+    - 'work/EP002_Short' -> '<REPO_ROOT>/work/EP002_Short'
+    - '/pełna/ścieżka' -> '/pełna/ścieżka'
+    """
+    cand = Path(raw_work_dir)
+    if cand.is_absolute():
+        return cand.resolve()
+    if cand.parts and cand.parts[0] == "work":
+        return (REPO_ROOT / cand).resolve()
+    if cand.exists():
+        return cand.resolve()
+    return (REPO_ROOT / "work" / cand).resolve()
+
+
 def auto_detect_input_video(work_dir: Path) -> Path | None:
     input_dir = work_dir / "input"
-    if not input_dir.exists():
-        return None
+    if input_dir.exists():
+        mp4_files = [f for f in input_dir.glob("*.mp4") if not f.name.startswith("raw_voiceover")]
+        if mp4_files:
+            for pref in ["FIXED", "FINAL", "Karaoke"]:
+                for f in mp4_files:
+                    if pref in f.name:
+                        return f
+            return max(mp4_files, key=lambda f: f.stat().st_size)
 
-    mp4_files = [f for f in input_dir.glob("*.mp4") if not f.name.startswith("raw_voiceover")]
-    if not mp4_files:
-        return None
+    # Jeśli użytkownik wrzucił plik .mp4 bezpośrednio do work/<projekt>/, przenieś go do work/<projekt>/input/
+    if work_dir.exists():
+        root_mp4s = [
+            f for f in work_dir.glob("*.mp4")
+            if not f.name.startswith("raw_voiceover") and not f.name.endswith("_DUBBED.mp4")
+        ]
+        if root_mp4s:
+            input_dir.mkdir(parents=True, exist_ok=True)
+            chosen = max(root_mp4s, key=lambda f: f.stat().st_size)
+            target = input_dir / chosen.name
+            chosen.rename(target)
+            log_info(f"Automatycznie uporządkowano plik wejściowy do podfolderu input/: {target.name}")
+            return target
 
-    for pref in ["FIXED", "FINAL", "Karaoke"]:
-        for f in mp4_files:
-            if pref in f.name:
-                return f
-    return max(mp4_files, key=lambda f: f.stat().st_size)
+    return None
 
 
 # ==============================================================================
@@ -1045,16 +1566,52 @@ def process_single_short(
     translator: LocalMarianTranslator | None = None,
     tts_engine: BaseTTSEngine | None = None,
     max_pacing_retries: int = DEFAULT_MAX_PACING_RETRIES,
-    expressive: bool = False,
+    expressive: bool = True,
     output_dir: Path | None = None,
+    chunk_mode: str = "auto",
+    from_stage: str | None = None,
+    resume_from: Path | None = None,
 ) -> bool:
-    work_dir = work_dir.resolve()
+    work_dir = resolve_work_dir(work_dir)
     short_id = work_dir.name
 
-    # Inicjalizacja menedżera przebiegu (WorkRunManager)
+    # Upewnij się, że struktura wejściowa work/<projekt>/input istnieje
+    input_dir = work_dir / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+
+    # Walidacja i normalizacja etapu wznawiania
+    valid_stages = {
+        "translate": "translate",
+        "llm": "translate",
+        "adaptation": "translate",
+        "translation": "translate",
+        "tts": "tts",
+        "voice": "tts",
+        "synth": "tts",
+        "synthesis": "tts",
+        "master": "master",
+        "sync": "master",
+        "post": "master",
+    }
+    resume_stage = valid_stages.get(from_stage.strip().lower()) if from_stage else None
+    if from_stage and not resume_stage:
+        log_err(f"Nieznany etap wznawiania: '{from_stage}'. Dostępne opcje: translate, tts, master.")
+        return False
+
+    # Jeśli wskazano zewnętrzny plik input_video, a w input/ jeszcze go nie ma, skopiuj go do input/
+    if input_video and input_video.exists():
+        if input_video.parent.resolve() != input_dir.resolve():
+            staged_video = input_dir / input_video.name
+            if not staged_video.exists():
+                shutil.copy2(input_video, staged_video)
+                log_info(f"Skopiowano plik źródłowy do przestrzeni projektu: {staged_video}")
+            input_video = staged_video
+
+    # Inicjalizacja menedżera przebiegu w izolowanej przestrzeni work/<projekt>/runs/
     run_mgr = WorkRunManager(
         task_slug=short_id,
         engine=engine,
+        base_dir=work_dir / "runs",
         explicit_output_dir=output_dir,
     )
 
@@ -1069,13 +1626,44 @@ def process_single_short(
 
         total_duration = get_audio_duration(input_video)
 
+        # Lokalizacja poprzedniego przebiegu przy wznawianiu
+        prev_run_dir: Path | None = None
+        if resume_stage:
+            if resume_from:
+                prev_run_dir = Path(resume_from).resolve()
+                if not prev_run_dir.exists():
+                    log_err(f"Wskazany katalog bazowy do wznowienia nie istnieje: {prev_run_dir}")
+                    run_mgr.finish_run()
+                    return False
+            else:
+                candidate_latest = (work_dir / "latest").resolve()
+                if candidate_latest.exists() and candidate_latest != run_mgr.run_dir:
+                    prev_run_dir = candidate_latest
+                else:
+                    runs_dir = work_dir / "runs"
+                    if runs_dir.exists():
+                        other_runs = [d for d in sorted(runs_dir.iterdir()) if d.is_dir() and d != run_mgr.run_dir]
+                        if other_runs:
+                            prev_run_dir = other_runs[-1]
+
+            if not prev_run_dir or not prev_run_dir.exists():
+                log_err(f"Nie znaleziono poprzedniego przebiegu do wznowienia w {work_dir}.")
+                run_mgr.finish_run()
+                return False
+
+            log_info(f"Wznawianie potoku od etapu [{resume_stage.upper()}] na bazie przebiegu: {prev_run_dir.name}")
+
         log_info("=" * 65)
         log_info(f" Workstation Hub: Autonomiczny Potok Dubbingu dla {short_id}")
         log_info("=" * 65)
         log_info(f"Wideo wejściowe:  {input_video.name} ({total_duration:.2f}s)")
         log_info(f"Katalog projektu: {work_dir}")
         log_info(f"Katalog runu:     {run_mgr.run_dir}")
-        log_info(f"Silnik TTS:       {engine.upper()}")
+        log_info(f"Symlink output:   {work_dir / 'output'}")
+        log_info(f"Silnik TTS:       {engine.upper()} (expressive={expressive})")
+        log_info(f"Tryb chunkowania: {chunk_mode.upper()} ({'Shorts <=120s' if (chunk_mode == 'short' or (chunk_mode == 'auto' and total_duration <= 120.0)) else 'Long-form >120s'})")
+        if resume_stage:
+            log_info(f"Tryb wznawiania:  FROM={resume_stage.upper()} (baza: {prev_run_dir.name})")
 
         # Walidacja i automatyczna detekcja próbki referencyjnej głosu
         if not transcribe_only and engine != "edge":
@@ -1086,7 +1674,6 @@ def process_single_short(
         # 1. Ekstrakcja czystego audio ze źródła lub dedykowany plik lektorski
         raw_audio = run_mgr.source_extracted_dir / f"{short_id}_VoiceOver_RAW_24k.wav"
         input_voiceover = None
-        input_dir = work_dir / "input"
         if input_dir.exists():
             for vo_cand in sorted(input_dir.glob("*.wav")):
                 if "voiceover" in vo_cand.name.lower() or "clean" in vo_cand.name.lower():
@@ -1094,7 +1681,12 @@ def process_single_short(
                     break
 
         with run_mgr.measure_stage("source_extraction"):
-            if input_voiceover and input_voiceover.exists():
+            prev_stage1 = prev_run_dir / STAGE_SOURCE_EXTRACTED if prev_run_dir else None
+            prev_raw = prev_stage1 / f"{short_id}_VoiceOver_RAW_24k.wav" if prev_stage1 else None
+            if resume_stage and prev_raw and prev_raw.exists():
+                shutil.copy2(prev_raw, raw_audio)
+                log_ok(f"Wznowienie: pobrano wyodrębnione audio z {prev_run_dir.name}")
+            elif input_voiceover and input_voiceover.exists():
                 log_info(f"Wykryto dedykowany plik lektorski: {input_voiceover.name}")
                 cmd = [
                     "ffmpeg", "-y", "-i", str(input_voiceover),
@@ -1107,45 +1699,234 @@ def process_single_short(
             else:
                 extract_raw_audio(input_video, raw_audio, sample_rate=24000)
 
-        # 2. Parsowanie scenariusza lub automatyczna transkrypcja Whisper
-        if not script_path:
-            candidates = [
-                work_dir / "input" / "short_script.md",
-                work_dir / f"{short_id}.srt",
-                input_video.with_suffix(".srt"),
-            ]
-            candidates.extend(list((work_dir / "input").glob("*.srt")))
-            for cand in candidates:
-                if cand.exists():
-                    script_path = cand
-                    break
+        # 2. Parsowanie scenariusza lub automatyczna transkrypcja Whisper + korekta Bielik + grupowanie
+        scenes: list[dict] = []
+        if resume_stage in ("translate", "tts", "master") and prev_run_dir:
+            with run_mgr.measure_stage("transcription"):
+                prev_stage2 = prev_run_dir / STAGE_TRANSCRIPTION
+                if prev_stage2.exists():
+                    for item in prev_stage2.glob("*"):
+                        if item.is_file():
+                            shutil.copy2(item, run_mgr.transcription_dir / item.name)
 
-        with run_mgr.measure_stage("transcription"):
-            if script_path and script_path.exists():
-                log_info(f"Wczytywanie scenariusza: {script_path.name}")
-                if script_path.suffix == ".srt":
-                    scenes = parse_srt(script_path)
+                # Sprawdź, czy użytkownik umieścił zmodyfikowaną transkrypcję w work/<projekt>/input/
+                override_pl = None
+                for cand in [
+                    work_dir / "input" / "03_scenes_pl_grouped.json",
+                    work_dir / "input" / "scenes_pl_grouped.json",
+                    work_dir / "input" / f"{short_id}_scenes_pl_grouped.json",
+                ]:
+                    if cand.exists():
+                        override_pl = cand
+                        break
+
+                if override_pl:
+                    shutil.copy2(override_pl, run_mgr.transcription_dir / "03_scenes_pl_grouped.json")
+                    log_ok(f"Wczytano zmodyfikowaną transkrypcję PL z {override_pl.name}")
+
+                grouped_json = run_mgr.transcription_dir / "03_scenes_pl_grouped.json"
+                if not grouped_json.exists():
+                    grouped_json = run_mgr.transcription_dir / f"{short_id}_scenes_pl_grouped.json"
+                if not grouped_json.exists():
+                    grouped_json = run_mgr.transcription_dir / "02_scenes_pl_cleaned.json"
+
+                if grouped_json.exists():
+                    scenes = json.loads(grouped_json.read_text(encoding="utf-8"))
+                    log_ok(f"Załadowano {len(scenes)} segmentów PL z etapu transkrypcji.")
                 else:
-                    scenes = parse_short_script_md(script_path)
+                    log_warn("Brak pliku transkrypcji w poprzednim przebiegu. Uruchamianie Whisper...")
+                    scenes = transcribe_with_whisper(
+                        raw_audio,
+                        stage_dir=run_mgr.transcription_dir,
+                        short_id=short_id,
+                        llm_model=llm_model,
+                        chunk_mode=chunk_mode,
+                        total_duration=total_duration,
+                    )
+        else:
+            if not script_path:
+                candidates = [
+                    work_dir / "input" / "short_script.md",
+                    work_dir / f"{short_id}.srt",
+                    input_video.with_suffix(".srt"),
+                ]
+                candidates.extend(list((work_dir / "input").glob("*.srt")))
+                for cand in candidates:
+                    if cand.exists():
+                        script_path = cand
+                        break
 
-                srt_duration = scenes[-1]["end"] if scenes else 0.0
-                if abs(srt_duration - total_duration) > 20.0:
-                    log_warn("Scenariusz nie odpowiada czasowo wideo! Uruchamianie bezpośredniej transkrypcji Whisper...")
-                    whisper_scenes = transcribe_with_whisper(raw_audio)
-                    if whisper_scenes:
-                        scenes = whisper_scenes
-            else:
-                log_info("Brak pliku scenariusza (.md/.srt) — uruchamianie automatycznej transkrypcji Whisper...")
-                scenes = transcribe_with_whisper(raw_audio)
+            with run_mgr.measure_stage("transcription"):
+                if script_path and script_path.exists():
+                    log_info(f"Wczytywanie scenariusza: {script_path.name}")
+                    if script_path.suffix == ".srt":
+                        scenes = parse_srt(script_path)
+                    else:
+                        scenes = parse_short_script_md(script_path)
+
+                    srt_duration = scenes[-1]["end"] if scenes else 0.0
+                    if abs(srt_duration - total_duration) > 20.0:
+                        log_warn("Scenariusz nie odpowiada czasowo wideo! Uruchamianie bezpośredniej transkrypcji Whisper...")
+                        scenes = transcribe_with_whisper(
+                            raw_audio,
+                            stage_dir=run_mgr.transcription_dir,
+                            short_id=short_id,
+                            llm_model=llm_model,
+                            chunk_mode=chunk_mode,
+                            total_duration=total_duration,
+                        )
+                    else:
+                        save_grouped_scenes_artifacts(scenes, stage_dir=run_mgr.transcription_dir, short_id=short_id)
+                else:
+                    log_info("Brak pliku scenariusza (.md/.srt) - uruchamianie automatycznej transkrypcji Whisper + Bielik Cleanup...")
+                    scenes = transcribe_with_whisper(
+                        raw_audio,
+                        stage_dir=run_mgr.transcription_dir,
+                        short_id=short_id,
+                        llm_model=llm_model,
+                        chunk_mode=chunk_mode,
+                        total_duration=total_duration,
+                    )
 
         if not scenes:
             log_err(f"Nie udało się wyodrębnić segmentów do dubbingu dla {short_id}.")
             run_mgr.finish_run()
             return False
 
-        # 3. Dynamiczne tłumaczenie maszynowe (Bielik LLM / MarianMT + Tech Terms) z walidacją budżetu czasu
-        with run_mgr.measure_stage("llm_adaptation"):
-            translate_scenes_batch(scenes, translator=translator, llm_model=llm_model, max_pacing_retries=max_pacing_retries)
+        # Rozstrzygnięcie docelowego silnika przed etapem reżyserii tekstu
+        selected_engine = engine
+        if selected_engine == "auto":
+            selected_engine = detect_best_engine(ref_audio)
+
+        # 3. Dynamiczne tłumaczenie maszynowe (Bielik LLM) + Pacing Guardrail + Acting Direction
+        if resume_stage in ("tts", "master") and prev_run_dir:
+            with run_mgr.measure_stage("llm_adaptation"):
+                prev_stage3 = prev_run_dir / STAGE_LLM_ADAPTATION
+                if prev_stage3.exists():
+                    for item in prev_stage3.glob("*"):
+                        if item.is_file():
+                            shutil.copy2(item, run_mgr.llm_adaptation_dir / item.name)
+
+                # Sprawdź override instrukcji lub kwestii w work/<projekt>/input/
+                override_acting = None
+                for cand in [
+                    work_dir / "input" / "05_acting_directions.json",
+                    work_dir / "input" / "acting_directions.json",
+                    work_dir / "input" / f"{short_id}_Acting_Directions.json",
+                ]:
+                    if cand.exists():
+                        override_acting = cand
+                        break
+
+                if override_acting:
+                    shutil.copy2(override_acting, run_mgr.llm_adaptation_dir / "05_acting_directions.json")
+                    log_ok(f"Wczytano zmodyfikowane instrukcje aktorskie z {override_acting.name}")
+
+                # Załaduj przetłumaczone sceny
+                transcript_json = run_mgr.llm_adaptation_dir / f"{short_id}_Dubbing_Transcript_EN.json"
+                if not transcript_json.exists():
+                    transcript_json = run_mgr.llm_adaptation_dir / "04_scenes_en_translated.json"
+                if transcript_json.exists():
+                    scenes = json.loads(transcript_json.read_text(encoding="utf-8"))
+
+                # Zaktualizuj kwestie i instrukcje na bazie 05_acting_directions.json
+                directions_file = run_mgr.llm_adaptation_dir / "05_acting_directions.json"
+                if directions_file.exists():
+                    try:
+                        acting_dict = json.loads(directions_file.read_text(encoding="utf-8"))
+                        for sc in scenes:
+                            s_key = f"scene_{sc['id']:03d}"
+                            if s_key in acting_dict:
+                                sc_info = acting_dict[s_key]
+                                if isinstance(sc_info, dict):
+                                    if "text" in sc_info and sc_info["text"]:
+                                        txt = clean_voiceover_text(sc_info["text"])
+                                        sc["text_en"] = strip_voice_tags(txt)
+                                        sc["text_en_directed"] = txt
+                                    if "instruction" in sc_info and sc_info["instruction"]:
+                                        sc["acting_instruction"] = sc_info["instruction"]
+                        log_ok("Zaktualizowano kwestie/instrukcje na podstawie 05_acting_directions.json.")
+                    except Exception as e_act:
+                        log_warn(f"Nie udało się sparsować 05_acting_directions.json: {e_act}")
+
+                # Kopiowanie poprzednich segmentów audio (dla inteligentnego wznawiania i cache w TTS)
+                prev_stage4 = prev_run_dir / STAGE_TTS_SEGMENTS
+                if prev_stage4.exists():
+                    for item in prev_stage4.glob("*"):
+                        if item.is_file():
+                            shutil.copy2(item, run_mgr.tts_segments_dir / item.name)
+
+                prev_sub = prev_run_dir / STAGE_SUBTITLES
+                if prev_sub.exists():
+                    for item in prev_sub.glob("*"):
+                        if item.is_file():
+                            shutil.copy2(item, run_mgr.subtitles_dir / item.name)
+        else:
+            with run_mgr.measure_stage("llm_adaptation"):
+                translate_scenes_batch(
+                    scenes,
+                    translator=translator,
+                    llm_model=llm_model,
+                    max_pacing_retries=max_pacing_retries,
+                    stage_dir=run_mgr.llm_adaptation_dir,
+                    short_id=short_id,
+                )
+
+                # Generowanie instrukcji aktorskich (Acting Direction) póki Bielik jest w pamięci VRAM
+                acting_directions_log: dict[str, Any] = {}
+                is_qwen_instruct = selected_engine in ("qwen", "qwen-custom")
+                llm_director_client = None
+
+                if not transcribe_only and expressive and (supports_voice_tags(selected_engine) or is_qwen_instruct):
+                    target_llm = "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M" if llm_model in ("auto", "bielik") else llm_model
+                    candidate_llm = OllamaTranslator(model_name=target_llm)
+                    if candidate_llm.is_available():
+                        llm_director_client = candidate_llm
+                        if is_qwen_instruct:
+                            log_info(f"Reżyser tekstu: Generowanie instrukcji aktorskich (Acting Direction) przez {target_llm}...")
+                        else:
+                            log_info(f"Reżyser tekstu: Wzbogacanie Two-Pass TTS Voice Tags ({selected_engine.upper()}, model: {target_llm})...")
+                    else:
+                        log_warn("Ollama nie jest dostępna dla Reżysera tekstu. Użycie domyślnej instrukcji ekspresji.")
+
+                for sc in scenes:
+                    clean_vo = clean_voiceover_text(sc.get("text_en", ""))
+                    active_instruction = instruction
+
+                    if is_qwen_instruct:
+                        if expressive and llm_director_client:
+                            clean_vo, acting_instruction = direct_voiceover(clean_vo, client_llm=llm_director_client)
+                            if acting_instruction:
+                                active_instruction = acting_instruction
+                        else:
+                            clean_vo = strip_voice_tags(clean_vo)
+                        directed_vo = clean_vo
+                        sc["acting_instruction"] = active_instruction
+                        acting_directions_log[f"scene_{sc['id']:03d}"] = {
+                            "text": clean_vo,
+                            "instruction": active_instruction,
+                        }
+                    elif expressive and supports_voice_tags(selected_engine) and llm_director_client:
+                        directed_vo = enrich_voiceover_tags(clean_vo, selected_engine, client_llm=llm_director_client)
+                        sc["acting_instruction"] = active_instruction
+                    else:
+                        directed_vo = strip_voice_tags(clean_vo)
+                        sc["acting_instruction"] = active_instruction
+
+                    # Do napisów (.srt / .ass), transcript JSON i raportów ZAWSZE trafia tekst oczyszczony ze znaczników
+                    sc["text_en"] = strip_voice_tags(directed_vo)
+                    sc["text_en_directed"] = directed_vo
+
+                if acting_directions_log:
+                    directions_file = run_mgr.llm_adaptation_dir / f"{short_id}_Acting_Directions.json"
+                    directions_json = json.dumps(acting_directions_log, indent=2, ensure_ascii=False)
+                    directions_file.write_text(directions_json, encoding="utf-8")
+                    (run_mgr.llm_adaptation_dir / "05_acting_directions.json").write_text(directions_json, encoding="utf-8")
+                    log_ok(f"Zapisano instrukcje reżyserskie TTS: {directions_file.name} oraz 05_acting_directions.json")
+                    run_mgr.record_stats(acting_directions_count=len(acting_directions_log))
+
+                if llm_director_client is not None:
+                    llm_director_client.unload()
 
         transcript_json = run_mgr.llm_adaptation_dir / f"{short_id}_Dubbing_Transcript_EN.json"
         with open(transcript_json, "w", encoding="utf-8") as f:
@@ -1169,121 +1950,92 @@ def process_single_short(
             log_ok(f"Tryb --transcribe-only zakończony dla {short_id}.")
             return True
 
-        # 4. Inicjalizacja wybranego silnika syntezy (Qwen3-TTS / Chatterbox / KokoClone / Breeze / Edge)
+        # 4. Inicjalizacja wybranego silnika syntezy (Qwen3-TTS CustomVoice + OpenVoice v2 / Qwen Base / KokoClone / Chatterbox / Breeze / Edge)
         dub_parts_dir = run_mgr.tts_segments_dir
         segment_wavs = []
 
-        # Rozstrzygnięcie i pobranie silnika
-        selected_engine = engine
-        if selected_engine == "auto":
-            selected_engine = detect_best_engine(ref_audio)
-
-        try:
-            active_engine_instance = get_tts_engine(selected_engine, ref_audio=ref_audio, voice=edge_voice)
-            active_engine_name = active_engine_instance.name
-        except Exception as e_eng:
-            log_warn(f"Nie udało się załadować silnika {selected_engine} ({e_eng}), fallback do Edge-TTS...")
-            selected_engine = "edge"
-            active_engine_instance = get_tts_engine("edge", voice=edge_voice or "en-US-ChristopherNeural")
-            active_engine_name = active_engine_instance.name
-
-        llm_director_client = None
-        if expressive and (supports_voice_tags(selected_engine) or selected_engine == "qwen"):
-            target_llm = "SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M" if llm_model in ("auto", "bielik") else llm_model
-            candidate_llm = OllamaTranslator(model_name=target_llm)
-            if candidate_llm.is_available():
-                llm_director_client = candidate_llm
-                if selected_engine == "qwen":
-                    log_info(f"Reżyser tekstu: Włączono Acting Direction (Instruct TTS) ({selected_engine.upper()}, model: {target_llm}).")
-                else:
-                    log_info(f"Reżyser tekstu: Włączono wzbogacanie Two-Pass TTS Voice Tags ({selected_engine.upper()}, model: {target_llm}).")
-            else:
-                log_warn("Ollama nie jest dostępna dla Reżysera tekstu. Użycie standardowej ekspresji / czystego tekstu.")
-
-        log_info(f"Generowanie mowy dla poszczególnych scen (silnik: {selected_engine.upper()})...")
-        with run_mgr.measure_stage("tts_generation"):
-            acting_directions_log: dict[str, Any] = {}
+        if resume_stage == "master" and prev_run_dir:
+            # W trybie wznawiania od masteringu weryfikujemy obecność gotowych segmentów audio
             for sc in scenes:
-                clean_vo = clean_voiceover_text(sc.get("text_en", ""))
-                active_instruction = instruction
-
-                if selected_engine == "qwen":
-                    if expressive and llm_director_client:
-                        clean_vo, acting_instruction = direct_voiceover(clean_vo, client_llm=llm_director_client)
-                        if acting_instruction:
-                            active_instruction = acting_instruction
-                    else:
-                        clean_vo = strip_voice_tags(clean_vo)
-                    directed_vo = clean_vo
-                    sc["acting_instruction"] = active_instruction
-                    acting_directions_log[f"scene_{sc['id']:03d}"] = {
-                        "text": clean_vo,
-                        "instruction": active_instruction,
-                    }
-                elif expressive and supports_voice_tags(selected_engine) and llm_director_client:
-                    directed_vo = enrich_voiceover_tags(clean_vo, selected_engine, client_llm=llm_director_client)
-                else:
-                    directed_vo = strip_voice_tags(clean_vo)
-
-                # Do napisów (.srt / .ass), transcript JSON i raportów ZAWSZE trafia tekst oczyszczony ze znaczników!
-                sc["text_en"] = strip_voice_tags(directed_vo)
-                sc["text_en_directed"] = directed_vo
-
                 part_wav = dub_parts_dir / f"scene_{sc['id']:03d}.wav"
-                txt_marker = part_wav.with_suffix(".txt")
-                engine_marker = part_wav.with_suffix(".engine")
-                expected_engine = selected_engine
-
-                # Inteligentne wznawianie: użyj istniejącego pliku tylko jeśli tekst do syntezy jest identyczny ORAZ silnik jest zgodny
-                if (
-                    part_wav.exists()
-                    and part_wav.stat().st_size > 1000
-                    and txt_marker.exists()
-                    and txt_marker.read_text(encoding="utf-8").strip() == directed_vo.strip()
-                    and (not engine_marker.exists() or engine_marker.read_text(encoding="utf-8").strip() == expected_engine)
-                ):
-                    segment_wavs.append(part_wav)
-                    continue
-
-                log_info(f"{selected_engine.upper()}: Synteza sceny {sc['id']}: '{directed_vo[:42]}...'")
-                synth_ok = active_engine_instance.synthesize(
-                    text=directed_vo,
-                    out_wav=part_wav,
-                    ref_audio=ref_audio,
-                    ref_transcript=ref_transcript,
-                    instruction=active_instruction,
-                )
-
-                if not synth_ok:
-                    if selected_engine != "edge" and engine != "auto":
-                        log_err(f"Błąd syntezy sceny {sc['id']} przez wymuszony silnik {selected_engine}.")
-                        run_mgr.finish_run()
-                        return False
-                    voice_to_use = edge_voice or "en-US-ChristopherNeural"
-                    log_info(f"Edge-TTS Fallback: Synteza sceny {sc['id']}: '{directed_vo[:42]}...' (voice: {voice_to_use})")
-                    fallback_engine = get_tts_engine("edge", voice=voice_to_use)
-                    synth_ok = fallback_engine.synthesize(text=directed_vo, out_wav=part_wav)
-                    active_engine_name = f"Edge-TTS ({voice_to_use})"
-                    if synth_ok:
-                        engine_marker.write_text("edge\n", encoding="utf-8")
-                else:
-                    engine_marker.write_text(f"{selected_engine}\n", encoding="utf-8")
-
                 if part_wav.exists() and part_wav.stat().st_size > 1000:
-                    txt_marker.write_text(directed_vo.strip() + "\n", encoding="utf-8")
-                segment_wavs.append(part_wav)
+                    segment_wavs.append(part_wav)
+                else:
+                    log_warn(f"Brak gotowego segmentu {part_wav.name} dla wznowienia masteringu.")
+            if len(segment_wavs) == len(scenes):
+                log_ok(f"Wznowienie od etapu MASTER: załadowano komplet {len(segment_wavs)} wygenerowanych segmentów audio.")
+                active_engine_name = selected_engine.upper()
 
-            if acting_directions_log:
-                directions_file = run_mgr.llm_adaptation_dir / f"{short_id}_Acting_Directions.json"
-                directions_file.write_text(
-                    json.dumps(acting_directions_log, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                log_ok(f"Zapisano instrukcje reżyserskie TTS: {directions_file.name}")
-                run_mgr.record_stats(acting_directions_count=len(acting_directions_log))
+        if len(segment_wavs) != len(scenes):
+            segment_wavs = []
+            try:
+                active_engine_instance = get_tts_engine(selected_engine, ref_audio=ref_audio, voice=edge_voice)
+                active_engine_name = active_engine_instance.name
+            except Exception as e_eng:
+                log_warn(f"Nie udało się załadować silnika {selected_engine} ({e_eng}), fallback do Edge-TTS...")
+                selected_engine = "edge"
+                active_engine_instance = get_tts_engine("edge", voice=edge_voice or "en-US-ChristopherNeural")
+                active_engine_name = active_engine_instance.name
 
-        if llm_director_client is not None:
-            llm_director_client.unload()
+            log_info(f"Generowanie mowy dla poszczególnych scen (silnik: {active_engine_name})...")
+            with run_mgr.measure_stage("tts_generation"):
+                for sc in scenes:
+                    directed_vo = sc.get("text_en_directed") or clean_voiceover_text(sc.get("text_en", ""))
+                    active_instruction = sc.get("acting_instruction", instruction)
+
+                    part_wav = dub_parts_dir / f"scene_{sc['id']:03d}.wav"
+                    txt_marker = part_wav.with_suffix(".txt")
+                    engine_marker = part_wav.with_suffix(".engine")
+                    instr_marker = part_wav.with_suffix(".instr")
+                    expected_engine = selected_engine
+
+                    # Inteligentne wznawianie: użyj istniejącego pliku tylko jeśli tekst do syntezy jest identyczny, instrukcja aktorska identyczna ORAZ silnik jest zgodny
+                    has_instr_cache = (
+                        instr_marker.exists()
+                        and instr_marker.read_text(encoding="utf-8").strip() == (active_instruction or "").strip()
+                    ) if active_instruction else True
+
+                    if (
+                        part_wav.exists()
+                        and part_wav.stat().st_size > 1000
+                        and txt_marker.exists()
+                        and txt_marker.read_text(encoding="utf-8").strip() == directed_vo.strip()
+                        and has_instr_cache
+                        and (not engine_marker.exists() or engine_marker.read_text(encoding="utf-8").strip() == expected_engine)
+                    ):
+                        log_ok(f"Wykorzystano istniejący segment audio dla sceny {sc['id']} (cache hit)")
+                        segment_wavs.append(part_wav)
+                        continue
+
+                    log_info(f"{selected_engine.upper()}: Synteza sceny {sc['id']}: '{directed_vo[:42]}...'")
+                    synth_ok = active_engine_instance.synthesize(
+                        text=directed_vo,
+                        out_wav=part_wav,
+                        ref_audio=ref_audio,
+                        ref_transcript=ref_transcript,
+                        instruction=active_instruction,
+                    )
+
+                    if not synth_ok:
+                        if selected_engine != "edge" and engine != "auto":
+                            log_err(f"Błąd syntezy sceny {sc['id']} przez wymuszony silnik {selected_engine}.")
+                            run_mgr.finish_run()
+                            return False
+                        voice_to_use = edge_voice or "en-US-ChristopherNeural"
+                        log_info(f"Edge-TTS Fallback: Synteza sceny {sc['id']}: '{directed_vo[:42]}...' (voice: {voice_to_use})")
+                        fallback_engine = get_tts_engine("edge", voice=voice_to_use)
+                        synth_ok = fallback_engine.synthesize(text=directed_vo, out_wav=part_wav)
+                        active_engine_name = f"Edge-TTS ({voice_to_use})"
+                        if synth_ok:
+                            engine_marker.write_text("edge\n", encoding="utf-8")
+                    else:
+                        engine_marker.write_text(f"{selected_engine}\n", encoding="utf-8")
+
+                    if part_wav.exists() and part_wav.stat().st_size > 1000:
+                        txt_marker.write_text(directed_vo.strip() + "\n", encoding="utf-8")
+                        if active_instruction:
+                            instr_marker.write_text(active_instruction.strip() + "\n", encoding="utf-8")
+                    segment_wavs.append(part_wav)
 
         # 5. Time-sync i mastering EBU R128
         mastered_wav = run_mgr.output_dir / f"{short_id}_VoiceOver_EN_CLEAN.wav"
@@ -1345,7 +2097,7 @@ def process_single_short(
             f.write(f"- **Maksymalna pauza w mowie:** `{quality.max_internal_silence_sec:.2f}s` (nienaturalna cisza: `{quality.unnatural_silence_detected}`)\n\n")
             f.write("## Wygenerowane Pliki Produkcyjne (Deliverables)\n\n")
             f.write("1. **Plik dźwiękowy lektora (YouTube Multi-Language Audio):**\n")
-            f.write(f"   `{mastered_wav.name}` (WAV 48kHz stereo, -14.0 LUFS — do wrzucenia w YouTube Studio jako alternatywna ścieżka językowa).\n\n")
+            f.write(f"   `{mastered_wav.name}` (WAV 48kHz stereo, -14.0 LUFS - do wrzucenia w YouTube Studio jako alternatywna ścieżka językowa).\n\n")
             if output_video and output_video_file:
                 f.write("2. **Zdubbingowany film EN (Full Video + Dubbing):**\n")
                 f.write(f"   `{output_video_file.name}` (wideo + zsynchronizowany dubbing EN).\n\n")
@@ -1374,6 +2126,7 @@ def process_single_short(
         log_ok(f"Zapisano raport podsumowujący: {summary_md.name}")
         log_ok(f"Zapisano metadane i audyt przebiegu: {summary_json.name}")
         log_info(f"Katalog przebiegu (Run Workspace): {run_mgr.run_dir}")
+        log_info(f"Szybki dostęp do wyników (Output):  {work_dir / 'output'}")
         log_info("=" * 65)
         log_ok(f"PROCES ZAKOŃCZONY SUKCESEM DLA {short_id}!")
         log_info("Dostarczone pliki produkcyjne (Deliverables):")
@@ -1397,8 +2150,8 @@ process_video = process_single_short
 def main():
     parser = argparse.ArgumentParser(description="Generyczny autonomiczny potok dubbingu wideo (pojedynczy lub zestaw).")
     parser.add_argument("-i", "--input", type=Path, default=None, help="Opcjonalny plik wideo źródłowego (MP4)")
-    parser.add_argument("-w", "--work-dir", type=Path, default=None, help="Katalog roboczy projektu (np. work/EP002_Short)")
-    parser.add_argument("-o", "--output-dir", type=Path, default=None, help="Jawnie wskazany katalog wyjściowy (jeśli nie podano, tworzy wersjonowany katalog w work/runs/)")
+    parser.add_argument("-w", "--work-dir", type=Path, default=None, help="Podfolder projektu w work/ (np. EP002_Short lub work/EP002_Short)")
+    parser.add_argument("-o", "--output-dir", type=Path, default=None, help="Jawnie wskazany katalog wyjściowy (domyślnie tworzy wersjonowany katalog w work/<projekt>/runs/)")
     parser.add_argument("-s", "--script", type=Path, default=None, help="Opcjonalny plik scenariusza (MD lub SRT)")
     parser.add_argument("--batch", nargs="+", help="Lista katalogów projektów do przetworzenia wsadowego")
 
@@ -1409,16 +2162,40 @@ def main():
     parser.add_argument("--ref-start", type=str, default="00:00:12.000", help="Początek wycinka próbki")
     parser.add_argument("--ref-end", type=str, default="00:00:20.300", help="Koniec wycinka próbki")
 
-    # Silnik i styl
-    parser.add_argument("--engine", choices=["auto", "qwen", "kokoro", "chatterbox", "breeze", "edge"], default="auto", help="Silnik syntezy TTS")
-    parser.add_argument("--llm-model", type=str, default="auto", help="Model LLM w Ollama do inżynierskiego tłumaczenia (np. auto, bielik, none)")
+    # Silnik i styl (domyślnie docelowy potok: Qwen3-TTS CustomVoice + OpenVoice v2 + Acting Direction)
+    parser.add_argument(
+        "--engine",
+        choices=["auto", "qwen", "qwen-custom", "qwen-base", "kokoro", "chatterbox", "breeze", "edge"],
+        default="qwen",
+        help="Silnik syntezy TTS (domyślnie: qwen = Qwen3-TTS 1.7B CustomVoice + OpenVoice v2)",
+    )
+    parser.add_argument("--llm-model", type=str, default="auto", help="Model LLM w Ollama do inżynierskiego tłumaczenia i korekty ASR (np. auto, bielik, none)")
     parser.add_argument("--accent", choices=["default", "us", "uk", "neutral"], default="default", help="Wybór stylu akcentu lektora (us, uk, neutral, default)")
     parser.add_argument("--edge-voice", type=str, default=None, help="Opcjonalny głos dla silnika Edge-TTS (np. en-US-AndrewMultilingualNeural, en-GB-RyanNeural)")
     parser.add_argument("--instruction", type=str, default="Maintain a calm, confident, authoritative engineering delivery with clear cadence.", help="Instrukcja stylu mowy")
     parser.add_argument("--output-video", action="store_true", default=True, help="Wygeneruj zduplikowane wideo z dubbingiem EN")
-    parser.add_argument("--transcribe-only", action="store_true", default=False, help="Wygeneruj wyłącznie transkrypcję Whisper i napisy SRT (bez syntezy TTS)")
+    parser.add_argument("--transcribe-only", action="store_true", default=False, help="Wygeneruj wyłącznie transkrypcję Whisper + Bielik Cleanup + tłumaczenie i napisy SRT (bez syntezy TTS)")
     parser.add_argument("--max-pacing-retries", type=int, default=DEFAULT_MAX_PACING_RETRIES, help="Maksymalna liczba iteracji rekalibracji długości tekstu przez Bielika (domyślnie: 10)")
-    parser.add_argument("--expressive", action="store_true", default=False, help="Włącz dwufazowe wzbogacanie tekstu o znaczniki emocji/dynamiki (Two-Pass TTS Voice Tags)")
+    parser.add_argument("--expressive", dest="expressive", action="store_true", default=True, help="Włącz Acting Direction / Two-Pass TTS Voice Tags (domyślnie włączone)")
+    parser.add_argument("--no-expressive", dest="expressive", action="store_false", help="Wyłącz Acting Direction / Two-Pass TTS Voice Tags")
+    parser.add_argument(
+        "--chunk-mode",
+        choices=["auto", "short", "long"],
+        default="auto",
+        help="Tryb podziału kwestii: auto (short dla wideo <=120s, long dla >120s), short (2.5-7.5s z podziałem na zdania), long (12-28s)",
+    )
+    parser.add_argument(
+        "--from-stage",
+        choices=["translate", "tts", "master"],
+        default=None,
+        help="Wznów potok w nowym przebiegu od etapu: translate (po edycji PL), tts (po edycji kwestii/acting directions) lub master (mastering i muxing)",
+    )
+    parser.add_argument(
+        "--resume-from",
+        type=Path,
+        default=None,
+        help="Ścieżka do katalogu bazowego przebiegu do wznowienia (domyślnie work/<projekt>/latest)",
+    )
     args = parser.parse_args()
 
     # Wybór presetów akcentu i głosu
@@ -1436,14 +2213,22 @@ def main():
         extract_voice_sample_clip(args.ref_source, args.ref_start, args.ref_end, sample_out, ref_transcript)
         ref_audio = sample_out
 
-    try:
-        ref_audio, ref_transcript = resolve_reference_audio(ref_audio, work_dir=args.work_dir, ref_transcript=ref_transcript)
-    except (FileNotFoundError, ValueError):
-        print(
-            "Błąd: Nie znaleziono próbki referencyjnej głosu. Nagraj 10s audio i umieść w voice/ lub ustaw VOICE_REF_FILE w .env.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    resolved_work_dir = resolve_work_dir(args.work_dir) if args.work_dir else None
+
+    if not args.transcribe_only and args.engine != "edge":
+        try:
+            ref_audio, ref_transcript = resolve_reference_audio(ref_audio, work_dir=resolved_work_dir, ref_transcript=ref_transcript)
+        except (FileNotFoundError, ValueError):
+            print(
+                "Błąd: Nie znaleziono próbki referencyjnej głosu. Nagraj 10s audio i umieść w work/voice_sample/ lub ustaw VOICE_REF_FILE w .env.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    else:
+        try:
+            ref_audio, ref_transcript = resolve_reference_audio(ref_audio, work_dir=resolved_work_dir, ref_transcript=ref_transcript)
+        except Exception:
+            ref_audio = None
 
     # Leniwa inicjalizacja modeli (GPU VRAM jest zwalniane sekwencyjnie)
     shared_translator = None
@@ -1453,7 +2238,7 @@ def main():
     if args.batch:
         log_info(f"Uruchamianie przetwarzania zestawu wideo ({len(args.batch)} projektów)...")
         for b_dir in args.batch:
-            target_dir = Path(b_dir)
+            target_dir = resolve_work_dir(b_dir)
             target_out = (args.output_dir / target_dir.name) if (args.output_dir and len(args.batch) > 1) else args.output_dir
             process_video(
                 work_dir=target_dir,
@@ -1472,20 +2257,23 @@ def main():
                 max_pacing_retries=args.max_pacing_retries,
                 expressive=args.expressive,
                 output_dir=target_out,
+                chunk_mode=args.chunk_mode,
+                from_stage=args.from_stage,
+                resume_from=args.resume_from,
             )
         return
 
     # Tryb pojedynczy
-    work_dir = args.work_dir
+    work_dir = resolved_work_dir
     input_video = args.input.resolve() if args.input else None
     if not work_dir and input_video:
-        work_dir = input_video.parent.parent
+        work_dir = input_video.parent.parent if input_video.parent.name == "input" else REPO_ROOT / "work" / input_video.stem
 
     if not work_dir:
         log_err("Wymagany parametr --work-dir (-w) lub --input (-i) lub --batch.")
         sys.exit(1)
 
-    process_video(
+    ok = process_video(
         work_dir=work_dir,
         input_video=input_video,
         script_path=args.script,
@@ -1502,8 +2290,14 @@ def main():
         max_pacing_retries=args.max_pacing_retries,
         expressive=args.expressive,
         output_dir=args.output_dir,
+        chunk_mode=args.chunk_mode,
+        from_stage=args.from_stage,
+        resume_from=args.resume_from,
     )
+    if not ok:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
+

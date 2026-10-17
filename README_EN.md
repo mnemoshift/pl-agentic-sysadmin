@@ -98,7 +98,13 @@ make tts-install     # Autonomous user-space installation, venv setup, and <Supe
 make tts-config      # Graphical voice selector (Marek, Zofia, etc.) and speech rate adjustment
 make tts-test        # Play a sample sentence to test voice quality
 
-# 🎬 Media & Video Automation (New in EP003 - Kdenlive & Whisper)
+# 🎬 Media, Kdenlive MCP & Sovereign AI Dubbing (EP003 & EP004)
+make dub-init WORK=my_clip INPUT=/path/to/video.mp4      # Initialize isolated project workspace in work/my_clip/input/
+make dub WORK=my_clip                                    # Default pipeline: Whisper -> Bielik 11B -> Qwen3-TTS Custom + OpenVoice v2 -> -14 LUFS
+make dub WORK=my_clip ENGINE=kokoro                      # Switch TTS engine (qwen-base, kokoro, chatterbox, breeze, edge)
+make dub-transcribe WORK=my_clip                         # Transcription + Bielik ASR cleanup + translation & SRT only
+make dub-status                                          # Inspect active projects in work/, voice samples, and latest run
+make media-test-acting PLAY=1                            # 3-step benchmark: Baseline vs Acting Direction vs Your Voice Timbre
 make media-clean-audio INPUT=work/EP002_Short/input/raw_voiceover.mp4 OUTPUT=work/EP002_Short/assets/clean.wav EXCLUDE=28.9-32.6
 make media-karaoke AUDIO=work/EP002_Short/assets/clean.wav OUTPUT=work/EP002_Short/assets/subtitles.ass FAST=1
 make media-build-short WORKSPACE=work/EP002_Short
@@ -160,12 +166,12 @@ Every installed tool, library, and system extension is continuously logged in `i
 ## 📚 Interactive Walkthroughs & Playbooks
 
 Explore practical end-to-end sessions in `docs/walkthroughs/` comparing legacy terminal toil against modern Agentic workflows:
-- 🖥️ [**macOS-style Desktop on Zorin OS**](docs/walkthroughs/Desktop-a-la-MacOS.md) — GNOME desktop transformation, dual Plank docks, WhiteSur styling, and CSD headerbar fixes.
-- 🧭 [**Dual-Engine Desktop Architecture (X11 vs Wayland)**](docs/desktop/DUAL_ENGINE_GUIDE.md) — TopChrome dock engineering, 2px edge trigger, and Zoom & Hop (1.2x) hover animation on laptops and workstations.
-- ⚙️ [**Kdenlive and MCP Server Setup in User-Space**](docs/walkthroughs/Konfiguracja-Kdenlive-MCP.md) — rootless Flatpak installation, MLT melt CLI wrappers, XML generator fix, and Antigravity integration.
-- 🎬 [**Autonomous YouTube Short Editing in Kdenlive with Agentic AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) — zero-subscription, local alternative to CapCut Pro: audio audit & normalization (-14 LUFS), 9:16 timeline composition, and dynamic karaoke subtitles (Whisper + ASS).
-- 🎙️ [**Zero-Cloud AI Dubbing & Voiceover on GPU**](docs/walkthroughs/Lokalny-Dubbing-AI-Shorts.md) — sovereign voiceover pipeline on RTX 4060 Ti: voice sample extraction, Whisper transcription, engineering PL->EN translation, EBU R128 (-14 LUFS) mastering, and video muxing.
-- 🗣️ [**'Select & Listen' Neural TTS Reader**](docs/walkthroughs/Czytnik-Glosowy-TTS.md) — rootless user-space Microsoft Edge Neural TTS, low-latency streaming pipeline to mpv (<250ms), Markdown sanitizer, and global `<Super>+R` shortcut.
+- 🖥️ [**macOS-style Desktop on Zorin OS**](docs/walkthroughs/Desktop-a-la-MacOS.md) - GNOME desktop transformation, dual Plank docks, WhiteSur styling, and CSD headerbar fixes.
+- 🧭 [**Dual-Engine Desktop Architecture (X11 vs Wayland)**](docs/desktop/DUAL_ENGINE_GUIDE.md) - TopChrome dock engineering, 2px edge trigger, and Zoom & Hop (1.2x) hover animation on laptops and workstations.
+- ⚙️ [**Kdenlive and MCP Server Setup in User-Space**](docs/walkthroughs/Konfiguracja-Kdenlive-MCP.md) - rootless Flatpak installation, MLT melt CLI wrappers, XML generator fix, and Antigravity integration.
+- 🎬 [**Autonomous YouTube Short Editing in Kdenlive with Agentic AI**](docs/walkthroughs/Montaz-Shorta-Kdenlive.md) - zero-subscription, local alternative to CapCut Pro: audio audit & normalization (-14 LUFS), 9:16 timeline composition, and dynamic karaoke subtitles (Whisper + ASS).
+- 🎙️ [**Zero-Cloud AI Dubbing & Voiceover on GPU**](docs/walkthroughs/Lokalny-Dubbing-AI-Shorts.md) - 6-stage sovereign dubbing pipeline on RTX 4060 Ti (`make dub WORK=<project>`): Whisper ASR, Bielik 11B Polish cleanup & Pacing Guardrail translation, Acting Direction, Qwen3-TTS 1.7B CustomVoice + OpenVoice v2 Timbre Converter, and EBU R128 (-14 LUFS) mastering.
+- 🗣️ [**'Select & Listen' Neural TTS Reader**](docs/walkthroughs/Czytnik-Glosowy-TTS.md) - rootless user-space Microsoft Edge Neural TTS, low-latency streaming pipeline to mpv (<250ms), Markdown sanitizer, and global `<Super>+R` shortcut.
 
 ---
 

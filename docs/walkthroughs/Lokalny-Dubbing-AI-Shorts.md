@@ -1,206 +1,366 @@
-# Walkthrough: Suwerenny Potok Dubbingu i Voiceoveru AI na GPU (Shorts)
+# Walkthrough: Suwerenny Potok Dubbingu i Voiceoveru AI na GPU (Shorts & Long-Form)
 
-Procedura automatycznego tłumaczenia, syntezy mowy i masteringu audio dla zestawu materiałów YouTube Shorts (format pionowy 9:16) bez zewnętrznych API i opłat chmurowych.
-
----
-
-## 1. Architektura i Bilans Pamięci VRAM (RTX 4060 Ti 16GB)
-
-Przepustowość wewnętrznej pamięci GDDR6 karty graficznej wynosi **288 GB/s**, podczas gdy magistrala PCIe 4.0 x8 oferuje zaledwie **~12 GB/s** (proporcja **24:1**). 
-
-Przekroczenie budżetu 16.0 GB VRAM powoduje natychmiastowe zrzucanie tensorów do systemowego RAM-u przez wąskie gardło magistrali i katastrofalny spadek wydajności (spadek 24:1). Dlatego cały potok audio zamyka się w bezpiecznym oknie pamięci z dużym marginesem bezpieczeństwa:
-
-| Komponent / Model | Rola w Potoku | Format Wag | Alokacja VRAM |
-| :--- | :--- | :--- | :---: |
-| **faster-whisper (large-v3-turbo / base)** | Ekstrakcja segmentów i znaczników czasu | CTranslate2 FP16 | **1.60 GB** |
-| **Breeze-TTS-2 3.5B (PyTorch CUDA)** | Zero-shot klonowanie głosu referencyjnego | bfloat16 / FP16 | **7.70 GB** |
-| **Kokoro-82M (Alternatywa)** | Szybki lektor radiowy EN | ONNX FP16 | **0.28 GB** |
-| **Edge-TTS (Fallback)** | Natychmiastowa synteza lektorska | Headless | **0.00 GB** |
-| **System OS / GUI Zorin OS** | Kompozytor i bufor ramki | Native | **0.50 GB** |
-| **Margines Bezpieczeństwa (Headroom)** | Dynamiczne bufory aktywacji | Wolna pamięć | **~6.20 GB** |
-| **ŁĄCZNY BILANS** | **Kompletny Stos Audio na GPU** | — | **~9.80 GB / 16.0 GB** |
+Kompletny przewodnik uruchomienia autonomicznego potoku tłumaczenia, reżyserii aktorskiej, syntezy mowy z transferem barwy głosu oraz masteringu EBU R128 (-14.0 LUFS) na lokalnej karcie NVIDIA RTX 4060 Ti 16 GB - bez zewnętrznych API, abonamentów chmurowych i wycieków danych.
 
 ---
 
-## 2. Przygotowanie Przestrzeni Roboczej (`work/`)
+## 1. Architektura Potoku i Sekwencyjny Bilans Pamięci VRAM (16 GB)
 
-Repozytorium jest w 100% generyczne — żadne prywatne surówki ani nagrania lektorskie nie trafiają do Gita. Wszystkie materiały źródłowe umieszczasz wyłącznie w katalogu `work/` (objętym `.gitignore`).
+Przepustowość pamięci GDDR6 na karcie RTX 4060 Ti 16 GB wynosi **288 GB/s**, podczas gdy magistrala PCIe 4.0 x8 oferuje ok. **12 GB/s** (stosunek **24:1**). Aby uniknąć jednoczesnego trzymania wszystkich modeli w pamięci i zrzucania tensorów do systemowego RAM-u, potok stosuje **sekwencyjne przekazywanie pałeczki (Sequential VRAM Handover)**: każdy etap zwalnia pamięć GPU (`torch.cuda.empty_cache()` oraz `keep_alive: 0` w Ollamie) przed startem kolejnego.
 
-W potoku dubbingu przyjmujemy jednolity, suwerenny standard wejściowy dla każdego projektu (`work/<ID>/input/`):
-* **Czysty Plik Wideo (`*.mp4`):** Każdy podkatalog `input/` zawiera **WYŁĄCZNIE plik wideo**.
-* **Zero zależności od zewnętrznych napisów:** Stan początkowy nie bazuje na obecności plików `.srt` ani skryptów `.md`. Jeżeli napisy są potrzebne, agent i potok generują je od zera w locie (Whisper ekstrahuje mowę, tworzy segmenty i zapisuje napisy `_PL.srt` oraz `_EN.srt`).
-* **Wersjonowanie przebiegów (Run Versioning):** Każde uruchomienie potoku, jeśli nie wskazano jawnego katalogu wyjściowego przez `-o / --output-dir`, tworzy niezależny, zwersjonowany folder w `work/runs/YYYY-MM-DD_HH-MM-SS_<engine>_<slug>/`, a najnowszy przebieg jest zawsze dostępny pod atomowym symlinkiem `work/latest`.
+```text
+[WEJŚCIE: work/<projekt>/input/wideo.mp4 + work/voice_sample/ref_voice_sample_en.wav]
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ETAP 1: Ekstrakcja Audio (01_source_extracted/)                             │
+│ - FFmpeg PCM 16-bit 24 kHz mono (<ID>_VoiceOver_RAW_24k.wav)                │
+└─────────────────────────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ETAP 2: Transkrypcja ASR + Korekta Bielik + Grupowanie (02_transcription/)  │
+│ 2a. faster-whisper large-v3-turbo (CUDA FP16, ~1.6 GB VRAM)                 │
+│     -> 01_whisper_raw_segments.json / .srt                                  │
+│ 2b. Bielik 11B v3.0 Instruct (Ollama Q4_K_M, ~7.5 GB VRAM)                  │
+│     -> Naprawa fonetyki terminów IT i interpunkcji PL                       │
+│     -> 02_bielik_cleaned_segments.json + 02_bielik_cleanup_diff.md          │
+│ 2c. Semantyczne grupowanie w pełne kwestie lektorskie (12-28s)              │
+│     -> 03_scenes_pl_grouped.json / .srt                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ETAP 3: Adaptacja EN, Pacing Guardrail i Reżyseria (03_llm_adaptation/)     │
+│ 3a. Bielik 11B + Pacing Controller (zamknięta pętla kontroli czasu i sylab) │
+│     -> 04_translated_scenes_en.json + 04_pacing_calibration_log.json        │
+│ 3b. Bielik 11B Text Director (generowanie instrukcji aktorskich dla TTS)    │
+│     -> 05_acting_directions.json  [Po tym kroku: Ollama unload -> 0 GB VRAM]│
+└─────────────────────────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ETAP 4: Hybrydowa Synteza Mowy i Transfer Barwy Głosu (04_tts_segments/)    │
+│ 4a. Qwen3-TTS 1.7B CustomVoice (Apache 2.0, ~3.8 GB VRAM)                   │
+│     -> Synteza z pełnym Acting Direction (scene_XXX_raw_speaker.wav)        │
+│ 4b. OpenVoice v2 Tone Color Converter (MIT, ~0.4 GB VRAM)                   │
+│     -> Nałożenie barwy Twojego głosu z próbki referencyjnej (scene_XXX.wav) │
+└─────────────────────────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ETAP 5 i 6: Synchronizacja WSOLA, Mastering EBU R128 i Muxing (06_output/)  │
+│ - Dopasowanie czasu mowy do cięć wideo (FFmpeg atempo [0.92x - 1.08x])      │
+│ - Room Tone (-58 dB pink noise) + Broadcast EQ (70 Hz HPF + 8 kHz +1.5 dB)  │
+│ - Mastering EBU R128 (-14.0 LUFS, True Peak <= -1.0 dBFS)                   │
+│ - Gotowe pliki w work/<projekt>/output/: MP4, WAV 48kHz, SRT PL/EN, Raport  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-Struktura katalogu `work/`:
+| Komponent / Model | Rola w Potoku | Licencja | Szczytowy VRAM |
+| :--- | :--- | :---: | :---: |
+| **faster-whisper (`large-v3-turbo`)** | Surowa transkrypcja mowy ze znacznikami czasu | MIT | **~1.6 GB** |
+| **Bielik 11B v3.0 Instruct (`Q4_K_M`)** | Korekta ASR PL, tłumaczenie z Pacing Guardrail, Acting Direction | Apache 2.0 | **~7.5 GB** |
+| **Qwen3-TTS 1.7B CustomVoice** | Ekspresyjna synteza mowy EN ze sterowaniem aktorskim (`instruct`) | Apache 2.0 | **~3.8 GB** |
+| **OpenVoice v2 Tone Color Converter** | Zero-shot konwersja barwy głosu na barwę autora | MIT | **~0.4 GB** |
+| **Alternatywy TTS (`qwen-base`, `kokoro`, `chatterbox`)** | Opcjonalne silniki syntezy wybierane flagą `ENGINE=` | Apache 2.0 / MIT | **0.3 - 4.2 GB** |
+
+---
+
+## 2. Konwencja Katalogu `work/` (Izolacja Projektów i Zero Nadpisywania)
+
+Wszystkie materiały robocze znajdują się w katalogu `work/` (objętym `.gitignore`). Aby można było dubbingować dowolną liczbę różnych filmów bez obawy o nadpisanie wcześniejszych wyników, obowiązuje konwencja **jeden podfolder w `work/` = jeden materiał wideo**:
 
 ```text
 work/
-├── voice_source/
-│   └── EP003_VoiceOver_CLEAN.wav                         # Nagranie źródłowe do wycięcia próbki lektora (00:12–00:20)
-├── voice_sample/
-│   └── ref_voice_sample.wav                              # Wycięta próbka lektorska (24kHz mono)
-├── EP002_Short/
-│   └── input/
-│       └── EP002_Short_Agentic_SysAdmin_Karaoke_FIXED.mp4 # Wyłącznie wideo shorta (30s)
-├── EP001_Short/
-│   └── input/
-│       └── EP001_Short_WSL_vs_Zorin_FINAL.mp4             # Wyłącznie wideo shorta (34s)
-├── latest -> runs/2026-10-10_16-30-00_edge_EP002_Short    # Atomowy symlink do ostatniego przebiegu
-└── runs/
-    └── 2026-10-10_16-30-00_edge_EP002_Short/              # Zwersjonowany workspace przebiegu
-        ├── logs/
-        │   └── execution.log                             # Pełny strumień konsoli (Tee logging)
-        ├── 01_source_extracted/                          # Wyekstrahowany strumień mowy (24kHz WAV)
-        ├── 02_transcription/                             # Surowa transkrypcja i segmenty czasowe Whisper
-        ├── 03_llm_adaptation/                            # JSON adaptacji LLM z pacingiem
-        ├── 04_tts_segments/                              # Pocięte pliki WAV scen i markery .txt / .engine
-        ├── 05_subtitles/                                 # Napisy SRT / ASS
-        ├── 06_output/                                    # Finalne deliverable (WAV -14 LUFS, MP4, Summary MD)
-        └── run_summary.json                              # Zbiorczy raport z audytem jakości (WPM, dryf, clipping)
+├── voice_sample/                     # Globalna pula próbek referencyjnych głosu (barwa lektora)
+│   ├── ref_voice_sample_en.wav       # Domyślna próbka referencyjna EN (24 kHz mono, 6-15s)
+│   └── ref_voice_sample.wav          # Próbka referencyjna PL
+│
+├── EP002_Short/                      # Podfolder konkretnego projektu (np. EP002_Short, moj_film)
+│   ├── input/                        # [WEJŚCIE] Surowe pliki źródłowe (nigdy nie są modyfikowane)
+│   │   ├── wideo.mp4                 # Wideo źródłowe do zdubbingowania (wymagane)
+│   │   ├── voiceover_clean.wav       # Opcjonalna czysta ścieżka polskiego lektora WAV
+│   │   └── ref_voice*.wav            # Opcjonalna próbka głosu dedykowana tylko dla tego projektu
+│   │
+│   ├── output -> runs/<latest>/06_output  # [WYJŚCIE] Symlink do gotowych plików ostatniego przebiegu
+│   ├── latest -> runs/<latest>            # Symlink do pełnego katalogu ostatniego przebiegu
+│   │
+│   └── runs/                         # Niemutowalna historia wszystkich uruchomień danego projektu
+│       └── 2026-10-17_12-00-00_qwen_EP002_Short/
+│           ├── 01_source_extracted/  # Wyekstrahowana ścieżka lektorska 24 kHz mono
+│           ├── 02_transcription/     # Surowy Whisper -> Korekta Bielik (+ Diff) -> Grupowanie
+│           ├── 03_llm_adaptation/    # Tłumaczenie EN + Pacing Log + Acting Directions JSON
+│           ├── 04_tts_segments/      # Segmenty WAV (surowy aktor + konwersja barwy OpenVoice v2)
+│           ├── 05_subtitles/         # Napisy robocze SRT PL/EN
+│           ├── 06_output/            # Pliki produkcyjne (MP4, WAV -14 LUFS, SRT, Raport MD)
+│           ├── logs/execution.log    # Pełny log wykonania potoku
+│           └── run_summary.json      # Metryki czasu, WPM, dryfu i poziomów audio
+│
+├── latest -> <PROJEKT>/runs/<latest> # Globalny symlink do ostatniego uruchomienia w całym repo
+└── archive/                          # Archiwum historycznych eksperymentów i starszych przebiegów
 ```
 
-Przed rozpoczęciem sesji folder `work/voice_sample/` oraz foldery wyjściowe nie istnieją — Agent wygeneruje je od zera na Twoich oczach.
-
 ---
 
-## 3. Ścieżka Krok po Kroku w Antigravity (Anatomia Potoku na EP002)
+## 3. Szybki Start z Poziomu Terminala (`make`)
 
-Otwierasz Antigravity w projekcie `pl-agentic-sysadmin-work`. Agent automatycznie ładuje kontekst z `AGENTS.md` oraz skill `voice-dubber`. 
+Cały proces został opakowany w proste komendy `make`, w których podajesz wyłącznie nazwę podfolderu projektu (`WORK=<podfolder>`):
 
-W pierwszym podejściu przechodzimy przez proces krok po kroku, aby dokładnie widzieć anatomię poszczególnych etapów i bilans zasobów:
+### Krok 0: Jednorazowe przygotowanie środowiska i modeli
+```bash
+# Inicjalizacja środowiska Python (.venv)
+make setup
 
-### Krok 1: Wycięcie próbki głosu lektora
-Wklejasz w oknie czatu Antigravity:
-> *Wytnij 8-sekundową próbkę głosu z nagrania w work/voice_source od 00:12 do 00:20.*
+# Pobranie wag modeli AI oraz upewnienie się, że w Ollamie dostępny jest model Bielik 11B:
+make media-setup-models
+ollama pull SpeakLeash/bielik-11b-v3.0-instruct:Q4_K_M
+```
 
-* **Działanie Agenta:** 
-  - Lokalizuje `work/voice_source/EP003_VoiceOver_CLEAN.wav`.
-  - Wywołuje procedurę ekstrakcji i zapisuje bezstratną próbkę studyjną (24kHz mono WAV) w `work/voice_sample/ref_voice_sample.wav` wraz z transkrypcją referencyjną (*„Zmontowałem to w całości lokalnie na Linuksie...”*).
-  - Raportuje gotowość biometrii głosu do syntezy.
+### Krok 1: Przygotowanie próbki głosu (jednorazowo)
+Domyślna próbka referencyjna znajduje się w `work/voice_sample/ref_voice_sample_en.wav`. Jeśli chcesz wyciąć nową 8-10 sekundową próbkę ze swojego czystego nagrania:
+```bash
+make media-extract-sample \
+  INPUT=/sciezka/do/twojego_nagrania.wav \
+  START=00:00:12.000 \
+  END=00:00:22.000 \
+  OUTPUT=work/voice_sample/ref_voice_sample_en.wav
+```
 
-### Krok 2: Dubbing i mastering pierwszego shorta (EP002)
-Wklejasz w czacie polecenie czystej intencji (bez podawania flag technicznych ani parametrów głośności — agent sam wie, że przygotowuje materiał emisyjny):
-> *Przetłumacz i zdubbinguj shorta w work/EP002_Short.*
+### Krok 2: Inicjalizacja nowego projektu w `work/<podfolder>`
+Możesz utworzyć folder `work/<podfolder>/input/` ręcznie i wrzucić tam plik `.mp4`, albo użyć komendy `make dub-init`:
+```bash
+make dub-init WORK=moj_material INPUT=/sciezka/do/filmu.mp4
+```
 
-* **Działanie Agenta:**
-  - Automatycznie wykrywa wideo w `work/EP002_Short/input/` (brak predefiniowanych napisów czy skryptów).
-  - Ekstrahuje strumień mowy i lokalnie uruchamia Whisper, który w locie dzieli nagranie na segmenty ze znacznikami czasu.
-  - Tłumaczy kwestie z zachowaniem ścisłego słownika IT (*mount point*, *VRAM footprint*, *PCIe bus*, *macOS-inspired workspace*).
-  - Generuje komplet napisów SRT (`EP002_Short_PL.srt` oraz `EP002_Short_EN.srt`).
-  - Przeprowadza syntezę na GPU (Breeze-TTS-2 / Edge-TTS) z wykorzystaniem wyciętej próbki głosu.
-  - Dopasowuje tempo do cięć wideo, wstawia pauzy i masteruje ścieżkę do standardu emisyjnego **-14 LUFS** (EBU R128).
-  - Zapisuje rezultaty w wersjonowanym folderze `work/runs/YYYY-MM-DD_HH-MM-SS_<engine>_EP002_Short/06_output/` (lub w jawnie wskazanym `-o / --output-dir`) i dostarcza komplet plików produkcyjnych:
-    1. Czysty plik audio lektora EN: `EP002_Short_VoiceOver_EN_CLEAN.wav` (pod YouTube Multi-Language Audio).
-    2. Gotowy plik wideo z dubbingiem: `EP002_Short_FINAL_EN_DUBBED.mp4` (obraz + audio EN).
-    3. Napisy: `EP002_Short_EN.srt` oraz `EP002_Short_PL.srt`.
-    4. Zbiorczy raport audytu jakości: `run_summary.json` oraz `EP002_Short_Dubbing_Summary.md`.
-  - Zwraca w czacie zwięzłą tabelę porównawczą A/B (PL vs EN).
+### Krok 3: Uruchomienie domyślnego potoku dubbingu
+Jedna komenda uruchamia cały 6-etapowy workflow (Whisper -> Bielik Cleanup -> Grouping -> Bielik Translation & Pacing -> Bielik Acting Direction -> Qwen3-TTS CustomVoice + OpenVoice v2 Timbre Converter -> Mastering -14 LUFS):
+```bash
+make dub WORK=moj_material
+```
+*(Możesz też pominąć `make dub-init` i od razu podać `make dub WORK=moj_material INPUT=/sciezka/do/filmu.mp4` - skrypt automatycznie utworzy `work/moj_material/input/` i skopiuje plik źródłowy).*
 
-### Krok 3: Odsłuch i inspekcja parametrów
-Wpisujesz w czacie:
-> *Odtwórz wygenerowane wideo dla EP002 i podsumuj parametry audio.*
+Po zakończeniu gotowe pliki znajdziesz w:
+- **`work/moj_material/output/`** (zawiera `moj_material_FINAL_EN_DUBBED.mp4`, `moj_material_VoiceOver_EN_CLEAN.wav`, napisy `.srt` oraz raport `moj_material_Dubbing_Summary.md`).
+- **`work/moj_material/latest/`** (zawiera wszystkie pliki pośrednie z etapów `01_*` do `06_*`).
 
-* **Działanie Agenta:**
-  - Uruchamia podgląd wideo lub odtwarza próbkę audio w systemowym odtwarzaczu.
-  - Wyświetla zmierzone parametry: Zintegrowana głośność (`-14.0 LUFS` do `-15.3 LUFS`), True Peak (`< -1.0 dBFS`), WPM, dryf czasu.
-
----
-
-## 4. Ścieżka One-Shot w Antigravity (Cały Potok „Na Raz” dla EP001)
-
-Gdy wiesz już jak działa system, nie musisz rozbijać pracy na pojedyncze etapy. Prawdziwa siła podejścia **Agentic SysAdmin** polega na zleceniu pełnego łańcucha operacyjnego za pomocą **dokładnie jednego promptu czystej intencji**.
-
-Dla drugiego shorta z zestawu (`work/EP001_Short`, 34-sekundowa wersja punchy) zlecamy wykonanie całego potoku za jednym zamachem:
-
-> *Zdubbinguj materiał w work/EP001_Short przy użyciu przygotowanej próbki głosu i odtwórz gotowe wideo.*
-
-* **Działanie Agenta:**
-  1. Spina cały workflow bez konieczności interwencji użytkownika.
-  2. Bada wejście: wykrywa wyłącznie plik wideo `EP001_Short_WSL_vs_Zorin_FINAL.mp4` (bez zewnętrznych plików .srt czy .wav).
-  3. Ekstrahuje audio i transkrypuje w Whisper dynamiczne segmenty.
-  4. Dokonuje inżynierskiego przekładu PL $\rightarrow$ EN i generuje napisy `EP001_Short_PL.srt` oraz `EP001_Short_EN.srt`.
-  5. Przeprowadza syntezę, dopasowuje czasy segmentów pod oryginalne cięcia.
-  6. Przeprowadza broadcastowy mastering EBU R128 (-14.0 LUFS, True Peak $\le$ -1.0 dBFS).
-  7. Zapisuje komplet plików produkcyjnych i aktualizuje symlink `work/latest`.
-  8. Wyświetla podsumowanie z tabelą scen i uruchamia odtworzenie rezultatu.
-
----
-
-## 5. Skalowanie na Długi Format (EP002 i Porównanie 1:1 z ElevenLabs)
-
-Ten sam suwerenny potok nie jest ograniczony wyłącznie do formatu Shorts. W projekcie `work/EP002` znajduje się pełnometrażowy odcinek (12:08, 1440p60) w `work/EP002/input/EP002_Zorin_Desktop_FINAL.mp4` oraz nagranie referencyjne przygotowane w ElevenLabs (`work/EP002/reference/EP002_FINAL_EN_ElevenLabs.mp4`).
-
-Wpisujesz w czacie Antigravity:
-> *Zdubbinguj materiał w work/EP002 przy użyciu przygotowanej próbki głosu.*
-
-* **Działanie Agenta:**
-  1. Wykrywa czyste wideo w `input/`.
-  2. Ekstrahuje strumień mowy i automatycznie transkrypuje oraz synchronizuje segmenty z Whisperem.
-  3. Dokonuje inżynierskiego przekładu dialogów oraz generuje napisy SRT.
-  4. Generuje zsynchronizowane audio i gotowy plik wideo w zwersjonowanym folderze `work/runs/`.
-  5. Umożliwia natychmiastowe zderzenie jakościowe A/B: odsłuch lokalnego modelu na karcie RTX 4060 Ti (koszt 0 zł, zero wycieków do chmury) obok chmurowego dubbingu ElevenLabs.
-
----
-
-## 6. Ścieżka Manualna / Oldschool CLI (Dla zdeterminowanych)
-
-Wyłącznie w celach poglądowych dla inżynierów, którzy chcą uruchomić poszczególne polecenia ręcznie z poziomu terminala bash:
+### Krok 4: Wybór innego silnika TTS, trybu chunkowania i wznawianie etapów (Opcjonalnie)
+Domyślnie potok używa `ENGINE=qwen` (hybrydy `Qwen3-TTS 1.7B CustomVoice + OpenVoice v2`), ale możesz elastycznie sterować każdym aspektem potoku za pomocą parametrów `make`:
 
 ```bash
-# 1. Ręczne wycięcie próbki referencyjnej głosu:
-python3 scripts/media/extract_voice_sample.py \
-  -i work/voice_source/EP003_VoiceOver_CLEAN.wav \
-  -s 00:00:12.000 -e 00:00:20.300 \
-  -o work/voice_sample/ref_voice_sample.wav \
-  -t "Zmontowałem to w całości lokalnie na Linuksie, rozmawiając z agentem AI w naszym repozytorium, ani razu nie dotknąłem myszki."
+# --- Wznawianie i Restart od Wybranego Etapu ---
+# 1. Wznowienie od tłumaczenia po ręcznej korekcie transkrypcji PL (03_scenes_pl_grouped.json):
+make dub WORK=moj_material FROM=translate
 
-# 2. Domyślny przebieg dubbingu (tworzy zwersjonowany katalog work/runs/... oraz link work/latest):
-python3 scripts/media/dub_video.py -w work/EP002_Short
+# 2. Wznowienie od syntezy TTS po edycji kwestii EN lub instrukcji aktorskich (05_acting_directions.json):
+# (Dzięki markerom .txt i .instr syntezowane są tylko zmodyfikowane sceny - cache hit dla pozostałych!)
+make dub WORK=moj_material FROM=tts
 
-# 3. Dubbing z jawnym wskazaniem katalogu wyjściowego (-o / --output-dir):
-python3 scripts/media/dub_video.py -w work/EP002_Short -o work/EP002_Short/output
+# 3. Wznowienie od masteringu audio EBU R128 i muxingu wideo MP4:
+make dub WORK=moj_material FROM=master
 
-# 4. Dubbing z włączonym trybem ekspresyjnym Two-Pass TTS Voice Tags:
-python3 scripts/media/dub_video.py -w work/EP002_Short --engine edge --expressive
+# --- Kontrola Wielkości Kwestii (Adaptive Chunking) ---
+# Domyślnie 'auto': filmy <= 2 min (Shorts) dzielone na 2.5-7.5s, filmy > 2 min na 12-28s.
+# Możesz jawnie wymusić tryb podziału:
+make dub WORK=moj_material CHUNKS=short   # Kwestie 2.5-7.5s (dla dynamicznych cięć i napisów karaoke)
+make dub WORK=moj_material CHUNKS=long    # Akapity 12-28s (dla długich wykładów i screencastów)
 
-# 5. Przetwarzanie wsadowe zestawu wideo:
-python3 scripts/media/dub_video.py --batch work/EP002_Short work/EP001_Short work/EP002
+# --- Alternatywne Silniki Syntezy TTS ---
+# Czysty klon zero-shot Qwen3-TTS 0.6B Base (bez CustomVoice i bez OpenVoice v2)
+make dub WORK=moj_material ENGINE=qwen-base
 
-# 6. Generowanie polskiego lektora ze skryptu Markdown:
-python3 scripts/media/generate_voiceover.py -s scripts/media/scenariusz.md -o work/runs/voiceover_pl
+# KokoClone (Kokoro-ONNX + Kanade Voice Conversion)
+make dub WORK=moj_material ENGINE=kokoro
+
+# Chatterbox-Turbo (MIT)
+make dub WORK=moj_material ENGINE=chatterbox
+
+# Breeze-TTS-2 (CC-BY-NC - wyłącznie do testów niekomercyjnych)
+make dub WORK=moj_material ENGINE=breeze
+
+# Szybki podgląd na Microsoft Edge Neural TTS (0 GB VRAM)
+make dub WORK=moj_material ENGINE=edge
+
+# Wyłącznie transkrypcja Whisper + korekta Bielik + tłumaczenie i napisy SRT (bez syntezy TTS)
+make dub-transcribe WORK=moj_material
+
+# Podgląd stanu wszystkich projektów w work/ i ostatniego przebiegu
+make dub-status
 ```
 
 ---
 
-## 7. Wersjonowanie Przebiegów, Struktura Plików i Standard Emisyjny
+## 4. Testowanie Acting Direction i Konwersji Barwy Głosu (`make media-test-acting`)
 
-### Zasada wersjonowania (Run Workspace):
-1. **Domyślne uruchomienie bez `-o`:** Skrypt tworzy unikalny katalog `work/runs/YYYY-MM-DD_HH-MM-SS_<engine>_<slug>/` i atomowo ustawia symlink `work/latest` wskazujący na ten katalog. Poprzednie przebiegi pozostają nienaruszone, co umożliwia porównywanie eksperymentów A/B.
-2. **Jawne wskazanie katalogu wyjściowego (`-o / --output-dir <katalog>`):** Skrypt zapisuje wyniki bezpośrednio do wskazanego folderu (np. `work/EP002_Short/output/`), zachowując uporządkowaną hierarchię podkatalogów etapowych. Nie jest tworzone żadne wymuszone linkowanie wsteczne do innych folderów.
+Chcesz przed pełnym dubbingiem usłyszeć różnicę między suchą syntezą a pełną reżyserią głosu (`Acting Direction`) i konwersją barwy (`OpenVoice v2`) na pojedynczym zdaniu? Użyj wbudowanego benchmarku:
 
-### Podkatalogi etapowe wewnątrz każdego przebiegu:
-* `logs/execution.log` – kompletny zrzut konsoli (stdout/stderr) przechwytywany w locie.
-* `01_source_extracted/` – wyekstrahowany strumień mowy 24kHz PCM mono.
-* `02_transcription/` – surowa transkrypcja i segmenty czasowe Whisper.
-* `03_llm_adaptation/` – plik JSON z przetłumaczonymi kwestiami i pacingiem lektorskim.
-* `04_tts_segments/` – wygenerowane pliki `.wav`, `.txt` i `.engine` dla każdej sceny.
-* `05_subtitles/` – napisy `_EN.srt` i `_PL.srt`.
-* `06_output/` – gotowe pliki produkcyjne (Deliverables).
-* `run_summary.json` – metadane systemowe, czasy faz oraz audyt jakościowy.
+```bash
+# Domyślny test 3-etapowy (1. Bez reżyserii -> 2. Z reżyserią aktorską -> 3. Z Twoją barwą głosu):
+make media-test-acting PLAY=1
 
-### Pliki produkcyjne w `06_output/`:
-1. **Plik dźwiękowy lektora (YouTube Multi-Language Audio):**
-   * `<ID>_VoiceOver_EN_CLEAN.wav` – zmasterowany plik audio lektora EN (48kHz stereo, broadcast mastering -14.0 LUFS, True Peak $\le$ -1.0 dBFS).
-2. **Zdubbingowany film EN (Full Video + Dubbing):**
-   * `<ID>_FINAL_EN_DUBBED.mp4` – kompletny plik wideo ze zsynchronizowaną ścieżką EN i oryginalnym obrazem.
-3. **Napisy:**
-   * `<ID>_EN.srt` oraz `<ID>_PL.srt`.
-4. **Raport podsumowujący:**
-   * `<ID>_Dubbing_Summary.md` – tabela zsynchronizowanych scen wraz z audytem jakościowym (Quality Metrics).
+# Test z własnym tekstem i własną instrukcją reżyserską:
+make media-test-acting \
+  TEXT="Why did the container crash? Wait... we forgot to mount the volume!" \
+  INSTRUCTION="Start with confused curiosity, pause briefly, then speak with sudden realization and urgency." \
+  PLAY=1
+```
 
-### Automatyczny Audyt Jakościowy (`QualityAnalyzer`):
-Każdy przebieg automatycznie analizuje gotowy plik audio i zapisuje metryki w `run_summary.json`:
-- **WPM (Words Per Minute):** Tempo mowy z ostrzeżeniem jeśli wykracza poza normę (110–170 WPM).
-- **Dryf czasu (Drift):** Różnica czasu trwania mowy względem docelowego okna wideo (ostrzeżenie > 2.0s).
-- **Integralność sygnału (Peak dB, RMS dB, Clipping):** Weryfikacja przesterowań (True Peak > -0.05 dBFS).
-- **Nienaturalne pauzy:** Wykrywanie niepożądanych pustych przerw wewnątrz kwestii (> 1.5s).
+Skrypt zapisuje trzy próbki porównawcze w `work/acting_test/`:
+1. `1_without_acting_direction.wav` - płaski odczyt bez instrukcji,
+2. `2_with_acting_direction.wav` - ekspresyjny odczyt wygenerowany przez `Qwen3-TTS 1.7B CustomVoice`,
+3. `3_with_acting_and_timbre.wav` - ten sam ekspresyjny odczyt po nałożeniu Twojej barwy głosu przez `OpenVoice v2`.
+
+---
+
+## 5. Praca w Trybie Agentowym w Antigravity IDE (`voice-dubber`)
+
+Gdy otworzysz repozytorium w **Antigravity IDE** (lub Claude Code), agent automatycznie ładuje reguły `AGENTS.md` oraz skill `.agents/skills/voice-dubber/SKILL.md`. Nie musisz pamiętać nazw skryptów ani flag - wydajesz polecenia w języku naturalnym:
+
+### Przykładowe prompty w czacie Antigravity:
+1. **Dubbing istniejącego projektu w `work/`:**
+   > *"Zdubbinguj materiał w EP002_Short i pokaż podsumowanie parametrów audio."*
+   - Agent uruchamia `make dub WORK=EP002_Short`, czeka na zakończenie 6 etapów i prezentuje tabelę zsynchronizowanych scen oraz metryki LUFS/WPM z `work/EP002_Short/output/`.
+2. **Dubbing nowego pliku wideo z dysku:**
+   > *"Zainicjuj projekt dubbingowy 'ep005_teaser' z pliku ~/Wideo/teaser.mp4 i uruchom pełny dubbing."*
+   - Agent wykonuje `make dub WORK=ep005_teaser INPUT=~/Wideo/teaser.mp4`.
+3. **Porównanie różnych silników TTS na tym samym materiale:**
+   > *"Wygeneruj dubbing dla EP002_Short używając domyślnego silnika qwen, a potem drugi przebieg używając kokoro, żebym mógł porównać oba w folderze runs."*
+   - Ponieważ każdy przebieg zapisuje się w osobnym podkatalogu `work/EP002_Short/runs/<timestamp>_<engine>_EP002_Short/`, żaden plik nie zostaje nadpisany.
+4. **Inspekcja korekty transkrypcji i tłumaczenia:**
+   > *"Pokaż jakie błędy po Whisperze poprawił Bielik w ostatnim przebiegu EP002_Short."*
+   - Agent odczytuje plik `work/EP002_Short/latest/02_transcription/02_bielik_cleanup_diff.md` i wyświetla tabelę zmian `Przed (Whisper) -> Po (Bielik)`.
+
+---
+
+## 6. Anatomia Plików Pośrednich i Produkcyjnych (Pełna Audytowalność)
+
+Każdy przebieg w `work/<projekt>/latest/` zostawia kompletny ślad audytowy:
+
+- **`01_source_extracted/`**:
+  - `<ID>_VoiceOver_RAW_24k.wav` - wyekstrahowany strumień mowy z wideo.
+- **`02_transcription/`**:
+  - `01_whisper_raw_segments.json` / `.srt` - surowy wynik modelu Whisper przed jakąkolwiek ingerencją.
+  - `02_bielik_cleaned_segments.json` / `.srt` - segmenty po korekcie fonetyki IT i interpunkcji przez Bielika.
+  - `02_bielik_cleanup_diff.md` - czytelna tabela Markdown pokazująca dokładnie, które segmenty zmodyfikował Bielik.
+  - `03_scenes_pl_grouped.json` / `.srt` - połączone pełne kwestie lektorskie (12-28s) gotowe do tłumaczenia.
+- **`03_llm_adaptation/`**:
+  - `04_translated_scenes_en.json` - przetłumaczone kwestie EN wraz z budżetem czasu i słów.
+  - `04_pacing_calibration_log.json` - szczegółowy dziennik iteracji pętli Pacing Guardrail (liczba słów i sylab w każdej próbie).
+  - `05_acting_directions.json` - wygenerowane przez Bielika instrukcje aktorskie (`instruct`) dla każdej sceny.
+- **`04_tts_segments/`**:
+  - `scene_XXX_raw_speaker.wav` - surowe nagranie aktora z `Qwen3-TTS 1.7B CustomVoice` (przed konwersją barwy).
+  - `scene_XXX.wav` - docelowe nagranie sceny po konwersji barwy głosu przez `OpenVoice v2`.
+- **`06_output/` (dostępne również bezpośrednio przez symlink `work/<projekt>/output/`)**:
+  - `<ID>_VoiceOver_EN_CLEAN.wav` - zmasterowana ścieżka audio 48 kHz stereo (**-14.0 LUFS**, True Peak <= -1.0 dBFS) gotowa do wgrania w YouTube Studio (*Multi-Language Audio*).
+  - `<ID>_FINAL_EN_DUBBED.mp4` - gotowy film z angielską ścieżką dźwiękową.
+  - `<ID>_EN.srt` oraz `<ID>_PL.srt` - zsynchronizowane napisy końcowe.
+  - `<ID>_Dubbing_Summary.md` oraz `../run_summary.json` - raport jakościowy (`QualityAnalyzer`).
+
+---
+
+## 7. Samodzielna Konfiguracja Słownika Fonetycznego ASR i Pojęć IT (`config/`)
+
+Gdy Whisper błędnie usłyszy specjalistyczne pojęcie branżowe (np. fonetyczne *„AgentXsAdmin”* zamiast *„Agentic SysAdmin”* lub *„Quen”* zamiast *„Qwen”*), możesz samodzielnie rozszerzyć reguły korekty w dwóch plikach konfiguracyjnych w katalogu `config/`:
+
+### A. Fonetyczne reguły Whisper ASR (`config/asr_corrections.json`)
+Plik zawiera słownik wyrażeń regularnych (regex) mapowanych na docelowe, poprawne brzmienie. Reguły są stosowane deterministycznie przed i po czyszczeniu przez Bielika:
+
+```json
+{
+  "\\bAgent[Xx]sAdmin\\b": "Agentic SysAdmin",
+  "\\bAgent\\s+[Xx]sAdmin\\b": "Agentic SysAdmin",
+  "\\bAgent\\s+[Xx]s\\s+Admin\\b": "Agentic SysAdmin",
+  "\\bQuen\\b": "Qwen",
+  "\\bQN3\\b": "Qwen3",
+  "\\bkłen\\b": "Qwen",
+  "\\bCustom Voice\\b": "CustomVoice",
+  "\\bCadenLive\\b": "Kdenlive"
+}
+```
+> [!TIP]
+> Zawsze stosuj granice słów `\b`, aby uniknąć przypadkowego podmienienia fragmentów innych słów. W pliku JSON każdy ukośnik wsteczny musi być podwójny (`\\b`).
+
+### B. Inżynierski słownik pojęć i tłumaczeń (`config/tech_terms.json`)
+Słownik ten jest wstrzykiwany bezpośrednio do promptu systemowego modelu Bielik 11B podczas tłumaczenia i pacingu. Wymusza poprawne odpowiedniki terminów IT i zapobiega dosłownym, nieporadnym translacjom:
+
+```json
+{
+  "Agentic SysAdmin": "Agentic SysAdmin",
+  "AgentXsAdmin": "Agentic SysAdmin",
+  "punkt montowania": "mount point",
+  "narzut pamięci VRAM": "VRAM footprint",
+  "szyna PCIe": "PCIe bus",
+  "montaż cięty": "ripple edit",
+  "ścieżka na osi czasu": "timeline track"
+}
+```
+
+---
+
+## 8. Protokół Ręcznej Korekty i Wznawiania (`FROM=translate|tts|master`)
+
+Potok dubbingowy wspiera pełny przepływ **Human-in-the-Loop**. Jeśli chcesz skorygować wygenerowany tekst lub zmienić styl aktorski lektora, nie musisz uruchamiać całego procesu od zera:
+
+```text
+[Baza: work/<projekt>/latest/]
+       │
+       ├─► Edycja transkrypcji PL (03_scenes_pl_grouped.json)
+       │         └─► make dub WORK=<projekt> FROM=translate
+       │
+       ├─► Edycja kwestii EN / acting instruction (05_acting_directions.json)
+       │         └─► make dub WORK=<projekt> FROM=tts  (re-synteza TYLKO zmienionych scen!)
+       │
+       └─► Korekta masteringu / parametrów wideo
+                 └─► make dub WORK=<projekt> FROM=master
+```
+
+### Scenariusz 1: Poprawka transkrypcji PL (`FROM=translate`)
+1. Otwórz plik `work/<projekt>/latest/02_transcription/03_scenes_pl_grouped.json`.
+2. Popraw błędy w polskim tekście (`text_pl`).
+3. *(Opcjonalnie)* Zapisz zmodyfikowany plik w `work/<projekt>/input/03_scenes_pl_grouped.json`.
+4. Uruchom:
+   ```bash
+   make dub WORK=<projekt> FROM=translate
+   ```
+   *Skrypt pobierze audio z etapu 1, wczyta Twoją poprawioną transkrypcję PL, przeprowadzi nowe tłumaczenie Bielikiem z Pacing Guardrail, wygeneruje instrukcje aktorskie, zsyntetyzuje mowę i zmasteruje wideo w nowym katalogu `runs/`.*
+
+### Scenariusz 2: Korekta kwestii EN lub instrukcji aktorskiej (`FROM=tts`)
+1. Otwórz plik `work/<projekt>/latest/03_llm_adaptation/05_acting_directions.json`.
+   Przykładowa zawartość:
+   ```json
+   {
+     "scene_001": {
+       "text": "What if autonomous agents could manage entire Linux servers?",
+       "instruction": "Speak with confident engineering authority and calm pacing."
+     },
+     "scene_002": {
+       "text": "Wait, let's look under the hood right now.",
+       "instruction": "Start with sudden energetic curiosity, pause briefly, then speak with clear focus."
+     }
+   }
+   ```
+2. Zmodyfikuj angielski tekst (`text`) lub instrukcję reżyserską (`instruction`) dla wybranej sceny.
+3. *(Opcjonalnie)* Zapisz zmodyfikowany plik w `work/<projekt>/input/05_acting_directions.json`.
+4. Uruchom:
+   ```bash
+   make dub WORK=<projekt> FROM=tts
+   ```
+   *Dzięki wbudowanym markerom cache (`.txt` oraz `.instr`):*
+   - Sceny, których tekst i instrukcja **nie uległy zmianie**, zostaną natychmiast załadowane z pamięci podręcznej (`cache hit`),
+   - **Tylko zmodyfikowane sceny** zostaną ponownie zsyntetyzowane przez model `Qwen3-TTS 1.7B CustomVoice` i przetworzone przez `OpenVoice v2`,
+   - Całość zostanie na nowo zsynchronizowana i zmasterowana w kilka sekund zamiast kilku minut!
+
+---
+
+## 9. Zabezpieczenia Pacingu i Eliminacja Dryfu Czasu (Shorts)
+
+W krótkich formach wideo (YouTube Shorts / TikTok / Reels) tolerancja na rozjazd czasowy wynosi **0 sekund** – lektor nie może nachodzić na cięcia montażowe ani wykraczać poza koniec filmu. Aby to zagwarantować, w potoku zaimplementowano 4 twarde mechanizmy obronne:
+
+1. **Kalibracja Benchmarku Tempa Mowy (WPS = 2.35):**
+   Głos `Ryan` w Qwen3-TTS mówi z naturalną prędkością ~138–142 WPM (2.30–2.35 słowa na sekundę). Pętla Pacing Guardrail w Bieliku przyjmuje ten benchmark jako twardy budżet, uniemożliwiając generowanie zbyt długich zdań.
+2. **Adaptacyjne Chunkowanie (Shorts vs Long):**
+   Dla materiałów $\le 120$ s kwestie dzielone są na odcinki 2.5–7.5 s na kropkach i pauzach $\ge 0.7$ s. Zapobiega to kumulacji opóźnień między cięciami wideo.
+3. **Elastyczna Kompresja WSOLA (`atempo` do 1.25x):**
+   Jeśli wygenerowana kwestia jest nieco dłuższa niż nominalne okno wideo, silnik FFmpeg automatycznie kompresuje czas mowy bez zmiany wysokości głosu (`pitch-neutral`).
+4. **Twardy Strażnik Outro i Ostateczne Przycięcie (`afade`):**
+   Finałowa kwestia ma twardą rezerwę co najmniej 0.25 s czystego outro przed końcem filmu. Jeśli mowa lektora przekracza dostępny czas, zostaje automatycznie skompresowana (do 1.30x) oraz miękko wyciszona (`afade 150ms`). Końcowy plik audio WAV jest twardo przycięty flagą `-t {total_duration}`, co gwarantuje 100% zgodności co do milisekundy.

@@ -17,11 +17,14 @@ sys.path.insert(0, str(REPO_ROOT / "scripts" / "media"))
 
 from dub_video import (  # noqa: E402
     PacingTarget,
+    apply_asr_corrections,
     apply_tech_terms,
     clean_llm_translation,
     clean_voiceover_text,
     compute_pacing_target,
+    group_whisper_segments,
     resolve_reference_audio,
+    resolve_work_dir,
 )
 
 
@@ -114,6 +117,46 @@ class TestPacingController(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             resolve_reference_audio(ref_audio="nonexistent_sample_xyz.wav")
 
+    def test_resolve_work_dir_conventions(self):
+        expected = (REPO_ROOT / "work" / "EP002_Short").resolve()
+        self.assertEqual(resolve_work_dir("EP002_Short"), expected)
+        self.assertEqual(resolve_work_dir("work/EP002_Short"), expected)
+        self.assertEqual(resolve_work_dir(expected), expected)
+
+    def test_apply_asr_corrections_agentic_sysadmin(self):
+        # Weryfikacja korekty fonetycznej ASR dla pojęć inżynierskich
+        sample_text = "To jest AgentXsAdmin oraz Agent XsAdmin w środowisku Zorin OS."
+        corrected = apply_asr_corrections(sample_text)
+        self.assertIn("Agentic SysAdmin", corrected)
+        self.assertNotIn("AgentXsAdmin", corrected)
+        self.assertNotIn("Agent XsAdmin", corrected)
+
+    def test_group_whisper_segments_adaptive_shorts(self):
+        # 6 krótkich zdań o łącznym czasie 30s
+        raw_cleaned = [
+            {"id": 1, "start": 0.0, "end": 4.5, "text": "Pierwsze krótkie zdanie."},
+            {"id": 2, "start": 4.8, "end": 9.2, "text": "Drugie zdanie z kropką."},
+            {"id": 3, "start": 9.5, "end": 14.8, "text": "Trzecia kwestia o agentach."},
+            {"id": 4, "start": 15.2, "end": 20.0, "text": "Czwarty segment prezentacji."},
+            {"id": 5, "start": 20.4, "end": 25.1, "text": "Piąte zdanie podsumowania."},
+            {"id": 6, "start": 25.5, "end": 30.0, "text": "Finałowe pożegnanie z widzami."},
+        ]
+        # Dla krótkich materiałów (total_duration <= 120s) podział powinien zachować krótkie kwestie (nie scalać do 28s)
+        scenes = group_whisper_segments(raw_cleaned, chunk_mode="short", total_duration=30.0)
+        self.assertGreaterEqual(len(scenes), 4)
+        for sc in scenes:
+            dur = sc["end"] - sc["start"]
+            self.assertLessEqual(dur, 8.5)
+
+    def test_compute_pacing_target_short_scene(self):
+        # Krótka scena (window=5.0s, orig_pause=0.3s, pl_words=10)
+        pt = compute_pacing_target(window_dur=5.0, orig_pause=0.3, pl_words=10)
+        self.assertEqual(pt.desired_gap, 0.3)
+        self.assertEqual(pt.min_acceptable_gap, 0.15)
+        self.assertLessEqual(pt.max_acceptable_gap, 1.2)
+        self.assertLessEqual(pt.target_words, 12)
+
 
 if __name__ == "__main__":
     unittest.main()
+
