@@ -279,7 +279,7 @@ dub-status:
 	@echo ""
 	@if [ -L "work/latest" ] && [ -f "work/latest/run_summary.json" ]; then \
 		echo "3. Ostatni przebieg (work/latest -> $$(readlink work/latest)):"; \
-		uv run python -c 'import json; d=json.load(open("work/latest/run_summary.json")); m=d.get("meta",{}); q=d.get("quality_analysis") or {}; print(f"   - Projekt: {m.get(\"task_slug\")} | Silnik: {d.get(\"stats\",{}).get(\"active_engine\", m.get(\"engine\"))} | Czas: {m.get(\"total_duration_seconds\")}s | Status: {q.get(\"overall_quality_status\", \"N/A\")}")'; \
+		uv run python -c 'import json; d=json.load(open("work/latest/run_summary.json")); m=d.get("meta",{}); q=d.get("quality_analysis") or {}; slug=m.get("task_slug"); eng=d.get("stats",{}).get("active_engine", m.get("engine")); dur=m.get("total_duration_seconds"); st=q.get("overall_quality_status", "N/A"); print(f"   - Projekt: {slug} | Silnik: {eng} | Czas: {dur}s | Status: {st}")'; \
 	fi
 	@echo "=========================================================="
 
